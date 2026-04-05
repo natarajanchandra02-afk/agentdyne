@@ -254,4 +254,3 @@ The platform auto-deploys to 5 global regions via `vercel.json`.
 ## License
 
 MIT © 2026 AgentDyne, Inc.
-# agentdyne

@@ -1,0 +1,30 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "agentdyne-platform"
+main = ".open-next/worker.js"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ── Assets (static files) ──────────────────────────────────────────────────
+assets = { directory = ".open-next/assets", binding = "ASSETS" }
+
+# ── Environment variables ──────────────────────────────────────────────────
+# Define here for local dev only.
+# For production, set these in Cloudflare Dashboard:
+#   Workers & Pages → agentdyne-platform → Settings → Variables
+
+[vars]
+NEXT_PUBLIC_APP_NAME = "AgentDyne"
+
+# ── KV Namespaces (optional — for caching) ────────────────────────────────
+# Uncomment after creating KV namespace:
+# [[kv_namespaces]]
+# binding = "NEXT_CACHE_WORKERS_KV"
+# id = "YOUR_KV_NAMESPACE_ID"
+
+# ── Local dev ─────────────────────────────────────────────────────────────
+[dev]
+port = 8788
+
+# ── Build ─────────────────────────────────────────────────────────────────
+[build]
+command = "npm run cf:build"

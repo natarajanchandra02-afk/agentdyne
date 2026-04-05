@@ -1,0 +1,42 @@
+{
+  "version": 2,
+  "buildCommand": "npm run build",
+  "outputDirectory": ".next",
+  "framework": "nextjs",
+  "regions": ["iad1", "sin1", "syd1", "lhr1", "bom1"],
+  "env": {
+    "NEXT_PUBLIC_SUPABASE_URL":          "@supabase_url",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY":     "@supabase_anon_key",
+    "SUPABASE_SERVICE_ROLE_KEY":         "@supabase_service_role_key",
+    "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY":"@stripe_publishable_key",
+    "STRIPE_SECRET_KEY":                 "@stripe_secret_key",
+    "STRIPE_WEBHOOK_SECRET":             "@stripe_webhook_secret",
+    "ANTHROPIC_API_KEY":                 "@anthropic_api_key",
+    "NEXT_PUBLIC_APP_URL":               "@app_url",
+    "INTERNAL_API_SECRET":               "@internal_api_secret"
+  },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store, max-age=0" }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options",  "value": "nosniff" },
+        { "key": "X-Frame-Options",          "value": "DENY" },
+        { "key": "X-XSS-Protection",         "value": "1; mode=block" },
+        { "key": "Referrer-Policy",          "value": "strict-origin-when-cross-origin" },
+        { "key": "Permissions-Policy",       "value": "camera=(), microphone=(), geolocation=()" }
+      ]
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/api/v1/agents/:agentId/execute",
+      "destination": "/api/execute"
+    }
+  ]
+}
