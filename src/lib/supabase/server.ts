@@ -6,11 +6,12 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
 
-// Dummy client returned during static build when env vars are absent
+// Dummy client returned during build when env vars are absent
 function makeDummyServerClient() {
   return {
     auth: {
       getUser: async () => ({ data: { user: null }, error: null }),
+      exchangeCodeForSession: async () => ({ error: null }),
     },
     from: () => ({
       select: () => ({
@@ -56,12 +57,14 @@ function makeDummyServerClient() {
   } as any
 }
 
-export const createClient = () => {
+// Next.js 15: cookies() is async — createClient must be async too
+export const createClient = async () => {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     return makeDummyServerClient()
   }
 
-  const cookieStore = cookies()
+  const cookieStore = await cookies()
+
   return createServerClient<Database>(
     SUPABASE_URL,
     SUPABASE_ANON_KEY,
@@ -80,12 +83,13 @@ export const createClient = () => {
   )
 }
 
-export const createAdminClient = () => {
+export const createAdminClient = async () => {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
     return makeDummyServerClient()
   }
 
-  const cookieStore = cookies()
+  const cookieStore = await cookies()
+
   return createServerClient<Database>(
     SUPABASE_URL,
     SUPABASE_SERVICE_KEY,

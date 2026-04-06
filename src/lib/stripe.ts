@@ -1,8 +1,10 @@
 import Stripe from "stripe";
 
+// Use Fetch-based HTTP client for edge runtime compatibility (Cloudflare Workers)
 export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: "2024-06-20",
   appInfo: { name: "AgentDyne", version: "1.0.0" },
+  httpClient: Stripe.createFetchHttpClient(),
 });
 
 export const PLANS = {

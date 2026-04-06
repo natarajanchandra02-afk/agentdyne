@@ -5,16 +5,12 @@ import { ThemeProvider } from "@/components/providers/theme-provider"
 import { QueryProvider } from "@/components/providers/query-provider"
 import { Toaster } from "@/components/ui/toaster"
 
-// Force all pages to be dynamic — prevents build-time Supabase calls
-export const dynamic = "force-dynamic"
-
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" })
 
 export const metadata: Metadata = {
   title: { default: "AgentDyne — The Global Microagent Marketplace", template: "%s | AgentDyne" },
   description: "Discover, deploy, and monetize AI microagents. The world's largest marketplace for production-ready AI agents.",
   keywords: ["AI agents", "microagents", "AI marketplace", "LLM tools", "agent platform", "MCP agents"],
-  authors: [{ name: "AgentDyne" }],
   openGraph: {
     type: "website",
     locale: "en_US",
@@ -22,13 +18,9 @@ export const metadata: Metadata = {
     title: "AgentDyne — The Global Microagent Marketplace",
     description: "Discover, deploy, and monetize AI microagents.",
     siteName: "AgentDyne",
-    images: [{ url: "/og-image.png", width: 1200, height: 630 }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "AgentDyne — The Global Microagent Marketplace",
-    description: "Discover, deploy, and monetize AI microagents.",
-    images: ["/og-image.png"],
     creator: "@agentdyne",
   },
   robots: { index: true, follow: true },

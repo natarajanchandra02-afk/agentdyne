@@ -1,14 +1,15 @@
+export const runtime = 'edge'
+
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { apiRateLimit } from "@/lib/rate-limit"
 
-// GET /api/agents — public marketplace listing
 export async function GET(req: NextRequest) {
   const limited = await apiRateLimit(req)
   if (limited) return limited
 
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
     const { searchParams } = new URL(req.url)
 
     const q        = searchParams.get("q")
@@ -27,9 +28,9 @@ export async function GET(req: NextRequest) {
     if (category) query = query.eq("category", category)
     if (pricing)  query = query.eq("pricing_model", pricing)
 
-    if (sort === "popular") query = query.order("total_executions", { ascending: false })
-    else if (sort === "rating")  query = query.order("average_rating",    { ascending: false })
-    else if (sort === "newest")  query = query.order("created_at",        { ascending: false })
+    if (sort === "popular")     query = query.order("total_executions", { ascending: false })
+    else if (sort === "rating") query = query.order("average_rating",   { ascending: false })
+    else if (sort === "newest") query = query.order("created_at",       { ascending: false })
 
     query = query.range((page - 1) * limit, page * limit - 1)
 
@@ -38,12 +39,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       agents: data,
-      pagination: {
-        total: count,
-        page,
-        limit,
-        pages: Math.ceil((count || 0) / limit),
-      },
+      pagination: { total: count, page, limit, pages: Math.ceil((count || 0) / limit) },
     })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
