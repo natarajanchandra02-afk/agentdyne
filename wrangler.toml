@@ -1,5 +1,5 @@
 name = "agentdyne-platform"
-pages_build_output_dir = "out"
+pages_build_output_dir = ".next"
 compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
 
