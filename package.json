@@ -9,15 +9,11 @@
     "lint": "next lint",
     "type-check": "tsc --noEmit",
     "format": "prettier --write .",
-    "db:generate": "supabase gen types typescript --local > src/types/supabase.ts",
-    "cf:build": "npx @opennextjs/cloudflare build",
-    "cf:preview": "npx @opennextjs/cloudflare preview",
-    "cf:deploy": "npx @opennextjs/cloudflare deploy"
+    "db:generate": "supabase gen types typescript --local > src/types/supabase.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "@hookform/resolvers": "^3.9.0",
-    "@opennextjs/cloudflare": "^1.0.0",
     "@radix-ui/react-accordion": "^1.2.0",
     "@radix-ui/react-alert-dialog": "^1.1.1",
     "@radix-ui/react-avatar": "^1.1.0",
@@ -63,7 +59,6 @@
     "zustand": "^4.5.5"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250404.0",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
@@ -73,8 +68,7 @@
     "postcss": "^8",
     "prettier": "^3.3.3",
     "tailwindcss": "^3.4.11",
-    "typescript": "^5",
-    "wrangler": "^3.101.0"
+    "typescript": "^5"
   },
   "engines": {
     "node": ">=20.0.0"

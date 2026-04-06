@@ -15,16 +15,17 @@
     "plugins": [{ "name": "next" }],
     "paths": {
       "@/*": ["./src/*"]
-    },
-    "types": ["@cloudflare/workers-types/2023-07-01"]
+    }
   },
   "include": [
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
-    ".next/types/**/*.ts",
-    "open-next.config.ts",
-    "wrangler.toml"
+    ".next/types/**/*.ts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    "open-next.config.ts",
+    ".open-next"
+  ]
 }
