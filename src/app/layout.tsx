@@ -1,11 +1,14 @@
-import type { Metadata } from "next";
-import { Inter } from "next/font/google";
-import "./globals.css";
-import { ThemeProvider } from "@/components/providers/theme-provider";
-import { QueryProvider } from "@/components/providers/query-provider";
-import { Toaster } from "@/components/ui/toaster";
+import type { Metadata } from "next"
+import { Inter } from "next/font/google"
+import "./globals.css"
+import { ThemeProvider } from "@/components/providers/theme-provider"
+import { QueryProvider } from "@/components/providers/query-provider"
+import { Toaster } from "@/components/ui/toaster"
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
+// Force all pages to be dynamic — prevents build-time Supabase calls
+export const dynamic = "force-dynamic"
+
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter" })
 
 export const metadata: Metadata = {
   title: { default: "AgentDyne — The Global Microagent Marketplace", template: "%s | AgentDyne" },
@@ -30,7 +33,7 @@ export const metadata: Metadata = {
   },
   robots: { index: true, follow: true },
   metadataBase: new URL("https://agentdyne.com"),
-};
+}
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -44,5 +47,5 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </ThemeProvider>
       </body>
     </html>
-  );
+  )
 }

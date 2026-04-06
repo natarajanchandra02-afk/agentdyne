@@ -1,8 +1,8 @@
+export const dynamic = "force-dynamic"
 import { createClient } from "@/lib/supabase/server"
 import { redirect } from "next/navigation"
 import { ApiKeysClient } from "./api-keys-client"
 export const metadata = { title: "API Keys" }
-
 export default async function ApiKeysPage() {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()

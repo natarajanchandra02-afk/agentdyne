@@ -1,4 +1,8 @@
-import { DashboardSidebar } from "@/components/dashboard/sidebar";
+// Force all dashboard routes to be dynamic (server-rendered at request time)
+// This prevents build-time pre-rendering which fails without env vars
+export const dynamic = "force-dynamic"
+
+import { DashboardSidebar } from "@/components/dashboard/sidebar"
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -10,5 +14,5 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       </main>
     </div>
-  );
+  )
 }
