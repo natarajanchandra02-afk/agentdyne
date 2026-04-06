@@ -7,9 +7,13 @@ const PROTECTED_PATHS = [
 
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
-  const isProtected = PROTECTED_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'))
+
+  const isProtected = PROTECTED_PATHS.some(
+    p => pathname === p || pathname.startsWith(p + '/')
+  )
   if (!isProtected) return NextResponse.next()
 
+  // Check for Supabase session cookie (edge-safe, no server imports)
   const hasSession = Array.from(req.cookies.keys()).some(
     key => key.startsWith('sb-') && key.endsWith('-auth-token')
   )
@@ -24,5 +28,7 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|logo.png|.*\\.svg|.*\\.png|.*\\.jpg|.*\\.ico).*)'],
+  matcher: [
+    '/((?!_next/static|_next/image|favicon\\.ico|logo\\.png|logo-icon\\.svg|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff|woff2)).*)',
+  ],
 }

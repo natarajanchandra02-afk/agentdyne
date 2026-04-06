@@ -1,8 +1,5 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Cloudflare Pages via @cloudflare/next-on-pages — no static export
-  // output: "export" removed; API routes require a server runtime
-
   typescript: {
     ignoreBuildErrors: true,
   },
@@ -11,6 +8,15 @@ const nextConfig = {
   },
   images: {
     unoptimized: true,
+    remotePatterns: [
+      { protocol: "https", hostname: "*.supabase.co" },
+      { protocol: "https", hostname: "avatars.githubusercontent.com" },
+      { protocol: "https", hostname: "*.googleusercontent.com" },
+    ],
+  },
+  // Required for @cloudflare/next-on-pages edge runtime
+  experimental: {
+    serverComponentsExternalPackages: [],
   },
 }
 

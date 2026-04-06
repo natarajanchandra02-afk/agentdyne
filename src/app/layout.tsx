@@ -19,10 +19,7 @@ export const metadata: Metadata = {
     description: "Discover, deploy, and monetize AI microagents.",
     siteName: "AgentDyne",
   },
-  twitter: {
-    card: "summary_large_image",
-    creator: "@agentdyne",
-  },
+  twitter: { card: "summary_large_image", creator: "@agentdyne" },
   robots: { index: true, follow: true },
   metadataBase: new URL("https://agentdyne.com"),
 }
@@ -31,7 +28,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={inter.variable}>
-        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
+        {/* defaultTheme="light" = Apple white by default */}
+        <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
           <QueryProvider>
             {children}
             <Toaster />

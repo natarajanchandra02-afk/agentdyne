@@ -5,64 +5,47 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
 
 /* ============================================================
-   CSS CUSTOM PROPERTIES — Apple Design Language
+   APPLE-STANDARD DESIGN TOKENS — Light / Dark
    ============================================================ */
 @layer base {
   :root {
-    /* Backgrounds */
-    --background: 0 0% 100%;
-    --background-secondary: 240 5% 96%;
-    --background-tertiary: 240 5% 92%;
+    /* Apple system backgrounds */
+    --background:           0 0% 100%;
+    --background-secondary: 240 5% 97%;
+    --background-tertiary:  240 5% 94%;
 
-    /* Foregrounds */
-    --foreground: 240 10% 4%;
+    --foreground:           240 10% 4%;
     --foreground-secondary: 240 4% 36%;
-    --foreground-tertiary: 240 4% 56%;
 
-    /* Cards / Surfaces */
-    --card: 0 0% 100%;
+    --card:            0 0% 100%;
     --card-foreground: 240 10% 4%;
-    --card-border: 240 6% 90%;
 
-    /* Popover */
-    --popover: 0 0% 100%;
+    --popover:            0 0% 100%;
     --popover-foreground: 240 10% 4%;
 
-    /* Brand — Indigo/Violet gradient system */
-    --primary: 243 75% 59%;
+    /* Brand — Apple-style Indigo */
+    --primary:            243 75% 59%;
     --primary-foreground: 0 0% 100%;
-    --primary-hover: 243 75% 52%;
 
-    /* Secondary */
-    --secondary: 240 5% 96%;
+    --secondary:            240 5% 96%;
     --secondary-foreground: 240 10% 4%;
 
-    /* Muted */
-    --muted: 240 5% 96%;
+    --muted:            240 5% 96%;
     --muted-foreground: 240 4% 46%;
 
-    /* Accent */
-    --accent: 240 5% 96%;
+    --accent:            240 5% 96%;
     --accent-foreground: 240 10% 4%;
 
-    /* Semantic */
-    --destructive: 0 84% 60%;
+    --destructive:            0 84% 60%;
     --destructive-foreground: 0 0% 100%;
-    --success: 142 71% 45%;
-    --warning: 38 92% 50%;
-    --info: 199 89% 48%;
 
-    /* Border / Input */
+    /* Apple-style border — very subtle */
     --border: 240 6% 90%;
-    --input: 240 6% 90%;
-    --ring: 243 75% 59%;
+    --input:  240 6% 90%;
+    --ring:   243 75% 59%;
 
-    /* Radius — Apple-like rounding */
+    /* Apple corner radius */
     --radius: 12px;
-    --radius-sm: 8px;
-    --radius-lg: 16px;
-    --radius-xl: 20px;
-    --radius-2xl: 24px;
 
     /* Charts */
     --chart-1: 243 75% 59%;
@@ -71,74 +54,60 @@
     --chart-4: 142 71% 45%;
     --chart-5: 38 92% 50%;
 
-    /* Shadows */
-    --shadow-sm: 0 1px 2px rgba(0,0,0,0.04), 0 1px 1px rgba(0,0,0,0.02);
-    --shadow: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -2px rgba(0,0,0,0.03);
-    --shadow-md: 0 10px 15px -3px rgba(0,0,0,0.06), 0 4px 6px -4px rgba(0,0,0,0.03);
-    --shadow-lg: 0 20px 25px -5px rgba(0,0,0,0.07), 0 8px 10px -6px rgba(0,0,0,0.04);
-    --shadow-xl: 0 25px 50px -12px rgba(0,0,0,0.15);
+    /* Apple-style shadows */
+    --shadow-xs: 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-sm: 0 2px 8px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+    --shadow-lg: 0 8px 32px rgba(0,0,0,0.10), 0 4px 8px rgba(0,0,0,0.06);
+    --shadow-xl: 0 20px 60px rgba(0,0,0,0.12), 0 8px 16px rgba(0,0,0,0.06);
   }
 
   .dark {
-    /* Backgrounds — Pure dark like macOS */
-    --background: 0 0% 6%;
-    --background-secondary: 240 4% 9%;
-    --background-tertiary: 240 4% 12%;
+    --background:           240 10% 7%;
+    --background-secondary: 240 7% 10%;
+    --background-tertiary:  240 6% 13%;
 
-    /* Foregrounds */
-    --foreground: 0 0% 95%;
+    --foreground:           0 0% 95%;
     --foreground-secondary: 240 4% 65%;
-    --foreground-tertiary: 240 4% 45%;
 
-    /* Cards */
-    --card: 240 4% 9%;
+    --card:            240 7% 10%;
     --card-foreground: 0 0% 95%;
-    --card-border: 240 4% 15%;
 
-    /* Popover */
-    --popover: 240 4% 9%;
+    --popover:            240 7% 10%;
     --popover-foreground: 0 0% 95%;
 
-    /* Brand */
-    --primary: 243 75% 65%;
+    --primary:            243 75% 65%;
     --primary-foreground: 0 0% 100%;
-    --primary-hover: 243 75% 58%;
 
-    /* Secondary */
-    --secondary: 240 4% 12%;
+    --secondary:            240 5% 15%;
     --secondary-foreground: 0 0% 95%;
 
-    /* Muted */
-    --muted: 240 4% 12%;
-    --muted-foreground: 240 4% 50%;
+    --muted:            240 5% 15%;
+    --muted-foreground: 240 4% 52%;
 
-    /* Accent */
-    --accent: 240 4% 14%;
+    --accent:            240 5% 16%;
     --accent-foreground: 0 0% 95%;
 
-    /* Semantic */
-    --destructive: 0 62% 55%;
+    --destructive:            0 62% 55%;
     --destructive-foreground: 0 0% 100%;
 
-    /* Border / Input */
-    --border: 240 4% 15%;
-    --input: 240 4% 15%;
-    --ring: 243 75% 65%;
+    --border: 240 5% 18%;
+    --input:  240 5% 18%;
+    --ring:   243 75% 65%;
 
-    /* Shadows — Subtle glows */
-    --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
-    --shadow: 0 4px 6px -1px rgba(0,0,0,0.4), 0 2px 4px -2px rgba(0,0,0,0.2);
-    --shadow-md: 0 10px 15px -3px rgba(0,0,0,0.4), 0 4px 6px -4px rgba(0,0,0,0.2);
-    --shadow-lg: 0 20px 25px -5px rgba(0,0,0,0.5), 0 8px 10px -6px rgba(0,0,0,0.3);
-    --shadow-xl: 0 25px 50px -12px rgba(0,0,0,0.7);
+    --shadow-xs: 0 1px 2px rgba(0,0,0,0.3);
+    --shadow-sm: 0 2px 8px rgba(0,0,0,0.4);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.4);
+    --shadow-lg: 0 8px 32px rgba(0,0,0,0.5);
+    --shadow-xl: 0 20px 60px rgba(0,0,0,0.6);
   }
 }
 
+/* ============================================================
+   BASE RESETS
+   ============================================================ */
 @layer base {
-  * {
-    @apply border-border;
-    box-sizing: border-box;
-  }
+  * { @apply border-border; box-sizing: border-box; }
 
   html {
     -webkit-font-smoothing: antialiased;
@@ -149,83 +118,36 @@
 
   body {
     @apply bg-background text-foreground;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
-    font-variation-settings: normal;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+    font-feature-settings: 'cv02','cv03','cv04','cv11';
   }
 
-  /* Apple-like headings */
-  h1, h2, h3, h4, h5, h6 {
-    letter-spacing: -0.02em;
-    font-weight: 600;
-  }
-
-  h1 { font-size: 2.5rem; font-weight: 700; letter-spacing: -0.03em; }
+  h1 { font-size: 2.5rem;  font-weight: 700; letter-spacing: -0.03em; line-height: 1.1; }
   h2 { font-size: 1.875rem; font-weight: 700; letter-spacing: -0.025em; }
   h3 { font-size: 1.375rem; font-weight: 600; letter-spacing: -0.02em; }
+  h4 { font-size: 1.125rem; font-weight: 600; letter-spacing: -0.015em; }
 
-  /* Focus rings — Apple style */
+  /* Apple-style focus ring */
   :focus-visible {
     outline: 2px solid hsl(var(--ring));
     outline-offset: 2px;
-    border-radius: 4px;
+    border-radius: 6px;
   }
 
-  /* Scrollbar — macOS style */
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  /* macOS-style scrollbar */
+  ::-webkit-scrollbar       { width: 5px; height: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 100px; }
-  ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+  ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground) / 0.5); }
 
-  /* Selection */
-  ::selection {
-    background: hsl(var(--primary) / 0.2);
-    color: hsl(var(--foreground));
-  }
+  ::selection { background: hsl(var(--primary) / 0.15); }
 }
 
 /* ============================================================
-   UTILITY CLASSES — Apple Design Tokens
+   UTILITY CLASSES
    ============================================================ */
 @layer utilities {
-  /* Typography */
-  .text-label { @apply text-xs font-semibold tracking-widest uppercase text-muted-foreground; }
-  .text-display { @apply text-5xl md:text-7xl font-black tracking-tighter; }
-  .text-title { @apply text-3xl font-bold tracking-tight; }
-  .text-headline { @apply text-xl font-semibold tracking-tight; }
-  .text-body { @apply text-sm leading-relaxed; }
-  .text-caption { @apply text-xs text-muted-foreground; }
-
-  /* Surfaces */
-  .surface { @apply bg-card border border-border; }
-  .surface-hover { @apply hover:border-primary/30 hover:bg-primary/[0.02] transition-colors; }
-
-  /* Glass morphism — Apple-style */
-  .glass {
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-    background: hsl(var(--background) / 0.8);
-    border: 1px solid hsl(var(--border) / 0.5);
-  }
-
-  .glass-dark {
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-    background: hsl(0 0% 0% / 0.4);
-    border: 1px solid hsl(var(--border) / 0.3);
-  }
-
-  /* Apple-like card hover */
-  .card-lift {
-    @apply transition-all duration-300 ease-out;
-    box-shadow: var(--shadow);
-  }
-  .card-lift:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-lg);
-  }
-
-  /* Gradient text */
+  /* Gradient text — signature AgentDyne style */
   .gradient-text {
     background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #06b6d4 100%);
     -webkit-background-clip: text;
@@ -233,135 +155,110 @@
     -webkit-text-fill-color: transparent;
   }
 
-  .gradient-text-gold {
-    background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
+  /* Apple glass card */
+  .glass {
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    background: rgba(255,255,255,0.72);
+    border: 1px solid rgba(0,0,0,0.06);
+  }
+  .dark .glass {
+    background: rgba(20,20,30,0.75);
+    border: 1px solid rgba(255,255,255,0.08);
   }
 
-  /* Apple glow effects */
-  .glow-primary {
-    box-shadow: 0 0 20px hsl(var(--primary) / 0.3), 0 0 60px hsl(var(--primary) / 0.1);
+  /* Card lift — Apple hover */
+  .card-lift {
+    @apply transition-all duration-300;
+    box-shadow: var(--shadow-sm);
   }
-  .glow-success {
-    box-shadow: 0 0 20px hsl(142 71% 45% / 0.3);
+  .card-lift:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lg);
   }
 
-  /* Background patterns */
+  /* Surface */
+  .surface         { @apply bg-card border border-border rounded-2xl; }
+  .surface-hover   { @apply hover:border-primary/30 hover:bg-primary/[0.02] transition-colors; }
+
+  /* Status dots */
+  .dot-green  { @apply w-2 h-2 rounded-full bg-green-500; box-shadow: 0 0 0 2px rgba(34,197,94,0.25); }
+  .dot-yellow { @apply w-2 h-2 rounded-full bg-yellow-500; box-shadow: 0 0 0 2px rgba(234,179,8,0.25); }
+  .dot-red    { @apply w-2 h-2 rounded-full bg-red-500;    box-shadow: 0 0 0 2px rgba(239,68,68,0.25); }
+
+  /* Gradient bg — hero */
+  .bg-hero {
+    background: radial-gradient(ellipse 80% 60% at 50% -10%, hsl(var(--primary)/0.12) 0%, transparent 70%);
+  }
+
+  /* Grid background */
   .bg-grid {
     background-image:
-      linear-gradient(hsl(var(--border) / 0.5) 1px, transparent 1px),
-      linear-gradient(90deg, hsl(var(--border) / 0.5) 1px, transparent 1px);
-    background-size: 40px 40px;
+      linear-gradient(hsl(var(--border)/0.6) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--border)/0.6) 1px, transparent 1px);
+    background-size: 32px 32px;
   }
-
-  .bg-dots {
-    background-image: radial-gradient(hsl(var(--border)) 1px, transparent 1px);
-    background-size: 20px 20px;
-  }
-
-  /* Noise texture */
-  .bg-noise {
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
-  }
-
-  /* Status indicators */
-  .status-dot-green { @apply w-2 h-2 rounded-full bg-green-400 shadow-[0_0_6px_rgba(74,222,128,0.6)]; }
-  .status-dot-yellow { @apply w-2 h-2 rounded-full bg-yellow-400 shadow-[0_0_6px_rgba(250,204,21,0.6)]; }
-  .status-dot-red { @apply w-2 h-2 rounded-full bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.6)]; }
-  .status-dot-blue { @apply w-2 h-2 rounded-full bg-blue-400 shadow-[0_0_6px_rgba(96,165,250,0.6)]; }
 
   /* Scrollbar hide */
   .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
   .scrollbar-hide::-webkit-scrollbar { display: none; }
 
-  /* Shine animation */
-  .shine {
-    position: relative;
-    overflow: hidden;
+  /* Section header */
+  .section-header {
+    @apply text-[11px] font-semibold tracking-widest uppercase text-muted-foreground;
   }
-  .shine::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.04) 50%, transparent 60%);
-    transform: translateX(-100%);
-    transition: transform 0.6s ease;
-  }
-  .shine:hover::after { transform: translateX(100%); }
 
-  /* Number tickers */
-  .tabular-nums { font-variant-numeric: tabular-nums; }
+  /* Tabular nums */
+  .nums { font-variant-numeric: tabular-nums; }
+
+  /* Page header */
+  .page-header { @apply mb-8; }
+
+  /* Skeleton shimmer */
+  .skeleton {
+    background: linear-gradient(90deg,
+      hsl(var(--muted)) 25%,
+      hsl(var(--muted-foreground)/0.08) 50%,
+      hsl(var(--muted)) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.6s infinite;
+  }
+
+  /* Apple metric card */
+  .metric-card {
+    @apply bg-card border border-border rounded-2xl p-5;
+    box-shadow: var(--shadow-xs);
+  }
 }
 
 /* ============================================================
-   COMPONENT OVERRIDES — Apple polish
+   COMPONENT STYLES
    ============================================================ */
 @layer components {
-  /* Inputs */
-  .input-apple {
-    @apply h-10 rounded-xl border border-border bg-background px-3.5 text-sm
-           placeholder:text-muted-foreground
-           focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/50
-           transition-all duration-200;
-  }
-
-  /* Buttons */
-  .btn-apple {
-    @apply inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm font-semibold
-           transition-all duration-200 active:scale-[0.98];
-  }
-
-  .btn-primary {
-    @apply btn-apple bg-primary text-primary-foreground shadow-sm
-           hover:bg-primary/90 hover:shadow-md active:shadow-sm;
-  }
-
-  .btn-secondary {
-    @apply btn-apple bg-secondary text-secondary-foreground border border-border
-           hover:bg-secondary/80;
-  }
-
-  /* Cards */
-  .card-apple {
-    @apply bg-card border border-border rounded-2xl overflow-hidden;
-    box-shadow: var(--shadow-sm);
-  }
-
-  .card-interactive {
-    @apply card-apple card-lift cursor-pointer surface-hover;
-  }
-
-  /* Badges */
-  .badge-apple {
-    @apply inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold;
-  }
-
-  /* Sidebar nav items */
+  /* Nav item */
   .nav-item {
     @apply flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium
            text-muted-foreground transition-all duration-150
            hover:text-foreground hover:bg-accent;
   }
   .nav-item-active {
-    @apply text-foreground bg-primary/8 hover:bg-primary/8;
     color: hsl(var(--primary));
+    background: hsl(var(--primary)/0.08);
   }
 
-  /* Section headers */
-  .section-header {
-    @apply text-[11px] font-semibold tracking-wider uppercase text-muted-foreground px-3 mb-1;
+  /* Apple-style input */
+  .input-apple {
+    @apply flex h-10 w-full rounded-xl border border-border bg-background px-3.5 text-sm
+           placeholder:text-muted-foreground/60
+           focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40
+           transition-all duration-200;
   }
 
-  /* Page header */
-  .page-header {
-    @apply mb-8 pb-6 border-b border-border;
-  }
-
-  /* Metric cards */
-  .metric-card {
-    @apply card-apple p-5;
+  /* Apple button base */
+  .btn-base {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl text-sm font-semibold
+           transition-all duration-200 active:scale-[0.98] select-none;
   }
 }
 
@@ -369,67 +266,41 @@
    ANIMATIONS
    ============================================================ */
 @keyframes fade-up {
-  from { opacity: 0; transform: translateY(16px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
-
-@keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
+@keyframes fade-in  { from { opacity: 0; } to { opacity: 1; } }
 @keyframes scale-in {
-  from { opacity: 0; transform: scale(0.95); }
-  to { opacity: 1; transform: scale(1); }
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
 }
-
-@keyframes slide-right {
-  from { opacity: 0; transform: translateX(-12px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-
 @keyframes shimmer {
   from { background-position: -200% 0; }
-  to { background-position: 200% 0; }
+  to   { background-position:  200% 0; }
 }
-
-@keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 8px hsl(var(--primary) / 0.4); }
-  50% { box-shadow: 0 0 20px hsl(var(--primary) / 0.7); }
-}
-
+@keyframes spin { to { transform: rotate(360deg); } }
 @keyframes accordion-down {
   from { height: 0; }
-  to { height: var(--radix-accordion-content-height); }
+  to   { height: var(--radix-accordion-content-height); }
 }
 @keyframes accordion-up {
   from { height: var(--radix-accordion-content-height); }
-  to { height: 0; }
+  to   { height: 0; }
+}
+@keyframes pulse-dot {
+  0%,100% { opacity: 1; }
+  50%     { opacity: 0.4; }
 }
 
-.animate-fade-up { animation: fade-up 0.4s ease-out forwards; }
-.animate-fade-in { animation: fade-in 0.3s ease-out forwards; }
-.animate-scale-in { animation: scale-in 0.25s ease-out forwards; }
-.animate-slide-right { animation: slide-right 0.3s ease-out forwards; }
+.animate-fade-up    { animation: fade-up  0.4s ease-out both; }
+.animate-fade-in    { animation: fade-in  0.3s ease-out both; }
+.animate-scale-in   { animation: scale-in 0.25s ease-out both; }
+.animate-spin       { animation: spin     0.8s linear infinite; }
 .animate-accordion-down { animation: accordion-down 0.2s ease-out; }
-.animate-accordion-up { animation: accordion-up 0.2s ease-out; }
+.animate-accordion-up   { animation: accordion-up   0.2s ease-out; }
+.animate-pulse-dot  { animation: pulse-dot 2s ease-in-out infinite; }
 
-/* Stagger delays */
-.delay-75 { animation-delay: 75ms; }
+.delay-75  { animation-delay:  75ms; }
 .delay-150 { animation-delay: 150ms; }
-.delay-200 { animation-delay: 200ms; }
 .delay-300 { animation-delay: 300ms; }
-.delay-400 { animation-delay: 400ms; }
 .delay-500 { animation-delay: 500ms; }
-
-/* Loading skeleton */
-.skeleton {
-  background: linear-gradient(90deg,
-    hsl(var(--muted)) 25%,
-    hsl(var(--muted-foreground) / 0.1) 50%,
-    hsl(var(--muted)) 75%
-  );
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
-  border-radius: var(--radius);
-}
