@@ -1,11 +1,7 @@
-# Cloudflare Pages configuration
-# Build settings are managed in the Cloudflare Dashboard:
-#
-# Root Directory:          platform
-# Build command:           npm run build
-# Build output directory:  .next
-# Node.js version:         20
-# Framework preset:        Next.js
-#
-# Environment variables must be set in:
-# Cloudflare Dashboard → Pages → Settings → Environment Variables
+name = "agentdyne-platform"
+pages_build_output_dir = ".next"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+NEXT_PUBLIC_APP_NAME = "AgentDyne"
