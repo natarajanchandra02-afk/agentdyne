@@ -20,6 +20,10 @@ const nextConfig = {
   // 🔥 THIS IS THE CRITICAL FIX
   webpack(config) {
     config.cache = false;
+       // 🚨 HARD REMOVE OUTPUT CACHE
+    config.infrastructureLogging = {
+      level: "error",
+    };
     return config;
   },
 
