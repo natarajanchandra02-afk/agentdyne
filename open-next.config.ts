@@ -1,3 +1,5 @@
-# open-next.config.ts is intentionally empty
-# Not used — deploying via Cloudflare Pages native Next.js support
-# which only requires: next build
+// This file intentionally left minimal.
+// Deployment is handled by Cloudflare Pages native Next.js support.
+// Build command: npm run build
+// Output directory: .next
+export default {}
