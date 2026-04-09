@@ -2,106 +2,74 @@ import { createServerClient } from "@supabase/ssr"
 import { cookies } from "next/headers"
 import type { Database } from "@/types/supabase"
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
+const SUPABASE_URL      = process.env.NEXT_PUBLIC_SUPABASE_URL
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
 
-// Dummy client returned during build when env vars are absent
-function makeDummyServerClient() {
+// Safe dummy for build time when env vars are absent
+function makeDummyClient() {
   return {
     auth: {
-      getUser: async () => ({ data: { user: null }, error: null }),
+      getUser:                async () => ({ data: { user: null }, error: null }),
       exchangeCodeForSession: async () => ({ error: null }),
+      updateUser:             async () => ({ data: null, error: null }),
     },
-    from: () => ({
+    from: (_: string) => ({
       select: () => ({
-        eq: () => ({
-          single: async () => ({ data: null, error: null }),
-          order: () => ({ ascending: () => ({ data: [], error: null, count: 0 }) }),
-          limit: () => ({ data: [], error: null }),
-          gte: () => ({ data: [], error: null }),
-          head: true,
-        }),
-        order: () => ({
-          ascending: () => ({ data: [], error: null }),
-          limit: () => ({ data: [], error: null }),
-        }),
-        count: () => ({ data: [], error: null, count: 0 }),
-        limit: () => ({ data: [], error: null }),
-        gte: () => ({ data: [], error: null }),
-        range: () => ({ data: [], error: null, count: 0 }),
-        textSearch: () => ({
-          eq: () => ({
-            order: () => ({
-              range: () => ({ data: [], error: null, count: 0 }),
-            }),
-          }),
-          order: () => ({
-            range: () => ({ data: [], error: null, count: 0 }),
-          }),
-        }),
+        eq:         () => ({ single: async () => ({ data: null, error: null }), limit: () => ({ data: [], error: null }), order: () => ({ data: [], error: null }), gte: () => ({ data: [], error: null }), head: true }),
+        order:      () => ({ data: [], error: null, ascending: () => ({ data: [], error: null }) }),
+        limit:      () => ({ data: [], error: null }),
+        range:      () => ({ data: [], error: null, count: 0 }),
+        textSearch: () => ({ order: () => ({ range: () => ({ data: [], error: null, count: 0 }) }), eq: () => ({ order: () => ({ range: () => ({ data: [], error: null, count: 0 }) }) }) }),
+        count:      () => ({ data: [], error: null, count: 0 }),
+        gte:        () => ({ data: [], error: null }),
       }),
-      update: () => ({
-        eq: () => ({
-          select: () => ({ single: async () => ({ data: null, error: null }) }),
-          data: null,
-          error: null,
-        }),
-      }),
-      insert: () => ({
-        select: () => ({ single: async () => ({ data: null, error: null }) }),
-      }),
+      update: () => ({ eq: () => ({ data: null, error: null, select: () => ({ single: async () => ({ data: null, error: null }) }) }) }),
+      insert: () => ({ select: () => ({ single: async () => ({ data: null, error: null }) }), data: null, error: null }),
       delete: () => ({ eq: () => ({ data: null, error: null }) }),
+      upsert: () => ({ data: null, error: null }),
     }),
-    rpc: async () => ({ data: null, error: null }),
+    rpc:     async () => ({ data: null, error: null }),
+    storage: { from: () => ({ upload: async () => ({ error: null }), getPublicUrl: () => ({ data: { publicUrl: "" } }) }) },
   } as any
 }
 
-// Next.js 15: cookies() is async — createClient must be async too
-export const createClient = async () => {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    return makeDummyServerClient()
-  }
+// Next.js 14: cookies() is SYNCHRONOUS — no await
+export function createClient() {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return makeDummyClient()
 
-  const cookieStore = await cookies()
+  // In Next.js 14, cookies() is sync
+  const cookieStore = cookies()
 
   return createServerClient<Database>(
     SUPABASE_URL,
     SUPABASE_ANON_KEY,
     {
       cookies: {
-        getAll() { return cookieStore.getAll() },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
-            )
-          } catch {}
+        getAll()       { return cookieStore.getAll() },
+        setAll(list)   {
+          try { list.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) }
+          catch { /* read-only context during static render — ignore */ }
         },
       },
     }
   )
 }
 
-export const createAdminClient = async () => {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-    return makeDummyServerClient()
-  }
+export function createAdminClient() {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) return makeDummyClient()
 
-  const cookieStore = await cookies()
+  const cookieStore = cookies()
 
   return createServerClient<Database>(
     SUPABASE_URL,
     SUPABASE_SERVICE_KEY,
     {
       cookies: {
-        getAll() { return cookieStore.getAll() },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
-            )
-          } catch {}
+        getAll()     { return cookieStore.getAll() },
+        setAll(list) {
+          try { list.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) }
+          catch {}
         },
       },
     }

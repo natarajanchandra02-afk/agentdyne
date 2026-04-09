@@ -13,9 +13,9 @@ export function middleware(req: NextRequest) {
   )
   if (!isProtected) return NextResponse.next()
 
-  // Check for Supabase session cookie (edge-safe, no server imports)
-  const hasSession = Array.from(req.cookies.keys()).some(
-    key => key.startsWith('sb-') && key.endsWith('-auth-token')
+  // req.cookies.getAll() returns { name, value }[] — works in all edge runtimes
+  const hasSession = req.cookies.getAll().some(
+    ({ name }) => name.startsWith('sb-') && name.endsWith('-auth-token')
   )
 
   if (!hasSession) {

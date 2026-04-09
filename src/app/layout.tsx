@@ -1,16 +1,19 @@
 import type { Metadata } from "next"
 import { Inter } from "next/font/google"
 import "./globals.css"
-import { ThemeProvider } from "@/components/providers/theme-provider"
 import { QueryProvider } from "@/components/providers/query-provider"
 import { Toaster } from "@/components/ui/toaster"
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter" })
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
+})
 
 export const metadata: Metadata = {
   title: { default: "AgentDyne — The Global Microagent Marketplace", template: "%s | AgentDyne" },
-  description: "Discover, deploy, and monetize AI microagents. The world's largest marketplace for production-ready AI agents.",
-  keywords: ["AI agents", "microagents", "AI marketplace", "LLM tools", "agent platform", "MCP agents"],
+  description: "Discover, deploy, and monetize AI microagents.",
+  keywords: ["AI agents", "microagents", "AI marketplace", "LLM tools", "MCP agents"],
   openGraph: {
     type: "website",
     locale: "en_US",
@@ -26,15 +29,14 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body className={inter.variable}>
-        {/* defaultTheme="light" = Apple white by default */}
-        <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
-          <QueryProvider>
-            {children}
-            <Toaster />
-          </QueryProvider>
-        </ThemeProvider>
+    // NO suppressHydrationWarning + NO dark class = always white
+    <html lang="en">
+      {/* bg-white forces white regardless of any saved theme in localStorage */}
+      <body className={`${inter.variable} font-sans bg-white text-zinc-900 antialiased`}>
+        <QueryProvider>
+          {children}
+          <Toaster />
+        </QueryProvider>
       </body>
     </html>
   )

@@ -1,5 +1,4 @@
-export const runtime = 'edge'
-
+// No edge runtime — uses cookies() via createClient
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import Anthropic from "@anthropic-ai/sdk";
@@ -20,7 +19,7 @@ export async function POST(req: NextRequest) {
   if (limited) return limited;
 
   try {
-    const supabase = await createClient();
+    const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
 
     let userId = user?.id;
@@ -102,7 +101,7 @@ export async function POST(req: NextRequest) {
         system: agent.system_prompt,
         messages: [{ role: "user", content: userMessage }],
         temperature: agent.temperature || 0.7,
-      });
+      } as any);
 
       const latencyMs = Date.now() - startTime;
       const outputText = response.content[0].type === "text" ? response.content[0].text : "";

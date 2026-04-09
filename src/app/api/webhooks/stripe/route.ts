@@ -1,5 +1,3 @@
-export const runtime = 'edge'
-
 import { NextRequest, NextResponse } from "next/server"
 import { createAdminClient } from "@/lib/supabase/server"
 import { stripe } from "@/lib/stripe"
@@ -27,7 +25,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 })
   }
 
-  const supabase = await createAdminClient()
+  const supabase = createAdminClient()
 
   try {
     switch (event.type) {
@@ -107,12 +105,14 @@ export async function POST(req: NextRequest) {
         const userId  = (invoice.subscription_details?.metadata as any)?.userId
         if (!userId) break
 
-        await supabase.from("profiles").update({ subscription_status: "past_due" }).eq("id", userId)
+        await supabase.from("profiles").update({
+          subscription_status: "past_due",
+        }).eq("id", userId)
 
         await supabase.from("notifications").insert({
           user_id:    userId,
           title:      "Payment failed",
-          body:       "Your subscription payment failed. Please update your payment method to avoid service interruption.",
+          body:       "Your subscription payment failed. Please update your payment method.",
           type:       "billing_failure",
           action_url: "/billing",
         })
@@ -133,7 +133,8 @@ export async function POST(req: NextRequest) {
 
       case "charge.refunded": {
         const charge = event.data.object as Stripe.Charge
-        await supabase.from("transactions").update({ status: "refunded" })
+        await supabase.from("transactions")
+          .update({ status: "refunded" })
           .eq("stripe_charge_id", charge.id)
         break
       }
