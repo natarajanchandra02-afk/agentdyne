@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
-import { Loader2, Mail, Lock, Github, Chrome } from "lucide-react"
+import { Loader2, Mail, Lock, Github, Chrome, Code2, BarChart3, Megaphone, TrendingUp } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -19,6 +19,13 @@ const schema = z.object({
   password: z.string().min(8, "Min 8 characters"),
 })
 type FormData = z.infer<typeof schema>
+
+const PANEL_STATS = [
+  { icon: Code2,      color: "text-blue-500",   bg: "bg-blue-50",   label: "1,840 Coding agents"    },
+  { icon: BarChart3,  color: "text-indigo-500",  bg: "bg-indigo-50", label: "1,100 Data agents"      },
+  { icon: Megaphone,  color: "text-pink-500",    bg: "bg-pink-50",   label: "1,230 Marketing agents" },
+  { icon: TrendingUp, color: "text-green-500",   bg: "bg-green-50",  label: "980 Finance agents"     },
+]
 
 export default function LoginPage() {
   const router   = useRouter()
@@ -150,14 +157,11 @@ export default function LoginPage() {
       <div className="hidden lg:flex flex-1 bg-zinc-50 border-l border-zinc-100 items-center justify-center p-12">
         <div className="max-w-sm text-center">
           <div className="grid grid-cols-2 gap-3 mb-8">
-            {[
-              { emoji: "💻", label: "1,840 Coding agents" },
-              { emoji: "📊", label: "1,100 Data agents" },
-              { emoji: "📣", label: "1,230 Marketing agents" },
-              { emoji: "💰", label: "980 Finance agents" },
-            ].map(item => (
+            {PANEL_STATS.map(item => (
               <div key={item.label} className="bg-white rounded-2xl border border-zinc-100 p-4 text-left shadow-sm">
-                <div className="text-2xl mb-1.5">{item.emoji}</div>
+                <div className={`w-8 h-8 rounded-xl ${item.bg} flex items-center justify-center mb-2`}>
+                  <item.icon className={`h-4 w-4 ${item.color}`} />
+                </div>
                 <p className="text-xs font-medium text-zinc-700">{item.label}</p>
               </div>
             ))}
