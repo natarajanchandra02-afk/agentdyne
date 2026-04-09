@@ -1,3 +1,5 @@
+export const runtime = 'edge'
+
 import { NextRequest, NextResponse } from "next/server"
 
 // POST /api/agents/[id]/execute — public API endpoint (alias for /api/execute)

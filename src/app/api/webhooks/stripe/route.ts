@@ -1,3 +1,5 @@
+export const runtime = 'edge'
+
 import { NextRequest, NextResponse } from "next/server"
 import { createAdminClient } from "@/lib/supabase/server"
 import { stripe } from "@/lib/stripe"
@@ -10,11 +12,17 @@ const PLAN_QUOTAS: Record<string, { quota: number; plan: string }> = {
 }
 
 export async function POST(req: NextRequest) {
+  // Read raw body as text — required for Stripe signature verification
   const body      = await req.text()
-  const signature = req.headers.get("stripe-signature")!
+  const signature = req.headers.get("stripe-signature")
+
+  if (!signature) {
+    return NextResponse.json({ error: "Missing stripe-signature header" }, { status: 400 })
+  }
 
   let event: Stripe.Event
   try {
+    // constructEventAsync uses SubtleCrypto — fully compatible with edge runtime
     event = await stripe.webhooks.constructEventAsync(
       body,
       signature,
