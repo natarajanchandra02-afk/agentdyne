@@ -4,15 +4,15 @@ import { useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { motion } from "framer-motion"
-import { Star, Zap, CheckCircle, Play, Code2, BookOpen, MessageSquare, Tag, Globe, Clock, TrendingUp, ArrowLeft, Copy, Check, Loader2 } from "lucide-react"
+import { Star, Zap, CheckCircle, Play, Code2, BookOpen, MessageSquare, Tag, Globe, Clock, TrendingUp, ArrowLeft, Copy, Check, Loader2, Bot } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Textarea } from "@/components/ui/textarea"
 import { Navbar } from "@/components/layout/navbar"
 import { Footer } from "@/components/layout/footer"
-import { formatNumber, formatCurrency, formatDate, getInitials, categoryLabel, CATEGORY_ICONS } from "@/lib/utils"
+import { CategoryIcon } from "@/components/ui/category-icon"
+import { formatNumber, formatCurrency, formatDate, getInitials, categoryLabel } from "@/lib/utils"
 import toast from "react-hot-toast"
 
 interface Props {
@@ -76,8 +76,9 @@ const data = await res.json();`
               {/* Header */}
               <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
                 <div className="flex items-start gap-4">
-                  <div className="w-16 h-16 rounded-2xl bg-zinc-50 border border-zinc-100 flex items-center justify-center text-3xl flex-shrink-0">
-                    {CATEGORY_ICONS[agent.category] || "🤖"}
+                  {/* Category icon box — replaces emoji */}
+                  <div className="w-16 h-16 rounded-2xl bg-zinc-50 border border-zinc-100 flex items-center justify-center flex-shrink-0">
+                    <CategoryIcon category={agent.category} className="h-8 w-8 text-zinc-500" />
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -88,8 +89,8 @@ const data = await res.json();`
                         </span>
                       )}
                       {agent.is_featured && (
-                        <span className="text-xs font-semibold bg-amber-50 text-amber-600 border border-amber-100 px-2 py-0.5 rounded-full">
-                          ⭐ Featured
+                        <span className="flex items-center gap-1 text-xs font-semibold bg-amber-50 text-amber-600 border border-amber-100 px-2 py-0.5 rounded-full">
+                          <Star className="h-3 w-3 fill-amber-400 text-amber-400" /> Featured
                         </span>
                       )}
                     </div>
@@ -106,8 +107,9 @@ const data = await res.json();`
                       <div className="flex items-center gap-1 text-zinc-400 nums">
                         <Clock className="h-4 w-4" /> ~{agent.average_latency_ms}ms avg
                       </div>
-                      <span className="text-xs font-medium bg-zinc-50 border border-zinc-100 text-zinc-600 px-2 py-0.5 rounded-full">
-                        {CATEGORY_ICONS[agent.category]} {categoryLabel(agent.category)}
+                      <span className="flex items-center gap-1 text-xs font-medium bg-zinc-50 border border-zinc-100 text-zinc-600 px-2 py-0.5 rounded-full">
+                        <CategoryIcon category={agent.category} className="h-3 w-3" />
+                        {categoryLabel(agent.category)}
                       </span>
                     </div>
                   </div>

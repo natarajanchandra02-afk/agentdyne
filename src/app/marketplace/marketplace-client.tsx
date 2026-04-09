@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { useRouter, usePathname } from "next/navigation"
-import { Search, Grid3X3, List, X } from "lucide-react"
+import { Search, Grid3X3, List, X, Star } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { AgentCard } from "@/components/marketplace/agent-card"
@@ -100,9 +100,8 @@ export function MarketplaceClient({ agents, featured, total, page, pageSize, sea
 
           {/* Filters row */}
           <div className="flex flex-col lg:flex-row gap-4 mb-6">
-            {/* Category pills — icon + label */}
+            {/* Category pills */}
             <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide flex-1 pb-1">
-              {/* All pill */}
               <button
                 onClick={() => updateParams({ category: "all" })}
                 className={cn(
@@ -220,6 +219,3 @@ export function MarketplaceClient({ agents, featured, total, page, pageSize, sea
     </div>
   )
 }
-
-// Missing import — add Star locally
-import { Star } from "lucide-react"

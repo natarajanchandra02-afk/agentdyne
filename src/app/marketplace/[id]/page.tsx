@@ -1,6 +1,7 @@
+"use client"
+
 export const runtime = 'edge'
 
-"use client"
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
@@ -32,7 +33,17 @@ export default function AgentDetailPage() {
     load()
   }, [id])
 
-  if (notFound) return <div className="min-h-screen flex items-center justify-center"><p className="text-muted-foreground">Agent not found</p></div>
-  if (!data) return <div className="pt-20 max-w-7xl mx-auto px-6 py-8 grid grid-cols-3 gap-4">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-64 rounded-2xl" />)}</div>
+  if (notFound) return (
+    <div className="min-h-screen flex items-center justify-center">
+      <p className="text-muted-foreground">Agent not found</p>
+    </div>
+  )
+
+  if (!data) return (
+    <div className="pt-20 max-w-7xl mx-auto px-6 py-8 grid grid-cols-3 gap-4">
+      {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-64 rounded-2xl" />)}
+    </div>
+  )
+
   return <AgentDetailClient {...data} />
 }

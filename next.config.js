@@ -14,10 +14,8 @@ const nextConfig = {
       { protocol: "https", hostname: "*.googleusercontent.com" },
     ],
   },
-  // Required for @cloudflare/next-on-pages edge runtime
-  experimental: {
-    serverComponentsExternalPackages: [],
-  },
+  // Moved from experimental.serverComponentsExternalPackages (deprecated in Next 15)
+  serverExternalPackages: [],
 }
 
 module.exports = nextConfig
