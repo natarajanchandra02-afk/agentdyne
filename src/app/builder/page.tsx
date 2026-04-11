@@ -5,26 +5,31 @@ import { useRouter } from "next/navigation"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
-import { Bot, Loader2, ArrowRight, Wand2, Tag, Cpu, DollarSign } from "lucide-react"
+import { Bot, Loader2, ArrowRight, Wand2, Cpu, DollarSign, Zap, Activity, Gauge } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { CategoryIcon } from "@/components/ui/category-icon"
 import { DashboardSidebar } from "@/components/dashboard/sidebar"
 import { createClient } from "@/lib/supabase/client"
-import { slugify, CATEGORY_ICONS, categoryLabel, cn } from "@/lib/utils"
+import { slugify, categoryLabel, cn } from "@/lib/utils"
 import toast from "react-hot-toast"
 
-const CATEGORIES = ["productivity","coding","marketing","finance","legal","customer_support","data_analysis","content","research","hr","sales","devops","security","other"]
+const CATEGORIES = [
+  "productivity","coding","marketing","finance","legal",
+  "customer_support","data_analysis","content","research",
+  "hr","sales","devops","security","other",
+]
 
 const MODELS = [
-  { value: "claude-sonnet-4-20250514",  label: "Claude Sonnet 4 — Balanced ⚡" },
-  { value: "claude-opus-4-6",           label: "Claude Opus 4.6 — Most Powerful 🔥" },
-  { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 — Fastest 💨" },
-  { value: "gpt-4o",                    label: "GPT-4o" },
-  { value: "gpt-4o-mini",              label: "GPT-4o Mini" },
-  { value: "gemini-1.5-pro",           label: "Gemini 1.5 Pro" },
+  { value: "claude-sonnet-4-20250514",  label: "Claude Sonnet 4",    sub: "Balanced — recommended",  badge: "Popular" },
+  { value: "claude-opus-4-6",           label: "Claude Opus 4.6",    sub: "Most powerful",            badge: "Best" },
+  { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5",   sub: "Fastest / lowest cost",   badge: "Fast" },
+  { value: "gpt-4o",                    label: "GPT-4o",             sub: "OpenAI flagship",          badge: null },
+  { value: "gpt-4o-mini",               label: "GPT-4o Mini",        sub: "OpenAI lightweight",       badge: null },
+  { value: "gemini-1.5-pro",            label: "Gemini 1.5 Pro",     sub: "Google flagship",          badge: null },
 ]
 
 const schema = z.object({
@@ -58,22 +63,21 @@ export default function BuilderPage() {
   })
 
   const pricingModel = watch("pricing_model")
+  const modelName    = watch("model_name")
 
   const onSubmit = async (data: FormData) => {
     setLoading(true)
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.push("/login"); return }
-
       const { data: agent, error } = await supabase.from("agents").insert({
         ...data,
         seller_id: user.id,
         slug:      slugify(data.name) + "-" + Math.random().toString(36).slice(2, 7),
         status:    "draft",
       }).select().single()
-
       if (error) throw error
-      toast.success("Agent created! Opening editor…")
+      toast.success("Agent created!")
       router.push(`/builder/${agent.id}`)
     } catch (err: any) {
       toast.error(err.message)
@@ -107,46 +111,48 @@ export default function BuilderPage() {
           <div className="flex items-center gap-2 mb-8">
             {STEPS.map((s, i) => (
               <div key={s.n} className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setStep(s.n)}
+                <button type="button" onClick={() => step > s.n && setStep(s.n)}
                   className={cn(
                     "flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all",
-                    step === s.n
-                      ? "bg-zinc-900 text-white"
-                      : step > s.n
-                      ? "bg-green-50 text-green-700 border border-green-100"
-                      : "bg-zinc-50 text-zinc-400 border border-zinc-100"
-                  )}
-                >
+                    step === s.n  ? "bg-zinc-900 text-white" :
+                    step >  s.n  ? "bg-green-50 text-green-700 border border-green-100 cursor-pointer" :
+                                   "bg-zinc-50 text-zinc-400 border border-zinc-100 cursor-default"
+                  )}>
                   <s.icon className="h-3 w-3" />
                   {s.label}
                 </button>
-                {i < STEPS.length - 1 && <div className="h-px w-4 bg-zinc-100" />}
+                {i < STEPS.length - 1 && <div className="h-px w-5 bg-zinc-100" />}
               </div>
             ))}
           </div>
 
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
-            {/* Step 1 — Details */}
+
+            {/* ── STEP 1 — Details ─────────────────────────────────── */}
             {step === 1 && (
               <div className="space-y-4">
-                <div className="bg-white border border-zinc-100 rounded-2xl p-6 space-y-4">
+                <div className="bg-white border border-zinc-100 rounded-2xl p-6 space-y-4"
+                  style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
                   <h2 className="font-semibold text-zinc-900 text-sm flex items-center gap-2">
                     <Wand2 className="h-4 w-4 text-primary" /> Basic Information
                   </h2>
+
                   <div className="space-y-1.5">
                     <Label className="text-sm font-medium text-zinc-700">Agent Name *</Label>
                     <Input placeholder="e.g. Email Summarizer Pro"
-                      className="rounded-xl border-zinc-200" {...register("name")} />
+                      className="rounded-xl border-zinc-200 h-10" {...register("name")} />
                     {errors.name && <p className="text-xs text-red-500">{errors.name.message}</p>}
                   </div>
+
                   <div className="space-y-1.5">
-                    <Label className="text-sm font-medium text-zinc-700">Description * <span className="text-zinc-400 font-normal">(shown on marketplace)</span></Label>
+                    <Label className="text-sm font-medium text-zinc-700">
+                      Description * <span className="text-zinc-400 font-normal">(shown on marketplace)</span>
+                    </Label>
                     <Textarea placeholder="Describe what your agent does, who it's for, and what makes it unique…"
-                      rows={3} className="rounded-xl border-zinc-200 resize-none" {...register("description")} />
+                      rows={3} className="rounded-xl border-zinc-200 resize-none text-sm" {...register("description")} />
                     {errors.description && <p className="text-xs text-red-500">{errors.description.message}</p>}
                   </div>
+
                   <div className="space-y-1.5">
                     <Label className="text-sm font-medium text-zinc-700">Category *</Label>
                     <Select onValueChange={v => setValue("category", v)}>
@@ -156,7 +162,10 @@ export default function BuilderPage() {
                       <SelectContent className="rounded-xl">
                         {CATEGORIES.map(c => (
                           <SelectItem key={c} value={c} className="text-sm">
-                            {CATEGORY_ICONS[c]} {categoryLabel(c)}
+                            <span className="flex items-center gap-2">
+                              <CategoryIcon category={c} colored className="h-3.5 w-3.5 flex-shrink-0" />
+                              {categoryLabel(c)}
+                            </span>
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -164,119 +173,155 @@ export default function BuilderPage() {
                     {errors.category && <p className="text-xs text-red-500">{errors.category.message}</p>}
                   </div>
                 </div>
+
                 <Button type="button" onClick={() => setStep(2)}
-                  className="w-full rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold">
+                  className="w-full rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold h-10">
                   Continue to AI Config <ArrowRight className="h-4 w-4 ml-1" />
                 </Button>
               </div>
             )}
 
-            {/* Step 2 — AI Config */}
+            {/* ── STEP 2 — AI Config ───────────────────────────────── */}
             {step === 2 && (
               <div className="space-y-4">
-                <div className="bg-white border border-zinc-100 rounded-2xl p-6 space-y-4">
+                <div className="bg-white border border-zinc-100 rounded-2xl p-6 space-y-4"
+                  style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
                   <h2 className="font-semibold text-zinc-900 text-sm flex items-center gap-2">
                     <Cpu className="h-4 w-4 text-primary" /> AI Configuration
                   </h2>
+
                   <div className="space-y-1.5">
                     <Label className="text-sm font-medium text-zinc-700">AI Model *</Label>
-                    <Select defaultValue="claude-sonnet-4-20250514" onValueChange={v => setValue("model_name", v)}>
-                      <SelectTrigger className="rounded-xl border-zinc-200 h-10">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="rounded-xl">
-                        {MODELS.map(m => <SelectItem key={m.value} value={m.value} className="text-sm">{m.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
+                    <div className="grid grid-cols-1 gap-2">
+                      {MODELS.map(m => (
+                        <button key={m.value} type="button"
+                          onClick={() => setValue("model_name", m.value)}
+                          className={cn(
+                            "flex items-center justify-between px-4 py-3 rounded-xl border text-left transition-all",
+                            modelName === m.value
+                              ? "border-zinc-900 bg-zinc-900 text-white"
+                              : "border-zinc-200 bg-white hover:border-zinc-400"
+                          )}>
+                          <div>
+                            <span className={cn("text-sm font-semibold", modelName === m.value ? "text-white" : "text-zinc-900")}>
+                              {m.label}
+                            </span>
+                            <span className={cn("text-xs ml-2", modelName === m.value ? "text-zinc-400" : "text-zinc-400")}>
+                              {m.sub}
+                            </span>
+                          </div>
+                          {m.badge && (
+                            <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full",
+                              modelName === m.value
+                                ? "bg-white/20 text-white"
+                                : "bg-primary/8 text-primary"
+                            )}>
+                              {m.badge}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
                   </div>
+
                   <div className="space-y-1.5">
                     <Label className="text-sm font-medium text-zinc-700">System Prompt *</Label>
                     <Textarea
                       placeholder={`You are an expert email analyst. When given an email thread:\n1. Summarize key points concisely\n2. Identify action items\n3. Flag urgent requests\n\nReturn as structured JSON.`}
-                      rows={9}
+                      rows={8}
                       className="rounded-xl border-zinc-200 font-mono text-sm resize-none"
                       {...register("system_prompt")}
                     />
                     {errors.system_prompt && <p className="text-xs text-red-500">{errors.system_prompt.message}</p>}
                   </div>
+
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1.5">
-                      <Label className="text-sm font-medium text-zinc-700">Temperature</Label>
-                      <Input type="number" step="0.1" min="0" max="2" className="rounded-xl border-zinc-200" {...register("temperature")} />
-                      <p className="text-[11px] text-zinc-400">0 = precise, 2 = creative</p>
+                      <Label className="text-sm font-medium text-zinc-700 flex items-center gap-1.5">
+                        <Gauge className="h-3.5 w-3.5 text-zinc-400" /> Temperature
+                      </Label>
+                      <Input type="number" step="0.1" min="0" max="2"
+                        className="rounded-xl border-zinc-200 h-10" {...register("temperature")} />
+                      <p className="text-[11px] text-zinc-400">0 = precise · 2 = creative</p>
                     </div>
                     <div className="space-y-1.5">
-                      <Label className="text-sm font-medium text-zinc-700">Max Tokens</Label>
-                      <Input type="number" min="100" max="32000" className="rounded-xl border-zinc-200" {...register("max_tokens")} />
+                      <Label className="text-sm font-medium text-zinc-700 flex items-center gap-1.5">
+                        <Activity className="h-3.5 w-3.5 text-zinc-400" /> Max Tokens
+                      </Label>
+                      <Input type="number" min="100" max="32000"
+                        className="rounded-xl border-zinc-200 h-10" {...register("max_tokens")} />
                     </div>
                   </div>
                 </div>
+
                 <div className="flex gap-3">
                   <Button type="button" variant="outline" onClick={() => setStep(1)}
-                    className="flex-1 rounded-xl border-zinc-200">
-                    Back
-                  </Button>
+                    className="flex-1 rounded-xl border-zinc-200 h-10">Back</Button>
                   <Button type="button" onClick={() => setStep(3)}
-                    className="flex-1 rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold">
+                    className="flex-1 rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold h-10">
                     Continue to Pricing <ArrowRight className="h-4 w-4 ml-1" />
                   </Button>
                 </div>
               </div>
             )}
 
-            {/* Step 3 — Pricing */}
+            {/* ── STEP 3 — Pricing ─────────────────────────────────── */}
             {step === 3 && (
               <div className="space-y-4">
-                <div className="bg-white border border-zinc-100 rounded-2xl p-6 space-y-4">
+                <div className="bg-white border border-zinc-100 rounded-2xl p-6 space-y-4"
+                  style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
                   <h2 className="font-semibold text-zinc-900 text-sm flex items-center gap-2">
                     <DollarSign className="h-4 w-4 text-primary" /> Pricing Model
                   </h2>
                   <div className="grid grid-cols-2 gap-3">
-                    {(["free","per_call","subscription","freemium"] as const).map(p => (
-                      <button
-                        key={p} type="button"
-                        onClick={() => setValue("pricing_model", p)}
+                    {([
+                      { key: "free",         label: "Free",         sub: "No cost to users" },
+                      { key: "per_call",     label: "Pay per Call", sub: "Charge per execution" },
+                      { key: "subscription", label: "Subscription", sub: "Monthly recurring fee" },
+                      { key: "freemium",     label: "Freemium",     sub: "Free tier + paid calls" },
+                    ] as const).map(p => (
+                      <button key={p.key} type="button"
+                        onClick={() => setValue("pricing_model", p.key)}
                         className={cn(
-                          "p-4 rounded-xl border text-sm font-medium text-left transition-all",
-                          pricingModel === p
+                          "p-4 rounded-xl border text-left transition-all",
+                          pricingModel === p.key
                             ? "border-zinc-900 bg-zinc-900 text-white"
                             : "border-zinc-200 text-zinc-700 hover:border-zinc-400 bg-white"
-                        )}
-                      >
-                        <div className="font-bold capitalize mb-0.5">{p.replace("_"," ")}</div>
-                        <div className={cn("text-xs font-normal", pricingModel === p ? "opacity-70" : "text-zinc-400")}>
-                          {p === "free"         && "No cost to users"}
-                          {p === "per_call"     && "Charge per execution"}
-                          {p === "subscription" && "Monthly recurring fee"}
-                          {p === "freemium"     && "Free tier + paid calls"}
+                        )}>
+                        <div className={cn("font-bold text-sm mb-0.5", pricingModel === p.key ? "text-white" : "text-zinc-900")}>
+                          {p.label}
+                        </div>
+                        <div className={cn("text-xs", pricingModel === p.key ? "text-zinc-400" : "text-zinc-400")}>
+                          {p.sub}
                         </div>
                       </button>
                     ))}
                   </div>
+
                   {(pricingModel === "per_call" || pricingModel === "freemium") && (
                     <div className="space-y-1.5">
                       <Label className="text-sm font-medium text-zinc-700">Price per Call (USD)</Label>
                       <Input type="number" step="0.001" min="0" placeholder="0.010"
-                        className="rounded-xl border-zinc-200" {...register("price_per_call")} />
+                        className="rounded-xl border-zinc-200 h-10" {...register("price_per_call")} />
                     </div>
                   )}
                   {pricingModel === "subscription" && (
                     <div className="space-y-1.5">
                       <Label className="text-sm font-medium text-zinc-700">Monthly Price (USD)</Label>
                       <Input type="number" step="0.01" min="0" placeholder="9.99"
-                        className="rounded-xl border-zinc-200" {...register("subscription_price_monthly")} />
+                        className="rounded-xl border-zinc-200 h-10" {...register("subscription_price_monthly")} />
                     </div>
                   )}
                 </div>
+
                 <div className="flex gap-3">
                   <Button type="button" variant="outline" onClick={() => setStep(2)}
-                    className="flex-1 rounded-xl border-zinc-200">
-                    Back
-                  </Button>
-                  <Button type="submit"
-                    className="flex-1 rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold"
-                    disabled={loading}>
-                    {loading ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Creating…</> : <>Create Agent <ArrowRight className="h-4 w-4 ml-1" /></>}
+                    className="flex-1 rounded-xl border-zinc-200 h-10">Back</Button>
+                  <Button type="submit" disabled={loading}
+                    className="flex-1 rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold h-10">
+                    {loading
+                      ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Creating…</>
+                      : <>Create Agent <ArrowRight className="h-4 w-4 ml-1" /></>}
                   </Button>
                 </div>
               </div>
