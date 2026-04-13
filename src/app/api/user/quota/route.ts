@@ -1,7 +1,8 @@
+export const runtime = 'edge'
+
 import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 
-// GET /api/user/quota
 export async function GET() {
   try {
     const supabase = await createClient()

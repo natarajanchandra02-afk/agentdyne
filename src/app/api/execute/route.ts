@@ -1,3 +1,5 @@
+export const runtime = 'edge'
+
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import Anthropic from "@anthropic-ai/sdk"
@@ -11,8 +13,7 @@ async function hashApiKey(key: string): Promise<string> {
 }
 
 /**
- * POST /api/execute
- * Legacy / generic execute endpoint — kept for backward compatibility.
+ * POST /api/execute — legacy generic endpoint (kept for backward compatibility).
  * Prefer /api/agents/[id]/execute for new integrations.
  */
 export async function POST(req: NextRequest) {
@@ -24,7 +25,8 @@ export async function POST(req: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
 
     let userId = user?.id
-    const apiKey = req.headers.get("x-api-key") ||
+    const apiKey =
+      req.headers.get("x-api-key") ||
       req.headers.get("authorization")?.replace(/^Bearer\s+/i, "")
 
     if (!userId && apiKey) {

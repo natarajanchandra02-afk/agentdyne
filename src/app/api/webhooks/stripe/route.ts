@@ -1,3 +1,5 @@
+export const runtime = 'edge'
+
 import { NextRequest, NextResponse } from "next/server"
 import { createAdminClient } from "@/lib/supabase/server"
 import { stripe } from "@/lib/stripe"
@@ -29,7 +31,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 })
   }
 
-  // createAdminClient is now async — must be awaited
   const supabase = await createAdminClient()
 
   try {
@@ -45,8 +46,7 @@ export async function POST(req: NextRequest) {
         let planKey   = "starter"
         for (const key of Object.keys(PLAN_QUOTAS)) {
           if (process.env[`STRIPE_${key.toUpperCase()}_PRICE_ID`] === priceId) {
-            planKey = key
-            break
+            planKey = key; break
           }
         }
 
@@ -80,8 +80,7 @@ export async function POST(req: NextRequest) {
         const userId  = (invoice.subscription_details?.metadata as Record<string, string> | undefined)?.userId
         if (!userId) break
 
-        const amount      = (invoice.amount_paid || 0) / 100
-        const platformFee = amount * 0.20
+        const amount = (invoice.amount_paid || 0) / 100
 
         await supabase.from("profiles").update({
           executions_used_this_month: 0,
@@ -94,7 +93,7 @@ export async function POST(req: NextRequest) {
             ? invoice.payment_intent
             : (invoice.payment_intent as Stripe.PaymentIntent)?.id,
           amount,
-          platform_fee:  platformFee,
+          platform_fee:  amount * 0.20,
           seller_amount: amount * 0.80,
           currency:      invoice.currency,
           type:          "subscription",

@@ -1,8 +1,9 @@
+export const runtime = 'edge'
+
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { apiRateLimit, strictRateLimit } from "@/lib/rate-limit"
 
-// GET /api/agents/[id]/reviews — public, paginated
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -40,12 +41,10 @@ export async function GET(
       pagination: { total, page, limit, pages, hasNext: page < pages, hasPrev: page > 1 },
     })
   } catch (err: any) {
-    console.error("GET /api/agents/[id]/reviews:", err)
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
 
-// POST /api/agents/[id]/reviews — auth required, strict rate limit
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -63,24 +62,16 @@ export async function POST(
     const body = await req.json()
     const { rating, title, body: reviewBody } = body
 
-    if (
-      !rating ||
-      typeof rating !== "number" ||
-      !Number.isInteger(rating) ||
-      rating < 1 ||
-      rating > 5
-    ) {
+    if (!rating || typeof rating !== "number" || !Number.isInteger(rating) || rating < 1 || rating > 5) {
       return NextResponse.json({ error: "rating must be an integer between 1 and 5" }, { status: 400 })
     }
 
-    // Verify agent exists and is active
     const { data: agent } = await supabase
       .from("agents").select("id, status").eq("id", id).single()
     if (!agent || agent.status !== "active") {
       return NextResponse.json({ error: "Agent not found" }, { status: 404 })
     }
 
-    // Require at least one successful execution
     const { count: execCount } = await supabase
       .from("executions")
       .select("*", { count: "exact", head: true })
@@ -95,7 +86,6 @@ export async function POST(
       )
     }
 
-    // Prevent duplicates
     const { data: existing } = await supabase
       .from("reviews")
       .select("id")
@@ -124,7 +114,6 @@ export async function POST(
 
     return NextResponse.json(review, { status: 201 })
   } catch (err: any) {
-    console.error("POST /api/agents/[id]/reviews:", err)
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }

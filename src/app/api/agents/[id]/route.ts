@@ -1,8 +1,9 @@
+export const runtime = 'edge'
+
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { apiRateLimit } from "@/lib/rate-limit"
 
-// GET /api/agents/[id]
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }

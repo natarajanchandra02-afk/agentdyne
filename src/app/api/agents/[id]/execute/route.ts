@@ -1,3 +1,5 @@
+export const runtime = 'edge'
+
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import Anthropic from "@anthropic-ai/sdk"
@@ -10,8 +12,6 @@ async function hashApiKey(key: string): Promise<string> {
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("")
 }
 
-// POST /api/agents/[id]/execute
-// Next.js 15: params is a Promise
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -43,7 +43,6 @@ export async function POST(
           return NextResponse.json({ error: "Invalid or inactive API key" }, { status: 401 })
         }
         userId = keyRow.user_id
-        // Fire-and-forget: update last_used_at
         supabase
           .from("api_keys")
           .update({ last_used_at: new Date().toISOString() })
@@ -123,7 +122,7 @@ export async function POST(
     const userMessage = typeof input === "string" ? input : JSON.stringify(input)
 
     const modelParams = {
-      model:       (agent.model_name as string) ?? "claude-sonnet-4-20250514",
+      model:       (agent.model_name  as string) ?? "claude-sonnet-4-20250514",
       max_tokens:  (agent.max_tokens  as number) ?? 4096,
       system:      agent.system_prompt as string,
       messages:    [{ role: "user" as const, content: userMessage }],
@@ -144,23 +143,15 @@ export async function POST(
           let outputTokens = 0
 
           try {
-            // Use .stream() — returns a properly iterable MessageStream
             const msgStream = anthropic.messages.stream(modelParams)
 
             for await (const event of msgStream) {
-              if (
-                event.type === "content_block_delta" &&
-                event.delta.type === "text_delta"
-              ) {
+              if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
                 send({ type: "delta", delta: event.delta.text })
                 fullText += event.delta.text
               }
-              if (event.type === "message_delta") {
-                outputTokens = event.usage?.output_tokens ?? 0
-              }
-              if (event.type === "message_start") {
-                inputTokens = event.message?.usage?.input_tokens ?? 0
-              }
+              if (event.type === "message_delta")  outputTokens = event.usage?.output_tokens ?? 0
+              if (event.type === "message_start")  inputTokens  = event.message?.usage?.input_tokens ?? 0
             }
 
             const latencyMs = Date.now() - startMs
@@ -170,7 +161,6 @@ export async function POST(
             controller.enqueue(encoder.encode("data: [DONE]\n\n"))
             controller.close()
 
-            // Persist asynchronously — don't block the stream close
             await Promise.all([
               supabase.from("executions").update({
                 status: "success", output: fullText,
@@ -186,9 +176,8 @@ export async function POST(
             controller.close()
             if (execution?.id) {
               await supabase.from("executions").update({
-                status: "failed",
-                error_message: err.message,
-                completed_at:  new Date().toISOString(),
+                status: "failed", error_message: err.message,
+                completed_at: new Date().toISOString(),
               }).eq("id", execution.id)
             }
           }

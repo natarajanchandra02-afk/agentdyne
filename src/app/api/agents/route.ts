@@ -1,8 +1,9 @@
+export const runtime = 'edge'
+
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { apiRateLimit } from "@/lib/rate-limit"
 
-// GET /api/agents — public agent listing (used by the SDK)
 export async function GET(req: NextRequest) {
   const limited = await apiRateLimit(req)
   if (limited) return limited

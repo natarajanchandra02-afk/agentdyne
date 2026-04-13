@@ -1,6 +1,7 @@
+export const runtime = 'edge'
+
 import type { Metadata } from "next"
 
-// Next.js 15: dynamic params are now Promise<{id: string}>
 export async function generateMetadata({
   params,
 }: {
@@ -28,7 +29,7 @@ export async function generateMetadata({
     twitter: {
       card:        "summary_large_image",
       title:       "AI Agent — AgentDyne Marketplace",
-      description: "Try this AI agent live on AgentDyne — playground, docs, and one-line API integration.",
+      description: "Try this AI agent live on AgentDyne.",
       images:      ["https://agentdyne.com/og-marketplace.png"],
     },
     alternates: { canonical: url },

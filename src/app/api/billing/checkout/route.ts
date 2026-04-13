@@ -1,3 +1,5 @@
+export const runtime = 'edge'
+
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { stripe, PLANS } from "@/lib/stripe"
@@ -14,12 +16,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid plan or no price ID" }, { status: 400 })
 
     const { data: profile } = await supabase.from("profiles")
-      .select("stripe_customer_id, email").eq("id", user.id).single()
+      .select("stripe_customer_id").eq("id", user.id).single()
 
     let customerId = profile?.stripe_customer_id
     if (!customerId) {
       const customer = await stripe.customers.create({
-        email: user.email!,
+        email:    user.email!,
         metadata: { userId: user.id },
       })
       customerId = customer.id
@@ -33,9 +35,9 @@ export async function POST(req: NextRequest) {
       mode:        "subscription",
       success_url: `${process.env.NEXT_PUBLIC_APP_URL}/billing?success=1&plan=${plan}`,
       cancel_url:  `${process.env.NEXT_PUBLIC_APP_URL}/billing?canceled=1`,
-      metadata:    { userId: user.id, plan },
-      subscription_data:      { metadata: { userId: user.id, plan } },
-      allow_promotion_codes:  true,
+      metadata:              { userId: user.id, plan },
+      subscription_data:     { metadata: { userId: user.id, plan } },
+      allow_promotion_codes: true,
       billing_address_collection: "auto",
     })
 
