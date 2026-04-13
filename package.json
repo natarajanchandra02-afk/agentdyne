@@ -1,13 +1,14 @@
 {
   "name": "agentdyne-platform",
   "version": "1.0.0",
-  "private": true,
+  "private": false,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "cf:build": "npx @cloudflare/next-on-pages",
     "deploy": "npm run cf:build && wrangler pages deploy .vercel/output/static"
   },

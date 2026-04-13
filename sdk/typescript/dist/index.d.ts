@@ -1,0 +1,17 @@
+/**
+ * @module @agentdyne/sdk
+ * @description Official JavaScript / TypeScript SDK for AgentDyne.
+ *
+ * @example
+ * import AgentDyne from "@agentdyne/sdk";
+ *
+ * const client = new AgentDyne({ apiKey: process.env.AGENTDYNE_API_KEY! });
+ * const result = await client.execute("agent_id", "Summarize this...");
+ */
+export { AgentDyne } from "./client.js";
+export { AgentDyne as default } from "./client.js";
+export { AgentsResource } from "./agents.js";
+export { ExecutionsResource, UserResource, NotificationsResource, WebhooksResource } from "./resources.js";
+export { AgentDyneError, AuthenticationError, ExecutionTimeoutError, InternalServerError, NetworkError, NotFoundError, PermissionDeniedError, QuotaExceededError, RateLimitError, RequestTimeoutError, SubscriptionRequiredError, ValidationError, WebhookSignatureError, } from "./errors.js";
+export type { Agent, AgentCategory, AgentDyneConfig, AgentStatus, CreateReviewRequest, Execution, ExecuteRequest, ExecuteResponse, ExecutionStatus, ListAgentsParams, ListExecutionsParams, Notification, PaginatedResponse, PricingModel, Review, SellerProfile, StreamChunk, SubscriptionPlan, UserProfile, UserQuota, WebhookEvent, WebhookEventExecution, WebhookEventType, } from "./types.js";
+//# sourceMappingURL=index.d.ts.map

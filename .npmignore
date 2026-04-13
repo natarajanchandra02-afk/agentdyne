@@ -1,0 +1,7 @@
+src/
+public/
+supabase/
+*.config.*
+.env*
+README.md
+PUBLISHING_GUIDE.md

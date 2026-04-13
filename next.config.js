@@ -14,7 +14,18 @@ const nextConfig = {
       { protocol: "https", hostname: "*.googleusercontent.com" },
     ],
   },
-  // Moved from experimental.serverComponentsExternalPackages (deprecated in Next 15)
+  /**
+   * Rewrite /v1/* → /api/* so the AgentDyne SDK works when baseUrl is set
+   * to the platform domain (e.g. https://agentdyne.com).
+   * SDK default baseUrl is https://api.agentdyne.com (production CDN), but
+   * for local dev or self-hosted: new AgentDyne({ baseUrl: "http://localhost:3000" })
+   * will route correctly through these rewrites.
+   */
+  async rewrites() {
+    return [
+      { source: "/v1/:path*", destination: "/api/:path*" },
+    ]
+  },
   serverExternalPackages: [],
 }
 

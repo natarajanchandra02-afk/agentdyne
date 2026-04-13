@@ -2,11 +2,10 @@ import { createServerClient } from "@supabase/ssr"
 import { cookies } from "next/headers"
 import type { Database } from "@/types/supabase"
 
-const SUPABASE_URL      = process.env.NEXT_PUBLIC_SUPABASE_URL
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+const SUPABASE_URL       = process.env.NEXT_PUBLIC_SUPABASE_URL
+const SUPABASE_ANON_KEY  = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
 
-// Safe dummy for build time when env vars are absent
 function makeDummyClient() {
   return {
     auth: {
@@ -16,12 +15,11 @@ function makeDummyClient() {
     },
     from: (_: string) => ({
       select: () => ({
-        eq:         () => ({ single: async () => ({ data: null, error: null }), limit: () => ({ data: [], error: null }), order: () => ({ data: [], error: null }), gte: () => ({ data: [], error: null }), head: true }),
-        order:      () => ({ data: [], error: null, ascending: () => ({ data: [], error: null }) }),
+        eq:         () => ({ single: async () => ({ data: null, error: null }), maybeSingle: async () => ({ data: null, error: null }), limit: () => ({ data: [], error: null }), order: () => ({ data: [], error: null }), gte: () => ({ data: [], error: null }) }),
+        order:      () => ({ data: [], error: null }),
         limit:      () => ({ data: [], error: null }),
         range:      () => ({ data: [], error: null, count: 0 }),
         textSearch: () => ({ order: () => ({ range: () => ({ data: [], error: null, count: 0 }) }), eq: () => ({ order: () => ({ range: () => ({ data: [], error: null, count: 0 }) }) }) }),
-        count:      () => ({ data: [], error: null, count: 0 }),
         gte:        () => ({ data: [], error: null }),
       }),
       update: () => ({ eq: () => ({ data: null, error: null, select: () => ({ single: async () => ({ data: null, error: null }) }) }) }),
@@ -34,32 +32,39 @@ function makeDummyClient() {
   } as any
 }
 
-// Next.js 14: cookies() is SYNCHRONOUS — no await
-export function createClient() {
+/**
+ * Next.js 15: cookies() is async — must be awaited.
+ * All callers must await createClient().
+ */
+export async function createClient() {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return makeDummyClient()
 
-  // In Next.js 14, cookies() is sync
-  const cookieStore = cookies()
+  const cookieStore = await cookies()
 
   return createServerClient<Database>(
     SUPABASE_URL,
     SUPABASE_ANON_KEY,
     {
       cookies: {
-        getAll()       { return cookieStore.getAll() },
-        setAll(list)   {
-          try { list.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) }
-          catch { /* read-only context during static render — ignore */ }
+        getAll()     { return cookieStore.getAll() },
+        setAll(list) {
+          try {
+            list.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options)
+            )
+          } catch {
+            // Read-only context (e.g. during static rendering) — safe to ignore
+          }
         },
       },
     }
   )
 }
 
-export function createAdminClient() {
+export async function createAdminClient() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) return makeDummyClient()
 
-  const cookieStore = cookies()
+  const cookieStore = await cookies()
 
   return createServerClient<Database>(
     SUPABASE_URL,
@@ -68,8 +73,11 @@ export function createAdminClient() {
       cookies: {
         getAll()     { return cookieStore.getAll() },
         setAll(list) {
-          try { list.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) }
-          catch {}
+          try {
+            list.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options)
+            )
+          } catch {}
         },
       },
     }

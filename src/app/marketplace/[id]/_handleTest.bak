@@ -1,0 +1,24 @@
+  const handleTest = async () => {
+    if (!user) { router.push("/login"); return }
+    setTesting(true)
+    setTestOutput("")
+    try {
+      // Safely parse input — fall back to raw string if not valid JSON
+      let parsedInput: unknown
+      try { parsedInput = JSON.parse(testInput) } catch { parsedInput = testInput }
+
+      // Bug fix: use the correct per-agent execute endpoint
+      const res  = await fetch(`/api/agents/${agent.id}/execute`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ input: parsedInput }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
+      setTestOutput(JSON.stringify(data.output, null, 2))
+      toast.success(`Done in ${data.latencyMs}ms — cost $${data.cost?.toFixed(6) ?? "0.000000"}`)
+    } catch (err: any) {
+      toast.error(err.message)
+      setTestOutput(`Error: ${err.message}`)
+    } finally { setTesting(false) }
+  }

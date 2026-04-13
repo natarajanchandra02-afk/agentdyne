@@ -1,18 +1,15 @@
-export const runtime = 'edge'
-
 import { NextRequest, NextResponse } from "next/server"
 import { createAdminClient } from "@/lib/supabase/server"
 import { stripe } from "@/lib/stripe"
 import Stripe from "stripe"
 
 const PLAN_QUOTAS: Record<string, { quota: number; plan: string }> = {
-  starter:    { quota: 1000,  plan: "starter" },
-  pro:        { quota: 10000, plan: "pro" },
-  enterprise: { quota: -1,    plan: "enterprise" },
+  starter:    { quota: 1_000,  plan: "starter" },
+  pro:        { quota: 10_000, plan: "pro" },
+  enterprise: { quota: -1,     plan: "enterprise" },
 }
 
 export async function POST(req: NextRequest) {
-  // Read raw body as text — required for Stripe signature verification
   const body      = await req.text()
   const signature = req.headers.get("stripe-signature")
 
@@ -22,7 +19,6 @@ export async function POST(req: NextRequest) {
 
   let event: Stripe.Event
   try {
-    // constructEventAsync uses SubtleCrypto — fully compatible with edge runtime
     event = await stripe.webhooks.constructEventAsync(
       body,
       signature,
@@ -33,7 +29,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 })
   }
 
-  const supabase = createAdminClient()
+  // createAdminClient is now async — must be awaited
+  const supabase = await createAdminClient()
 
   try {
     switch (event.type) {
@@ -45,19 +42,19 @@ export async function POST(req: NextRequest) {
         if (!userId) break
 
         const priceId = sub.items.data[0]?.price?.id
-        let planKey = "starter"
-        for (const [key] of Object.entries(PLAN_QUOTAS)) {
-          const envKey = `STRIPE_${key.toUpperCase()}_PRICE_ID`
-          if (process.env[envKey] === priceId) { planKey = key; break }
+        let planKey   = "starter"
+        for (const key of Object.keys(PLAN_QUOTAS)) {
+          if (process.env[`STRIPE_${key.toUpperCase()}_PRICE_ID`] === priceId) {
+            planKey = key
+            break
+          }
         }
-
-        const quota = PLAN_QUOTAS[planKey]?.quota ?? 1000
 
         await supabase.from("profiles").update({
           subscription_plan:       planKey,
           subscription_status:     sub.status,
           subscription_id:         sub.id,
-          monthly_execution_quota: quota,
+          monthly_execution_quota: PLAN_QUOTAS[planKey]?.quota ?? 1_000,
           updated_at:              new Date().toISOString(),
         }).eq("id", userId)
         break
@@ -80,12 +77,11 @@ export async function POST(req: NextRequest) {
 
       case "invoice.payment_succeeded": {
         const invoice = event.data.object as Stripe.Invoice
-        const userId  = (invoice.subscription_details?.metadata as any)?.userId
+        const userId  = (invoice.subscription_details?.metadata as Record<string, string> | undefined)?.userId
         if (!userId) break
 
-        const amount       = (invoice.amount_paid || 0) / 100
-        const platformFee  = amount * 0.20
-        const sellerAmount = amount * 0.80
+        const amount      = (invoice.amount_paid || 0) / 100
+        const platformFee = amount * 0.20
 
         await supabase.from("profiles").update({
           executions_used_this_month: 0,
@@ -96,10 +92,10 @@ export async function POST(req: NextRequest) {
           user_id:                  userId,
           stripe_payment_intent_id: typeof invoice.payment_intent === "string"
             ? invoice.payment_intent
-            : invoice.payment_intent?.id,
+            : (invoice.payment_intent as Stripe.PaymentIntent)?.id,
           amount,
           platform_fee:  platformFee,
-          seller_amount: sellerAmount,
+          seller_amount: amount * 0.80,
           currency:      invoice.currency,
           type:          "subscription",
           status:        "succeeded",
@@ -110,7 +106,7 @@ export async function POST(req: NextRequest) {
 
       case "invoice.payment_failed": {
         const invoice = event.data.object as Stripe.Invoice
-        const userId  = (invoice.subscription_details?.metadata as any)?.userId
+        const userId  = (invoice.subscription_details?.metadata as Record<string, string> | undefined)?.userId
         if (!userId) break
 
         await supabase.from("profiles").update({
@@ -141,7 +137,8 @@ export async function POST(req: NextRequest) {
 
       case "charge.refunded": {
         const charge = event.data.object as Stripe.Charge
-        await supabase.from("transactions")
+        await supabase
+          .from("transactions")
           .update({ status: "refunded" })
           .eq("stripe_charge_id", charge.id)
         break
