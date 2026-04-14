@@ -1,50 +1,38 @@
-"use client"
-import { useEffect, useState } from "react"
-import { useSearchParams } from "next/navigation"
-import { createClient } from "@/lib/supabase/client"
-import { MarketplaceClient } from "./marketplace-client"
+// Fix: wrap useSearchParams consumer in Suspense — required by Next.js 14/15.
+// Without this, the router suspends the entire page tree during streaming SSR,
+// which collapses the render to the nearest Suspense fallback (or error.tsx).
+// This was the root cause of the "blank page / unstyled buttons" regression.
+
+import { Suspense } from "react"
+import { MarketplaceLoader } from "./marketplace-client"
 import { Skeleton } from "@/components/ui/skeleton"
 
-export default function MarketplacePage() {
-  const [data, setData]   = useState<any>(null)
-  const searchParams = useSearchParams()
-  const supabase     = createClient()
-
-  useEffect(() => {
-    async function load() {
-      const q        = searchParams.get("q")        || undefined
-      const category = searchParams.get("category") || undefined
-      const pricing  = searchParams.get("pricing")  || undefined
-      const sort     = searchParams.get("sort")     || "popular"
-      const page     = parseInt(searchParams.get("page") || "1")
-      const pageSize = 24
-
-      let query = supabase
-        .from("agents")
-        .select("*, profiles!seller_id(full_name, username, avatar_url, is_verified)", { count: "exact" })
-        .eq("status", "active")
-
-      if (q)        query = query.textSearch("name", q, { type: "websearch", config: "english" })
-      if (category && category !== "all") query = query.eq("category", category)
-      if (pricing  && pricing  !== "all") query = query.eq("pricing_model", pricing)
-      if (sort === "popular") query = query.order("total_executions", { ascending: false })
-      else if (sort === "rating")  query = query.order("average_rating",    { ascending: false })
-      else if (sort === "newest")  query = query.order("created_at",        { ascending: false })
-      query = query.range((page - 1) * pageSize, page * pageSize - 1)
-
-      const [{ data: agents, count }, { data: featured }] = await Promise.all([
-        query,
-        supabase.from("agents").select("*, profiles!seller_id(full_name, avatar_url, is_verified)").eq("status", "active").eq("is_featured", true).limit(3),
-      ])
-      setData({ agents: agents || [], featured: featured || [], total: count || 0, page, pageSize, searchParams: Object.fromEntries(searchParams.entries()) })
-    }
-    load()
-  }, [searchParams.toString()])
-
-  if (!data) return (
-    <div className="pt-20 max-w-7xl mx-auto px-6 py-8 grid grid-cols-3 gap-4">
-      {[...Array(9)].map((_, i) => <Skeleton key={i} className="h-48 rounded-2xl" />)}
+function MarketplaceSkeleton() {
+  return (
+    <div className="min-h-screen bg-white">
+      {/* Navbar placeholder height */}
+      <div className="h-14" />
+      <div className="bg-zinc-50 border-b border-zinc-100 h-40" />
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="flex gap-2 mb-6 overflow-hidden">
+          {[...Array(6)].map((_, i) => (
+            <Skeleton key={i} className="h-8 w-24 rounded-full flex-shrink-0" />
+          ))}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {[...Array(9)].map((_, i) => (
+            <Skeleton key={i} className="h-52 rounded-2xl" />
+          ))}
+        </div>
+      </div>
     </div>
   )
-  return <MarketplaceClient {...data} />
+}
+
+export default function MarketplacePage() {
+  return (
+    <Suspense fallback={<MarketplaceSkeleton />}>
+      <MarketplaceLoader />
+    </Suspense>
+  )
 }

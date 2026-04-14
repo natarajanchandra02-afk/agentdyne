@@ -39,7 +39,7 @@ const SOCIALS = [
 
 export function Footer() {
   return (
-    <footer className="bg-zinc-50 dark:bg-zinc-900 border-t border-zinc-100 dark:border-zinc-800">
+    <footer className="bg-zinc-50 border-t border-zinc-100">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <div className="grid grid-cols-2 md:grid-cols-5 gap-10">
 
@@ -50,13 +50,13 @@ export function Footer() {
                 className="h-8 w-auto object-contain opacity-90 hover:opacity-100 transition-opacity"
               />
             </Link>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed mb-5">
+            <p className="text-xs text-zinc-500 leading-relaxed mb-5">
               The world's premier marketplace for production-ready AI microagents.
             </p>
             <div className="flex items-center gap-2.5">
               {SOCIALS.map(({ icon: Icon, href, label }) => (
                 <Link key={label} href={href} target="_blank" rel="noopener noreferrer" aria-label={label}
-                  className="w-8 h-8 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 flex items-center justify-center text-zinc-500 hover:text-zinc-900 dark:hover:text-white hover:border-zinc-400 dark:hover:border-zinc-500 transition-all">
+                  className="w-8 h-8 rounded-lg bg-zinc-100 border border-zinc-200 flex items-center justify-center text-zinc-500 hover:text-zinc-900 hover:border-zinc-400 transition-all">
                   <Icon className="h-3.5 w-3.5" />
                 </Link>
               ))}
@@ -65,14 +65,14 @@ export function Footer() {
 
           {Object.entries(LINKS).map(([category, links]) => (
             <div key={category}>
-              <h3 className="text-xs font-semibold text-zinc-900 dark:text-white uppercase tracking-wider mb-4">{category}</h3>
+              <h3 className="text-xs font-semibold text-zinc-900 uppercase tracking-wider mb-4">{category}</h3>
               <ul className="space-y-2.5">
                 {links.map(({ label, href }) => (
                   <li key={label}>
                     <Link href={href}
                       target={href.startsWith("http") ? "_blank" : undefined}
                       rel={href.startsWith("http") ? "noopener noreferrer" : undefined}
-                      className="text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white transition-colors">
+                      className="text-xs text-zinc-500 hover:text-zinc-900 transition-colors">
                       {label}
                     </Link>
                   </li>
@@ -82,7 +82,7 @@ export function Footer() {
           ))}
         </div>
 
-        <div className="border-t border-zinc-100 dark:border-zinc-800 mt-12 pt-8 flex flex-col md:flex-row items-center justify-between gap-4">
+        <div className="border-t border-zinc-100 mt-12 pt-8 flex flex-col md:flex-row items-center justify-between gap-4">
           <p className="text-xs text-zinc-400">
             © {new Date().getFullYear()} AgentDyne, Inc. All rights reserved.
           </p>
@@ -92,7 +92,7 @@ export function Footer() {
               All systems operational
             </div>
             <span>v1.5.0</span>
-            <Link href="/changelog" className="hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors">Changelog</Link>
+            <Link href="/changelog" className="hover:text-zinc-700 transition-colors">Changelog</Link>
           </div>
         </div>
       </div>

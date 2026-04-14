@@ -4,7 +4,10 @@ import Link from "next/link"
 import { Star, Zap, CheckCircle } from "lucide-react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { CategoryIcon } from "@/components/ui/category-icon"
-import { formatNumber, formatCurrency, categoryLabel, getInitials, CATEGORY_ICON_COLOR, cn } from "@/lib/utils"
+import {
+  formatNumber, formatCurrency, categoryLabel,
+  getInitials, CATEGORY_ICON_COLOR, cn,
+} from "@/lib/utils"
 
 interface Props { agent: any; view?: "grid" | "list" }
 
@@ -32,23 +35,45 @@ const ICON_BG: Record<string, string> = {
   other:            "bg-zinc-50",
 }
 
-export function AgentCard({ agent, view = "grid" }: Props) {
-  const pricing = PRICING_CONFIG[agent.pricing_model] || PRICING_CONFIG.free
-  const seller  = agent.profiles
-  const iconBg  = ICON_BG[agent.category] || "bg-zinc-50"
-  const iconColor = CATEGORY_ICON_COLOR[agent.category] || "text-zinc-500"
+// ── Grade badge (S / A / B / C / D) ──────────────────────────────────────────
+function GradeBadge({ score }: { score: number }) {
+  const grade = score >= 90 ? "S" : score >= 80 ? "A" : score >= 70 ? "B" : score >= 60 ? "C" : "D"
+  const color = {
+    S: "bg-violet-100 text-violet-700 border-violet-200",
+    A: "bg-green-100  text-green-700  border-green-200",
+    B: "bg-blue-100   text-blue-700   border-blue-200",
+    C: "bg-amber-100  text-amber-700  border-amber-200",
+    D: "bg-zinc-100   text-zinc-600   border-zinc-200",
+  }[grade] ?? "bg-zinc-100 text-zinc-600"
 
+  return (
+    <span className={cn("text-[10px] font-black px-1.5 py-0.5 rounded border leading-none", color)}>
+      {grade}
+    </span>
+  )
+}
+
+export function AgentCard({ agent, view = "grid" }: Props) {
+  const pricing  = PRICING_CONFIG[agent.pricing_model] || PRICING_CONFIG.free
+  const seller   = agent.profiles
+  const iconBg   = ICON_BG[agent.category] || "bg-zinc-50"
+  const hasScore = agent.composite_score > 0
+
+  // ── List view ─────────────────────────────────────────────────────────────
   if (view === "list") {
     return (
       <Link href={`/marketplace/${agent.id}`}>
         <div className="flex items-center gap-4 px-5 py-4 bg-white border border-zinc-100 rounded-2xl hover:border-zinc-200 hover:shadow-sm transition-all group">
-          <div className={`w-10 h-10 rounded-xl ${iconBg} flex items-center justify-center flex-shrink-0`}>
+          <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0", iconBg)}>
             <CategoryIcon category={agent.category} colored className="h-4.5 w-4.5" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <h3 className="font-semibold text-sm text-zinc-900 group-hover:text-primary transition-colors truncate">{agent.name}</h3>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="font-semibold text-sm text-zinc-900 group-hover:text-primary transition-colors truncate">
+                {agent.name}
+              </h3>
               {agent.is_verified && <CheckCircle className="h-3.5 w-3.5 text-blue-500 flex-shrink-0" />}
+              {hasScore && <GradeBadge score={agent.composite_score} />}
             </div>
             <p className="text-xs text-zinc-500 truncate mt-0.5">{agent.description}</p>
           </div>
@@ -60,13 +85,21 @@ export function AgentCard({ agent, view = "grid" }: Props) {
             <div className="flex items-center gap-1 text-xs text-zinc-400 nums">
               <Zap className="h-3 w-3" />{formatNumber(agent.total_executions)}
             </div>
-            <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded-full border", pricing.color)}>{pricing.label}</span>
+            {hasScore && (
+              <span className="text-xs font-bold text-zinc-400 nums hidden sm:block">
+                {agent.composite_score?.toFixed(1)}
+              </span>
+            )}
+            <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded-full border", pricing.color)}>
+              {pricing.label}
+            </span>
           </div>
         </div>
       </Link>
     )
   }
 
+  // ── Grid view ─────────────────────────────────────────────────────────────
   return (
     <Link href={`/marketplace/${agent.id}`}>
       <div className="bg-white border border-zinc-100 rounded-2xl overflow-hidden hover:border-zinc-200 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 group h-full flex flex-col">
@@ -76,7 +109,7 @@ export function AgentCard({ agent, view = "grid" }: Props) {
         <div className="p-5 flex-1 flex flex-col">
           {/* Header */}
           <div className="flex items-start gap-3 mb-3">
-            <div className={`w-10 h-10 rounded-xl ${iconBg} flex items-center justify-center flex-shrink-0`}>
+            <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0", iconBg)}>
               <CategoryIcon category={agent.category} colored className="h-5 w-5" />
             </div>
             <div className="flex-1 min-w-0">
@@ -90,6 +123,8 @@ export function AgentCard({ agent, view = "grid" }: Props) {
                     Featured
                   </span>
                 )}
+                {/* Quality grade badge — only shown when score data is available */}
+                {hasScore && <GradeBadge score={agent.composite_score} />}
               </div>
               <div className="flex items-center gap-1.5 mt-0.5">
                 <Avatar className="h-3.5 w-3.5">
@@ -133,6 +168,12 @@ export function AgentCard({ agent, view = "grid" }: Props) {
                 <Zap className="h-3 w-3" />{formatNumber(agent.total_executions)}
               </span>
             </div>
+            {/* Composite score pill */}
+            {hasScore && (
+              <span className="text-[10px] font-bold text-zinc-400 nums bg-zinc-50 border border-zinc-100 px-2 py-0.5 rounded-full">
+                {agent.composite_score?.toFixed(1)} / 100
+              </span>
+            )}
           </div>
         </div>
       </div>
