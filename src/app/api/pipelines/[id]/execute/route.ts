@@ -49,8 +49,11 @@ export async function POST(
       .eq("id", pipelineId)
       .single()
 
-    if (!pipeline || !pipeline.is_active) {
-      return NextResponse.json({ error: "Pipeline not found or inactive" }, { status: 404 })
+    if (!pipeline) {
+      return NextResponse.json({ error: "Pipeline not found" }, { status: 404 })
+    }
+    if (pipeline.is_active === false) {
+      return NextResponse.json({ error: "Pipeline is inactive" }, { status: 404 })
     }
 
     // ── Auth: only owner can execute (or public pipelines by anyone) ─────────
@@ -89,7 +92,7 @@ export async function POST(
     const agentIds = dag.nodes.map(n => n.agent_id).filter(Boolean)
     const { data: agentPrices } = await supabase
       .from("agents")
-      .select("id, price_per_call, pricing_model, model_name, system_prompt, max_tokens, temperature, status, free_calls_per_month")
+      .select("id, name, price_per_call, pricing_model, model_name, system_prompt, max_tokens, temperature, status, free_calls_per_month")
       .in("id", agentIds)
 
     if (!agentPrices || agentPrices.length !== agentIds.length) {

@@ -161,22 +161,25 @@ export function SettingsClient({ user, profile }: Props) {
   }
 
   // ── Delete account ─────────────────────────────────────────────────────────
-  // MUST use server-side sign-out to clear httpOnly cookies.
-  // client supabase.auth.signOut() only clears localStorage;
-  // the middleware still sees the valid httpOnly cookie and keeps the session alive.
+  // Calls /api/user/delete (admin deleteUser) then server-side signout.
+  // After: hard redirect so all client state is cleared.
   const handleDeleteAccount = async () => {
     if (deleteConfirm !== "DELETE") return
     setDeletingAccount(true)
     try {
-      // Sign out server-side first (clears httpOnly cookies)
+      const res = await fetch("/api/user/delete", { method: "DELETE" })
+      // Whether or not deletion succeeded, sign out and redirect
       await fetch("/api/auth/signout", { method: "POST" })
-      // Navigate away — account deletion proper would require a /api/user/delete
-      // endpoint that calls supabase.auth.admin.deleteUser() server-side.
-      // For now: sign out and redirect so data is unreachable.
-      router.push("/")
+      if (res.ok) {
+        window.location.href = "/?account_deleted=1"
+      } else {
+        // Deletion failed (e.g. active subscriptions) — show error
+        const err = await res.json().catch(() => ({}))
+        toast.error(err.error || "Deletion failed — contact support")
+        setDeletingAccount(false)
+      }
     } catch {
-      // Navigate regardless
-      router.push("/")
+      window.location.href = "/contact?subject=account-deletion"
     }
   }
 

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
@@ -29,24 +29,28 @@ const NAV = [
 ]
 
 const USER_MENU = [
-  { href: "/dashboard",  icon: LayoutDashboard, label: "Dashboard" },
-  { href: "/my-agents",  icon: Bot,             label: "My Agents" },
-  { href: "/analytics",  icon: BarChart3,        label: "Analytics" },
-  { href: "/api-keys",   icon: Key,              label: "API Keys" },
-  { href: "/leaderboard",icon: Trophy,            label: "Leaderboard" },
-  { href: "/integrations",icon: Puzzle,           label: "Integrations" },
-  { href: "/seller",     icon: Store,             label: "Seller Portal" },
-  { href: "/billing",    icon: DollarSign,        label: "Billing" },
-  { href: "/settings",   icon: Settings,          label: "Settings" },
+  { href: "/dashboard",   icon: LayoutDashboard, label: "Dashboard" },
+  { href: "/my-agents",   icon: Bot,             label: "My Agents" },
+  { href: "/analytics",   icon: BarChart3,       label: "Analytics" },
+  { href: "/api-keys",    icon: Key,             label: "API Keys" },
+  { href: "/leaderboard", icon: Trophy,          label: "Leaderboard" },
+  { href: "/integrations",icon: Puzzle,          label: "Integrations" },
+  { href: "/seller",      icon: Store,           label: "Seller Portal" },
+  { href: "/billing",     icon: DollarSign,      label: "Billing" },
+  { href: "/settings",    icon: Settings,        label: "Settings" },
 ]
 
 export function Navbar() {
-  const [scrolled,    setScrolled]    = useState(false)
-  const [mobileOpen,  setMobileOpen]  = useState(false)
-  const [signingOut,  setSigningOut]  = useState(false)
-  const pathname  = usePathname()
-  const router    = useRouter()
-  const { user, profile } = useUser()
+  const [scrolled,   setScrolled]   = useState(false)
+  const [mobileOpen, setMobileOpen] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
+  const pathname = usePathname()
+  const router   = useRouter()
+
+  // authLoading = true on first render and during route transitions.
+  // While loading, render a neutral skeleton so the layout doesn't
+  // jump between "Sign in" and the user avatar.
+  const { user, profile, loading: authLoading } = useUser()
 
   useEffect(() => {
     const fn = () => setScrolled(window.scrollY > 8)
@@ -71,16 +75,123 @@ export function Navbar() {
     try {
       await fetch("/api/auth/signout", { method: "POST" })
     } finally {
-      // Navigate away regardless of server response
-      // router.push causes a hard navigation that clears all client-side state
       router.push("/login")
       router.refresh()
       setSigningOut(false)
     }
   }
 
-  const navigate = (href: string) => {
-    router.push(href)
+  const navigate = (href: string) => { router.push(href) }
+
+  // Right-side auth area — three possible states:
+  // 1. authLoading  → skeleton placeholder (prevents flash of Sign In button)
+  // 2. user         → avatar dropdown + search/bell
+  // 3. no user      → Sign in + Get started buttons
+  const AuthButtons = () => {
+    if (authLoading) {
+      return (
+        <div className="flex items-center gap-2">
+          {/* Skeleton that roughly matches the "Get started" button width */}
+          <div className="h-8 w-24 rounded-xl bg-zinc-100 animate-pulse" />
+        </div>
+      )
+    }
+
+    if (user) {
+      return (
+        <>
+          {/* Search */}
+          <Button variant="ghost" size="icon"
+            className="hidden md:flex h-9 w-9 rounded-xl"
+            onClick={() => navigate("/marketplace")}>
+            <Search className="h-4 w-4" />
+          </Button>
+
+          {/* Notifications */}
+          <Button variant="ghost" size="icon"
+            className="hidden md:flex relative h-9 w-9 rounded-xl"
+            onClick={() => navigate("/dashboard")}>
+            <Bell className="h-4 w-4" />
+            <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-primary rounded-full ring-1 ring-white" />
+          </Button>
+
+          {/* User dropdown */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="h-9 gap-2 rounded-xl px-2 focus-visible:ring-0">
+                <Avatar className="h-6 w-6">
+                  <AvatarImage src={profile?.avatar_url} />
+                  <AvatarFallback className="text-[10px] bg-primary text-white">
+                    {getInitials(profile?.full_name || user.email || "U")}
+                  </AvatarFallback>
+                </Avatar>
+                <span className="hidden md:block text-sm font-medium max-w-[120px] truncate text-zinc-900">
+                  {profile?.full_name?.split(" ")[0] || "Account"}
+                </span>
+                <ChevronDown className="h-3.5 w-3.5 hidden md:block text-zinc-400" />
+              </Button>
+            </DropdownMenuTrigger>
+
+            <DropdownMenuContent align="end" className="w-56 rounded-2xl shadow-xl border-zinc-100 p-1.5" sideOffset={8}>
+              {/* User info */}
+              <DropdownMenuLabel className="px-2 py-2">
+                <p className="font-semibold text-zinc-900 truncate">
+                  {profile?.full_name || "User"}
+                </p>
+                <p className="text-xs font-normal text-zinc-400 truncate mt-0.5">
+                  {user.email}
+                </p>
+                {profile?.subscription_plan && profile.subscription_plan !== "free" && (
+                  <Badge className="mt-1.5 text-[10px] h-4 px-1.5 capitalize bg-primary/10 text-primary border-0">
+                    {profile.subscription_plan}
+                  </Badge>
+                )}
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator className="bg-zinc-100" />
+
+              {USER_MENU.map(({ href, icon: Icon, label }) => (
+                <DropdownMenuItem
+                  key={href}
+                  onClick={() => navigate(href)}
+                  className="rounded-xl cursor-pointer px-2 py-2 text-sm text-zinc-700 hover:text-zinc-900 focus:bg-zinc-50"
+                >
+                  <Icon className="h-4 w-4 mr-2.5 text-zinc-400" />
+                  {label}
+                </DropdownMenuItem>
+              ))}
+
+              <DropdownMenuSeparator className="bg-zinc-100" />
+
+              {/* Sign out */}
+              <DropdownMenuItem
+                onClick={signOut}
+                disabled={signingOut}
+                className="rounded-xl cursor-pointer px-2 py-2 text-sm text-red-600 hover:text-red-700 focus:bg-red-50 focus:text-red-700"
+              >
+                <LogOut className="h-4 w-4 mr-2.5" />
+                {signingOut ? "Signing out…" : "Sign out"}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </>
+      )
+    }
+
+    // Logged out
+    return (
+      <>
+        <Link href="/login" className="hidden md:block">
+          <Button variant="ghost" size="sm" className="rounded-xl text-sm text-zinc-600">
+            Sign in
+          </Button>
+        </Link>
+        <Link href="/signup">
+          <Button size="sm" className="rounded-xl text-sm font-semibold bg-zinc-900 text-white hover:bg-zinc-700 shadow-sm">
+            Get started
+          </Button>
+        </Link>
+      </>
+    )
   }
 
   return (
@@ -135,97 +246,7 @@ export function Navbar() {
 
           {/* Right side */}
           <div className="flex items-center gap-2">
-            {user ? (
-              <>
-                {/* Search */}
-                <Button variant="ghost" size="icon"
-                  className="hidden md:flex h-9 w-9 rounded-xl"
-                  onClick={() => navigate("/marketplace")}>
-                  <Search className="h-4 w-4" />
-                </Button>
-
-                {/* Notifications */}
-                <Button variant="ghost" size="icon"
-                  className="hidden md:flex relative h-9 w-9 rounded-xl"
-                  onClick={() => navigate("/dashboard")}>
-                  <Bell className="h-4 w-4" />
-                  <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-primary rounded-full ring-1 ring-white" />
-                </Button>
-
-                {/* User dropdown */}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" className="h-9 gap-2 rounded-xl px-2 focus-visible:ring-0">
-                      <Avatar className="h-6 w-6">
-                        <AvatarImage src={profile?.avatar_url} />
-                        <AvatarFallback className="text-[10px] bg-primary text-white">
-                          {getInitials(profile?.full_name || user.email || "U")}
-                        </AvatarFallback>
-                      </Avatar>
-                      <span className="hidden md:block text-sm font-medium max-w-[120px] truncate text-zinc-900">
-                        {profile?.full_name?.split(" ")[0] || "Account"}
-                      </span>
-                      <ChevronDown className="h-3.5 w-3.5 hidden md:block text-zinc-400" />
-                    </Button>
-                  </DropdownMenuTrigger>
-
-                  <DropdownMenuContent align="end" className="w-56 rounded-2xl shadow-xl border-zinc-100 p-1.5" sideOffset={8}>
-                    {/* User info */}
-                    <DropdownMenuLabel className="px-2 py-2">
-                      <p className="font-semibold text-zinc-900 truncate">
-                        {profile?.full_name || "User"}
-                      </p>
-                      <p className="text-xs font-normal text-zinc-400 truncate mt-0.5">
-                        {user.email}
-                      </p>
-                      {profile?.subscription_plan && profile.subscription_plan !== "free" && (
-                        <Badge className="mt-1.5 text-[10px] h-4 px-1.5 capitalize bg-primary/10 text-primary border-0">
-                          {profile.subscription_plan}
-                        </Badge>
-                      )}
-                    </DropdownMenuLabel>
-                    <DropdownMenuSeparator className="bg-zinc-100" />
-
-                    {/* Navigation items */}
-                    {USER_MENU.map(({ href, icon: Icon, label }) => (
-                      <DropdownMenuItem
-                        key={href}
-                        onClick={() => navigate(href)}
-                        className="rounded-xl cursor-pointer px-2 py-2 text-sm text-zinc-700 hover:text-zinc-900 focus:bg-zinc-50"
-                      >
-                        <Icon className="h-4 w-4 mr-2.5 text-zinc-400" />
-                        {label}
-                      </DropdownMenuItem>
-                    ))}
-
-                    <DropdownMenuSeparator className="bg-zinc-100" />
-
-                    {/* Sign out */}
-                    <DropdownMenuItem
-                      onClick={signOut}
-                      disabled={signingOut}
-                      className="rounded-xl cursor-pointer px-2 py-2 text-sm text-red-600 hover:text-red-700 focus:bg-red-50 focus:text-red-700"
-                    >
-                      <LogOut className="h-4 w-4 mr-2.5" />
-                      {signingOut ? "Signing out…" : "Sign out"}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </>
-            ) : (
-              <>
-                <Link href="/login" className="hidden md:block">
-                  <Button variant="ghost" size="sm" className="rounded-xl text-sm text-zinc-600">
-                    Sign in
-                  </Button>
-                </Link>
-                <Link href="/signup">
-                  <Button size="sm" className="rounded-xl text-sm font-semibold bg-zinc-900 text-white hover:bg-zinc-700 shadow-sm">
-                    Get started
-                  </Button>
-                </Link>
-              </>
-            )}
+            <AuthButtons />
 
             {/* Mobile hamburger */}
             <Button
@@ -264,7 +285,7 @@ export function Navbar() {
                 </Link>
               ))}
 
-              {user && (
+              {!authLoading && user && (
                 <>
                   <div className="border-t border-zinc-100 my-2" />
                   {USER_MENU.map(({ href, icon: Icon, label }) => (
@@ -279,7 +300,9 @@ export function Navbar() {
               )}
 
               <div className="pt-3 pb-1 border-t border-zinc-100 mt-2 flex flex-col gap-2">
-                {user ? (
+                {authLoading ? (
+                  <div className="h-9 rounded-xl bg-zinc-100 animate-pulse" />
+                ) : user ? (
                   <Button
                     variant="outline"
                     onClick={signOut}

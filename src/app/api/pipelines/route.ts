@@ -77,33 +77,27 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    if (dag.nodes.length === 0) {
-      return NextResponse.json(
-        { error: "Pipeline must have at least one agent node" },
-        { status: 400 }
-      )
-    }
-
-    // Validate all nodes reference real active agents
-    const agentIds = dag.nodes.map((n: any) => n.agent_id).filter(Boolean)
-    if (agentIds.length !== dag.nodes.length) {
-      return NextResponse.json(
-        { error: "Every node must have a valid agent_id" },
-        { status: 400 }
-      )
-    }
-
-    const { data: agents } = await supabase
-      .from("agents")
-      .select("id, name, status")
-      .in("id", agentIds)
-      .eq("status", "active")
-
-    if (!agents || agents.length !== agentIds.length) {
-      return NextResponse.json(
-        { error: "One or more agent IDs are invalid or inactive" },
-        { status: 422 }
-      )
+    // BUG FIX: allow empty DAG on creation — users build nodes in the pipeline editor after
+    // creating the pipeline record. Only validate agent IDs when nodes are present.
+    if (dag.nodes.length > 0) {
+      const agentIds = dag.nodes.map((n: any) => n.agent_id).filter(Boolean)
+      if (agentIds.length !== dag.nodes.length) {
+        return NextResponse.json(
+          { error: "Every node must have a valid agent_id" },
+          { status: 400 }
+        )
+      }
+      const { data: agents } = await supabase
+        .from("agents")
+        .select("id, name, status")
+        .in("id", agentIds)
+        .eq("status", "active")
+      if (!agents || agents.length !== agentIds.length) {
+        return NextResponse.json(
+          { error: "One or more agent IDs are invalid or inactive" },
+          { status: 422 }
+        )
+      }
     }
 
     const { data: pipeline, error } = await supabase

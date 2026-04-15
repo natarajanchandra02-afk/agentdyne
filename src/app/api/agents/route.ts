@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
          category, tags, status, pricing_model, price_per_call,
          subscription_price_monthly, free_calls_per_month,
          model_name, average_rating, total_reviews, total_executions,
-         successful_executions, average_latency_ms, total_revenue,
+         successful_executions, average_latency_ms, total_revenue, composite_score,
          icon_url, version, is_featured, is_verified, created_at, updated_at,
          profiles!seller_id(id, full_name, username, avatar_url, is_verified)`,
         { count: "exact" }
@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
     const pages = Math.ceil(total / limit)
 
     return NextResponse.json({
-      data: data ?? [],
+      agents: data ?? [],
       pagination: { total, page, limit, pages, hasNext: page < pages, hasPrev: page > 1 },
     })
   } catch (err: any) {

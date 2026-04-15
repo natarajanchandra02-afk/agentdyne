@@ -68,7 +68,7 @@ function NavItem({
 export function DashboardSidebar() {
   const pathname     = usePathname()
   const router       = useRouter()
-  const { user, profile } = useUser()
+  const { user, profile, loading: authLoading } = useUser()
   const [signingOut, setSigningOut] = useState(false)
 
   /**
@@ -157,7 +157,9 @@ export function DashboardSidebar() {
 
       {/* User card */}
       <div className="p-3 border-t border-zinc-100 flex-shrink-0">
-        {user && (
+        {authLoading ? (
+          <div className="h-11 rounded-xl bg-zinc-50 animate-pulse" />
+        ) : user ? (
           <div className="group relative">
             <div
               className="flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-zinc-50 transition-colors cursor-pointer"
@@ -189,7 +191,7 @@ export function DashboardSidebar() {
               </button>
             </div>
           </div>
-        )}
+        ) : null}
       </div>
     </aside>
   )

@@ -39,7 +39,7 @@ export default function AnalyticsPage() {
       if (agentIds.length > 0) {
         const { data: analyticsData } = await supabase
           .from("agent_analytics")
-          .select("date, revenue, executions_count, agent_id")
+          .select("date, revenue, executions, agent_id")
           .in("agent_id", agentIds)
           .gte("date", thirtyDaysAgoDay)
           .order("date", { ascending: true })

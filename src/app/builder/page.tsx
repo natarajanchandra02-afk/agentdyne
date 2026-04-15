@@ -33,9 +33,9 @@ const MODELS = [
 ]
 
 const schema = z.object({
-  name:                       z.string().min(3).max(60),
-  description:                z.string().min(20).max(300),
-  category:                   z.string(),
+  name:                       z.string().min(3, "Name must be at least 3 characters").max(60),
+  description:                z.string().min(20, "Description must be at least 20 characters").max(300),
+  category:                   z.string().min(1, "Please select a category"),
   pricing_model:              z.enum(["free","per_call","subscription","freemium"]),
   price_per_call:             z.coerce.number().min(0).optional(),
   subscription_price_monthly: z.coerce.number().min(0).optional(),
@@ -45,6 +45,13 @@ const schema = z.object({
   max_tokens:                 z.coerce.number().min(100).max(32000),
 })
 type FormData = z.infer<typeof schema>
+
+// Which fields belong to which step — so we can navigate to the right step on error
+const STEP_FIELDS: Record<number, (keyof FormData)[]> = {
+  1: ["name", "description", "category"],
+  2: ["system_prompt", "model_name", "temperature", "max_tokens"],
+  3: ["pricing_model", "price_per_call", "subscription_price_monthly"],
+}
 
 export default function BuilderPage() {
   const router   = useRouter()
@@ -65,6 +72,7 @@ export default function BuilderPage() {
   const pricingModel = watch("pricing_model")
   const modelName    = watch("model_name")
 
+  // Called by react-hook-form when validation PASSES
   const onSubmit = async (data: FormData) => {
     setLoading(true)
     try {
@@ -82,6 +90,26 @@ export default function BuilderPage() {
     } catch (err: any) {
       toast.error(err.message)
     } finally { setLoading(false) }
+  }
+
+  // Called by react-hook-form when validation FAILS — navigate to the step
+  // that has the first invalid field so the user can see the errors
+  const onError = (formErrors: typeof errors) => {
+    for (const stepNum of [1, 2, 3] as const) {
+      const hasError = STEP_FIELDS[stepNum].some(field => formErrors[field])
+      if (hasError) {
+        setStep(stepNum)
+        // Short delay so the step re-renders before toast shows
+        setTimeout(() => {
+          const firstMsg = STEP_FIELDS[stepNum]
+            .map(f => formErrors[f]?.message)
+            .find(Boolean)
+          toast.error(firstMsg || "Please fix the highlighted fields")
+        }, 50)
+        return
+      }
+    }
+    toast.error("Please check all fields before submitting")
   }
 
   const STEPS = [
@@ -126,7 +154,8 @@ export default function BuilderPage() {
             ))}
           </div>
 
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+          {/* Pass BOTH onSubmit and onError to handleSubmit */}
+          <form onSubmit={handleSubmit(onSubmit, onError)} className="space-y-5">
 
             {/* ── STEP 1 — Details ─────────────────────────────────── */}
             {step === 1 && (
@@ -140,7 +169,8 @@ export default function BuilderPage() {
                   <div className="space-y-1.5">
                     <Label className="text-sm font-medium text-zinc-700">Agent Name *</Label>
                     <Input placeholder="e.g. Email Summarizer Pro"
-                      className="rounded-xl border-zinc-200 h-10" {...register("name")} />
+                      className={cn("rounded-xl h-10", errors.name ? "border-red-300 focus:border-red-400" : "border-zinc-200")}
+                      {...register("name")} />
                     {errors.name && <p className="text-xs text-red-500">{errors.name.message}</p>}
                   </div>
 
@@ -149,14 +179,16 @@ export default function BuilderPage() {
                       Description * <span className="text-zinc-400 font-normal">(shown on marketplace)</span>
                     </Label>
                     <Textarea placeholder="Describe what your agent does, who it's for, and what makes it unique…"
-                      rows={3} className="rounded-xl border-zinc-200 resize-none text-sm" {...register("description")} />
+                      rows={3}
+                      className={cn("rounded-xl resize-none text-sm", errors.description ? "border-red-300" : "border-zinc-200")}
+                      {...register("description")} />
                     {errors.description && <p className="text-xs text-red-500">{errors.description.message}</p>}
                   </div>
 
                   <div className="space-y-1.5">
                     <Label className="text-sm font-medium text-zinc-700">Category *</Label>
-                    <Select onValueChange={v => setValue("category", v)}>
-                      <SelectTrigger className="rounded-xl border-zinc-200 h-10">
+                    <Select onValueChange={v => setValue("category", v, { shouldValidate: true })}>
+                      <SelectTrigger className={cn("rounded-xl h-10", errors.category ? "border-red-300" : "border-zinc-200")}>
                         <SelectValue placeholder="Select a category" />
                       </SelectTrigger>
                       <SelectContent className="rounded-xl">
@@ -229,7 +261,7 @@ export default function BuilderPage() {
                     <Textarea
                       placeholder={`You are an expert email analyst. When given an email thread:\n1. Summarize key points concisely\n2. Identify action items\n3. Flag urgent requests\n\nReturn as structured JSON.`}
                       rows={8}
-                      className="rounded-xl border-zinc-200 font-mono text-sm resize-none"
+                      className={cn("rounded-xl font-mono text-sm resize-none", errors.system_prompt ? "border-red-300" : "border-zinc-200")}
                       {...register("system_prompt")}
                     />
                     {errors.system_prompt && <p className="text-xs text-red-500">{errors.system_prompt.message}</p>}
@@ -273,6 +305,16 @@ export default function BuilderPage() {
                   <h2 className="font-semibold text-zinc-900 text-sm flex items-center gap-2">
                     <DollarSign className="h-4 w-4 text-primary" /> Pricing Model
                   </h2>
+
+                  {/* Pricing model note for "free" */}
+                  {pricingModel === "free" && (
+                    <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-xs text-blue-700 leading-relaxed">
+                      <strong>Free agents</strong> are available to all users at no cost. AgentDyne covers the
+                      LLM inference costs up to the platform quota. The agent will be created as a{" "}
+                      <strong>draft</strong> — submit it for review once you're ready to publish.
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-2 gap-3">
                     {([
                       { key: "free",         label: "Free",         sub: "No cost to users" },
@@ -317,6 +359,7 @@ export default function BuilderPage() {
                 <div className="flex gap-3">
                   <Button type="button" variant="outline" onClick={() => setStep(2)}
                     className="flex-1 rounded-xl border-zinc-200 h-10">Back</Button>
+                  {/* type="submit" triggers handleSubmit(onSubmit, onError) */}
                   <Button type="submit" disabled={loading}
                     className="flex-1 rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold h-10">
                     {loading
