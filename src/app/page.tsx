@@ -5,7 +5,7 @@ import { motion } from "framer-motion"
 import {
   ArrowRight, Zap, Globe, Shield, BarChart3, Code2, Cpu,
   Star, CheckCircle,
-  Code2 as CodingIcon, Megaphone, TrendingUp, Headphones,
+  Megaphone, TrendingUp, Headphones,
   FlaskConical, Scale, Settings2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -31,7 +31,7 @@ const FEATURES = [
 ]
 
 const CATEGORIES = [
-  { name: "Coding",           icon: CodingIcon,    count: 1840, color: "bg-blue-50   text-blue-600",   ring: "group-hover:ring-blue-200"   },
+  { name: "Coding",           icon: Code2,    count: 1840, color: "bg-blue-50   text-blue-600",   ring: "group-hover:ring-blue-200"   },
   { name: "Marketing",        icon: Megaphone,     count: 1230, color: "bg-pink-50   text-pink-600",   ring: "group-hover:ring-pink-200"   },
   { name: "Finance",          icon: TrendingUp,    count: 980,  color: "bg-green-50  text-green-600",  ring: "group-hover:ring-green-200"  },
   { name: "Data Analysis",    icon: BarChart3,     count: 1100, color: "bg-indigo-50 text-indigo-600", ring: "group-hover:ring-indigo-200" },

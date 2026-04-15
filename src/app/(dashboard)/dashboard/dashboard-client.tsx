@@ -27,6 +27,10 @@ export function DashboardClient({ profile, recentExecutions, myAgents, totalExec
   const used  = profile?.executions_used_this_month || 0
   const pct   = Math.min((used / quota) * 100, 100)
 
+  // Time-aware greeting
+  const hour     = new Date().getHours()
+  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening"
+
   const STATS = [
     { label: "Total Executions", value: formatNumber(totalExecutions), icon: Zap,         color: "text-primary",    bg: "bg-primary/6" },
     { label: "This Month",       value: formatNumber(used),            icon: TrendingUp,  color: "text-green-600",  bg: "bg-green-50" },
@@ -40,7 +44,7 @@ export function DashboardClient({ profile, recentExecutions, myAgents, totalExec
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-zinc-900">
-            Good morning, {profile?.full_name?.split(" ")[0] || "Developer"} 👋
+            {greeting}, {profile?.full_name?.split(" ")[0] || "Developer"} 👋
           </h1>
           <p className="text-zinc-500 text-sm mt-1">Here's what's happening with your agents.</p>
         </div>

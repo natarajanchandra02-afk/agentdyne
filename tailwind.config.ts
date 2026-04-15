@@ -1,7 +1,12 @@
 import type { Config } from 'tailwindcss'
 
 const config: Config = {
-  // NO darkMode — always light (Apple white)
+  // CRITICAL: 'class' strategy means dark: variants ONLY activate when an
+  // ancestor element has the class "dark". Since we never add that class,
+  // dark: variants are completely inert — dark-mode OS users see white correctly.
+  // Without this, Tailwind defaults to 'media' (prefers-color-scheme), which
+  // would activate dark: classes for any user with a dark-mode OS.
+  darkMode: 'class',
   content: [
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
     './src/components/**/*.{js,ts,jsx,tsx,mdx}',

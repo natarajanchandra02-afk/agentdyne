@@ -7,7 +7,7 @@ import { usePathname, useRouter } from "next/navigation"
 import {
   LayoutDashboard, Bot, BarChart3, CreditCard, Key,
   Settings, Store, ShieldCheck, LogOut, Zap, ChevronRight,
-  HelpCircle, Trophy, Layers, GitMerge,
+  HelpCircle, Trophy, Layers,
 } from "lucide-react"
 import { cn, getInitials } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -16,12 +16,12 @@ import { Badge } from "@/components/ui/badge"
 import { useUser } from "@/hooks/use-user"
 
 const MAIN_NAV = [
-  { href: "/dashboard",   icon: LayoutDashboard, label: "Overview" },
-  { href: "/my-agents",   icon: Bot,             label: "My Agents" },
-  { href: "/analytics",   icon: BarChart3,        label: "Analytics" },
-  { href: "/api-keys",    icon: Key,              label: "API Keys" },
-  { href: "/leaderboard", icon: Trophy,    label: "Leaderboard" },
-  { href: "/pipelines",   icon: GitMerge, label: "Pipelines"   },
+  { href: "/dashboard",   icon: LayoutDashboard, label: "Overview"     },
+  { href: "/my-agents",   icon: Bot,             label: "My Agents"    },
+  { href: "/pipelines",   icon: Layers,          label: "Pipelines"    },
+  { href: "/analytics",   icon: BarChart3,        label: "Analytics"    },
+  { href: "/api-keys",    icon: Key,              label: "API Keys"     },
+  { href: "/leaderboard", icon: Trophy,            label: "Leaderboard"  },
 ]
 
 const MONEY_NAV = [
@@ -35,7 +35,7 @@ const ADMIN_NAV = [
 
 const BOTTOM_NAV = [
   { href: "/settings", icon: Settings,   label: "Settings" },
-  { href: "/docs",     icon: HelpCircle, label: "Docs" },
+  { href: "/docs",     icon: HelpCircle, label: "Docs"     },
 ]
 
 function NavItem({
@@ -73,7 +73,7 @@ export function DashboardSidebar() {
 
   /**
    * Server-side sign-out — same pattern as Navbar.
-   * Clears httpOnly cookies server-side so middleware stops seeing the session.
+   * Clears httpOnly session cookies server-side so middleware stops seeing the session.
    */
   const signOut = async () => {
     if (signingOut) return

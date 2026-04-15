@@ -46,10 +46,16 @@ export function truncate(str: string, length: number) {
   return str.slice(0, length) + "..."
 }
 
-export function generateApiKey() {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-  const key   = Array.from({ length: 48 }, () => chars[Math.floor(Math.random() * chars.length)]).join("")
-  return `agd_${key}`
+export function generateApiKey(): string {
+  // CSPRNG — never use Math.random() for security tokens
+  // 36 random bytes → 48-char base64url string → prefix → "agd_" + 48 chars
+  const raw = new Uint8Array(36)
+  crypto.getRandomValues(raw)
+  const b64 = btoa(String.fromCharCode(...Array.from(raw)))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=/g, "")
+  return `agd_${b64}`
 }
 
 export function maskApiKey(key: string) {

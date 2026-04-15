@@ -1,3 +1,6 @@
+// Dashboard layout — always white, no dark mode classes
+// DashboardSidebar handles its own sticky/fixed positioning
+
 import { DashboardSidebar } from "@/components/dashboard/sidebar"
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {

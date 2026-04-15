@@ -7,8 +7,9 @@ import { Bot, Plus, Pencil, Trash2, EyeOff, Zap, Star, DollarSign, Clock, CheckC
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { CategoryIcon } from "@/components/ui/category-icon"
 import { createClient } from "@/lib/supabase/client"
-import { formatNumber, formatCurrency, formatRelativeTime, categoryLabel, CATEGORY_ICONS, cn } from "@/lib/utils"
+import { formatNumber, formatCurrency, formatRelativeTime, categoryLabel, cn } from "@/lib/utils"
 import toast from "react-hot-toast"
 
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
@@ -116,8 +117,8 @@ export function MyAgentsClient({ agents: init }: { agents: any[] }) {
                     style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
                     <div className="flex items-start gap-3">
                       {/* Icon */}
-                      <div className="w-11 h-11 rounded-xl bg-zinc-50 border border-zinc-100 flex items-center justify-center text-xl flex-shrink-0">
-                        {CATEGORY_ICONS[agent.category] || "🤖"}
+                      <div className="w-11 h-11 rounded-xl bg-zinc-50 border border-zinc-100 flex items-center justify-center flex-shrink-0">
+                        <CategoryIcon category={agent.category} colored className="h-5 w-5" />
                       </div>
 
                       {/* Info */}

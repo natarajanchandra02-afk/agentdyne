@@ -4,10 +4,7 @@ import Link from "next/link"
 import { Star, Zap, CheckCircle } from "lucide-react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { CategoryIcon } from "@/components/ui/category-icon"
-import {
-  formatNumber, formatCurrency, categoryLabel,
-  getInitials, CATEGORY_ICON_COLOR, cn,
-} from "@/lib/utils"
+import { formatNumber, formatCurrency, categoryLabel, getInitials, CATEGORY_ICON_COLOR, cn } from "@/lib/utils"
 
 interface Props { agent: any; view?: "grid" | "list" }
 
@@ -35,36 +32,40 @@ const ICON_BG: Record<string, string> = {
   other:            "bg-zinc-50",
 }
 
-// ── Grade badge (S / A / B / C / D) ──────────────────────────────────────────
-function GradeBadge({ score }: { score: number }) {
+/**
+ * ScoreBadge — renders an S/A/B/C/D quality grade when composite_score is available.
+ * Only shown when score > 0 (i.e. agent has enough executions to be ranked).
+ */
+function ScoreBadge({ score }: { score?: number }) {
+  if (!score || score <= 0) return null
   const grade = score >= 90 ? "S" : score >= 80 ? "A" : score >= 70 ? "B" : score >= 60 ? "C" : "D"
   const color = {
-    S: "bg-violet-100 text-violet-700 border-violet-200",
-    A: "bg-green-100  text-green-700  border-green-200",
-    B: "bg-blue-100   text-blue-700   border-blue-200",
-    C: "bg-amber-100  text-amber-700  border-amber-200",
-    D: "bg-zinc-100   text-zinc-600   border-zinc-200",
-  }[grade] ?? "bg-zinc-100 text-zinc-600"
-
+    S: "bg-violet-50 text-violet-700 border-violet-200",
+    A: "bg-green-50  text-green-700  border-green-200",
+    B: "bg-blue-50   text-blue-700   border-blue-200",
+    C: "bg-amber-50  text-amber-700  border-amber-200",
+    D: "bg-zinc-100  text-zinc-600   border-zinc-200",
+  }[grade]
   return (
-    <span className={cn("text-[10px] font-black px-1.5 py-0.5 rounded border leading-none", color)}>
+    <span
+      className={cn("text-[10px] font-black px-1.5 py-0.5 rounded-lg border flex-shrink-0", color)}
+      title={`Quality score: ${score.toFixed(1)}/100`}
+    >
       {grade}
     </span>
   )
 }
 
 export function AgentCard({ agent, view = "grid" }: Props) {
-  const pricing  = PRICING_CONFIG[agent.pricing_model] || PRICING_CONFIG.free
-  const seller   = agent.profiles
-  const iconBg   = ICON_BG[agent.category] || "bg-zinc-50"
-  const hasScore = agent.composite_score > 0
+  const pricing = PRICING_CONFIG[agent.pricing_model] || PRICING_CONFIG.free
+  const seller  = agent.profiles
+  const iconBg  = ICON_BG[agent.category] || "bg-zinc-50"
 
-  // ── List view ─────────────────────────────────────────────────────────────
   if (view === "list") {
     return (
       <Link href={`/marketplace/${agent.id}`}>
         <div className="flex items-center gap-4 px-5 py-4 bg-white border border-zinc-100 rounded-2xl hover:border-zinc-200 hover:shadow-sm transition-all group">
-          <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0", iconBg)}>
+          <div className={`w-10 h-10 rounded-xl ${iconBg} flex items-center justify-center flex-shrink-0`}>
             <CategoryIcon category={agent.category} colored className="h-4.5 w-4.5" />
           </div>
           <div className="flex-1 min-w-0">
@@ -73,7 +74,7 @@ export function AgentCard({ agent, view = "grid" }: Props) {
                 {agent.name}
               </h3>
               {agent.is_verified && <CheckCircle className="h-3.5 w-3.5 text-blue-500 flex-shrink-0" />}
-              {hasScore && <GradeBadge score={agent.composite_score} />}
+              <ScoreBadge score={agent.composite_score} />
             </div>
             <p className="text-xs text-zinc-500 truncate mt-0.5">{agent.description}</p>
           </div>
@@ -85,11 +86,6 @@ export function AgentCard({ agent, view = "grid" }: Props) {
             <div className="flex items-center gap-1 text-xs text-zinc-400 nums">
               <Zap className="h-3 w-3" />{formatNumber(agent.total_executions)}
             </div>
-            {hasScore && (
-              <span className="text-xs font-bold text-zinc-400 nums hidden sm:block">
-                {agent.composite_score?.toFixed(1)}
-              </span>
-            )}
             <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded-full border", pricing.color)}>
               {pricing.label}
             </span>
@@ -99,7 +95,6 @@ export function AgentCard({ agent, view = "grid" }: Props) {
     )
   }
 
-  // ── Grid view ─────────────────────────────────────────────────────────────
   return (
     <Link href={`/marketplace/${agent.id}`}>
       <div className="bg-white border border-zinc-100 rounded-2xl overflow-hidden hover:border-zinc-200 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 group h-full flex flex-col">
@@ -109,7 +104,7 @@ export function AgentCard({ agent, view = "grid" }: Props) {
         <div className="p-5 flex-1 flex flex-col">
           {/* Header */}
           <div className="flex items-start gap-3 mb-3">
-            <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0", iconBg)}>
+            <div className={`w-10 h-10 rounded-xl ${iconBg} flex items-center justify-center flex-shrink-0`}>
               <CategoryIcon category={agent.category} colored className="h-5 w-5" />
             </div>
             <div className="flex-1 min-w-0">
@@ -117,14 +112,15 @@ export function AgentCard({ agent, view = "grid" }: Props) {
                 <h3 className="font-semibold text-sm text-zinc-900 group-hover:text-primary transition-colors truncate">
                   {agent.name}
                 </h3>
-                {agent.is_verified && <CheckCircle className="h-3.5 w-3.5 text-blue-500 flex-shrink-0" />}
+                {agent.is_verified && (
+                  <CheckCircle className="h-3.5 w-3.5 text-blue-500 flex-shrink-0" />
+                )}
+                <ScoreBadge score={agent.composite_score} />
                 {agent.is_featured && (
                   <span className="text-[10px] font-bold bg-amber-50 text-amber-600 border border-amber-100 px-1.5 py-0.5 rounded-full flex-shrink-0">
                     Featured
                   </span>
                 )}
-                {/* Quality grade badge — only shown when score data is available */}
-                {hasScore && <GradeBadge score={agent.composite_score} />}
               </div>
               <div className="flex items-center gap-1.5 mt-0.5">
                 <Avatar className="h-3.5 w-3.5">
@@ -133,14 +129,20 @@ export function AgentCard({ agent, view = "grid" }: Props) {
                     {getInitials(seller?.full_name || "A")}
                   </AvatarFallback>
                 </Avatar>
-                <span className="text-[11px] text-zinc-400 truncate">{seller?.full_name || "Anonymous"}</span>
-                {seller?.is_verified && <CheckCircle className="h-3 w-3 text-blue-400 flex-shrink-0" />}
+                <span className="text-[11px] text-zinc-400 truncate">
+                  {seller?.full_name || "Anonymous"}
+                </span>
+                {seller?.is_verified && (
+                  <CheckCircle className="h-3 w-3 text-blue-400 flex-shrink-0" />
+                )}
               </div>
             </div>
           </div>
 
           {/* Description */}
-          <p className="text-xs text-zinc-500 leading-relaxed mb-3 line-clamp-2 flex-1">{agent.description}</p>
+          <p className="text-xs text-zinc-500 leading-relaxed mb-3 line-clamp-2 flex-1">
+            {agent.description}
+          </p>
 
           {/* Tags */}
           <div className="flex flex-wrap gap-1.5 mb-4">
@@ -161,17 +163,19 @@ export function AgentCard({ agent, view = "grid" }: Props) {
             <div className="flex items-center gap-3 text-xs text-zinc-400">
               <span className="flex items-center gap-1">
                 <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                <span className="font-semibold text-zinc-700 nums">{agent.average_rating?.toFixed(1) || "—"}</span>
+                <span className="font-semibold text-zinc-700 nums">
+                  {agent.average_rating?.toFixed(1) || "—"}
+                </span>
                 <span className="nums">({formatNumber(agent.total_reviews)})</span>
               </span>
               <span className="flex items-center gap-1 nums">
                 <Zap className="h-3 w-3" />{formatNumber(agent.total_executions)}
               </span>
             </div>
-            {/* Composite score pill */}
-            {hasScore && (
-              <span className="text-[10px] font-bold text-zinc-400 nums bg-zinc-50 border border-zinc-100 px-2 py-0.5 rounded-full">
-                {agent.composite_score?.toFixed(1)} / 100
+            {/* Latency pill — shown when available */}
+            {agent.average_latency_ms > 0 && (
+              <span className="text-[10px] text-zinc-400 nums">
+                ~{agent.average_latency_ms}ms
               </span>
             )}
           </div>

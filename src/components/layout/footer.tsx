@@ -24,9 +24,9 @@ const LINKS = {
     { label: "Contact",        href: "/contact" },
   ],
   Legal: [
-    { label: "Privacy Policy", href: "/privacy" },
+    { label: "Privacy Policy",  href: "/privacy" },
     { label: "Terms of Service",href: "/terms" },
-    { label: "Security",       href: "/contact" },
+    { label: "Security",        href: "/contact" },
   ],
 }
 
@@ -46,7 +46,11 @@ export function Footer() {
           {/* Brand */}
           <div className="col-span-2 md:col-span-1">
             <Link href="/" className="inline-block mb-5">
-              <Image src="/logo.png" alt="AgentDyne" width={130} height={36}
+              <Image
+                src="/logo.png"
+                alt="AgentDyne"
+                width={130}
+                height={36}
                 className="h-8 w-auto object-contain opacity-90 hover:opacity-100 transition-opacity"
               />
             </Link>
@@ -55,8 +59,14 @@ export function Footer() {
             </p>
             <div className="flex items-center gap-2.5">
               {SOCIALS.map(({ icon: Icon, href, label }) => (
-                <Link key={label} href={href} target="_blank" rel="noopener noreferrer" aria-label={label}
-                  className="w-8 h-8 rounded-lg bg-zinc-100 border border-zinc-200 flex items-center justify-center text-zinc-500 hover:text-zinc-900 hover:border-zinc-400 transition-all">
+                <Link
+                  key={label}
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={label}
+                  className="w-8 h-8 rounded-lg bg-zinc-100 border border-zinc-200 flex items-center justify-center text-zinc-500 hover:text-zinc-900 hover:border-zinc-400 transition-all"
+                >
                   <Icon className="h-3.5 w-3.5" />
                 </Link>
               ))}
@@ -65,14 +75,18 @@ export function Footer() {
 
           {Object.entries(LINKS).map(([category, links]) => (
             <div key={category}>
-              <h3 className="text-xs font-semibold text-zinc-900 uppercase tracking-wider mb-4">{category}</h3>
+              <h3 className="text-xs font-semibold text-zinc-900 uppercase tracking-wider mb-4">
+                {category}
+              </h3>
               <ul className="space-y-2.5">
                 {links.map(({ label, href }) => (
                   <li key={label}>
-                    <Link href={href}
+                    <Link
+                      href={href}
                       target={href.startsWith("http") ? "_blank" : undefined}
                       rel={href.startsWith("http") ? "noopener noreferrer" : undefined}
-                      className="text-xs text-zinc-500 hover:text-zinc-900 transition-colors">
+                      className="text-xs text-zinc-500 hover:text-zinc-900 transition-colors"
+                    >
                       {label}
                     </Link>
                   </li>
@@ -92,7 +106,9 @@ export function Footer() {
               All systems operational
             </div>
             <span>v1.5.0</span>
-            <Link href="/changelog" className="hover:text-zinc-700 transition-colors">Changelog</Link>
+            <Link href="/changelog" className="hover:text-zinc-700 transition-colors">
+              Changelog
+            </Link>
           </div>
         </div>
       </div>
