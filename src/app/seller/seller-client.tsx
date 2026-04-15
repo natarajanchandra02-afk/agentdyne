@@ -7,7 +7,7 @@ import { DollarSign, TrendingUp, Zap, Star, AlertCircle, Plus, ExternalLink, Arr
 import { Button } from "@/components/ui/button"
 import { DashboardSidebar } from "@/components/dashboard/sidebar"
 import { formatCurrency, formatNumber, formatRelativeTime } from "@/lib/utils"
-import { PLATFORM_FEE_PERCENT } from "@/lib/stripe"
+import { PLATFORM_FEE_PERCENT } from "@/lib/constants"
 import toast from "react-hot-toast"
 
 interface Props { profile: any; agents: any[]; payouts: any[]; transactions: any[] }

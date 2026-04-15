@@ -19,6 +19,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { useUser } from "@/hooks/use-user"
 import { getInitials, cn } from "@/lib/utils"
+import type { User } from "@supabase/supabase-js"
 
 const NAV = [
   { href: "/marketplace",  label: "Marketplace" },
@@ -29,16 +30,143 @@ const NAV = [
 ]
 
 const USER_MENU = [
-  { href: "/dashboard",   icon: LayoutDashboard, label: "Dashboard" },
-  { href: "/my-agents",   icon: Bot,             label: "My Agents" },
-  { href: "/analytics",   icon: BarChart3,       label: "Analytics" },
-  { href: "/api-keys",    icon: Key,             label: "API Keys" },
-  { href: "/leaderboard", icon: Trophy,          label: "Leaderboard" },
-  { href: "/integrations",icon: Puzzle,          label: "Integrations" },
-  { href: "/seller",      icon: Store,           label: "Seller Portal" },
-  { href: "/billing",     icon: DollarSign,      label: "Billing" },
-  { href: "/settings",    icon: Settings,        label: "Settings" },
+  { href: "/dashboard",    icon: LayoutDashboard, label: "Dashboard"     },
+  { href: "/my-agents",    icon: Bot,             label: "My Agents"     },
+  { href: "/analytics",    icon: BarChart3,       label: "Analytics"     },
+  { href: "/api-keys",     icon: Key,             label: "API Keys"      },
+  { href: "/leaderboard",  icon: Trophy,          label: "Leaderboard"   },
+  { href: "/integrations", icon: Puzzle,          label: "Integrations"  },
+  { href: "/seller",       icon: Store,           label: "Seller Portal" },
+  { href: "/billing",      icon: DollarSign,      label: "Billing"       },
+  { href: "/settings",     icon: Settings,        label: "Settings"      },
 ]
+
+// ── Auth right-side area — defined OUTSIDE Navbar to keep stable component identity ──
+// CRITICAL: if defined inside Navbar, React creates a new component type on every
+// Navbar re-render (e.g. scroll), causing it to unmount/remount and losing state.
+// This was the root cause of sign-in buttons disappearing on the deployed site.
+
+interface AuthAreaProps {
+  authLoading: boolean
+  user: User | null
+  profile: any
+  onSignOut: () => void
+  signingOut: boolean
+  navigate: (href: string) => void
+}
+
+function AuthArea({ authLoading, user, profile, onSignOut, signingOut, navigate }: AuthAreaProps) {
+  // Phase 1: still resolving auth state — show neutral skeleton
+  // Skeleton width matches ~"Get started" button so layout doesn't shift
+  if (authLoading) {
+    return (
+      <div className="flex items-center gap-2">
+        <div className="h-8 w-20 rounded-xl bg-zinc-200/70 animate-pulse" />
+        <div className="h-8 w-24 rounded-xl bg-zinc-200/70 animate-pulse" />
+      </div>
+    )
+  }
+
+  // Phase 2: logged in
+  if (user) {
+    return (
+      <>
+        {/* Search */}
+        <Button variant="ghost" size="icon"
+          className="hidden md:flex h-9 w-9 rounded-xl"
+          onClick={() => navigate("/marketplace")}>
+          <Search className="h-4 w-4" />
+        </Button>
+
+        {/* Notifications */}
+        <Button variant="ghost" size="icon"
+          className="hidden md:flex relative h-9 w-9 rounded-xl"
+          onClick={() => navigate("/dashboard")}>
+          <Bell className="h-4 w-4" />
+          <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-primary rounded-full ring-1 ring-white" />
+        </Button>
+
+        {/* User dropdown */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" className="h-9 gap-2 rounded-xl px-2 focus-visible:ring-0">
+              <Avatar className="h-6 w-6">
+                <AvatarImage src={profile?.avatar_url} />
+                <AvatarFallback className="text-[10px] bg-primary text-white">
+                  {getInitials(profile?.full_name || user.email || "U")}
+                </AvatarFallback>
+              </Avatar>
+              <span className="hidden md:block text-sm font-medium max-w-[120px] truncate text-zinc-900">
+                {profile?.full_name?.split(" ")[0] || "Account"}
+              </span>
+              <ChevronDown className="h-3.5 w-3.5 hidden md:block text-zinc-400" />
+            </Button>
+          </DropdownMenuTrigger>
+
+          <DropdownMenuContent align="end" className="w-56 rounded-2xl shadow-xl border-zinc-100 p-1.5" sideOffset={8}>
+            <DropdownMenuLabel className="px-2 py-2">
+              <p className="font-semibold text-zinc-900 truncate">{profile?.full_name || "User"}</p>
+              <p className="text-xs font-normal text-zinc-400 truncate mt-0.5">{user.email}</p>
+              {profile?.subscription_plan && profile.subscription_plan !== "free" && (
+                <Badge className="mt-1.5 text-[10px] h-4 px-1.5 capitalize bg-primary/10 text-primary border-0">
+                  {profile.subscription_plan}
+                </Badge>
+              )}
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator className="bg-zinc-100" />
+
+            {USER_MENU.map(({ href, icon: Icon, label }) => (
+              <DropdownMenuItem
+                key={href}
+                onClick={() => navigate(href)}
+                className="rounded-xl cursor-pointer px-2 py-2 text-sm text-zinc-700 hover:text-zinc-900 focus:bg-zinc-50"
+              >
+                <Icon className="h-4 w-4 mr-2.5 text-zinc-400" />
+                {label}
+              </DropdownMenuItem>
+            ))}
+
+            <DropdownMenuSeparator className="bg-zinc-100" />
+
+            <DropdownMenuItem
+              onClick={onSignOut}
+              disabled={signingOut}
+              className="rounded-xl cursor-pointer px-2 py-2 text-sm text-red-600 hover:text-red-700 focus:bg-red-50 focus:text-red-700"
+            >
+              <LogOut className="h-4 w-4 mr-2.5" />
+              {signingOut ? "Signing out…" : "Sign out"}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </>
+    )
+  }
+
+  // Phase 3: logged out — sign in + get started
+  return (
+    <>
+      <Link href="/login" className="hidden md:block">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="rounded-xl text-sm font-medium text-zinc-700 hover:text-zinc-900 hover:bg-zinc-100"
+        >
+          Sign in
+        </Button>
+      </Link>
+      <Link href="/signup">
+        <Button
+          size="sm"
+          className="rounded-xl text-sm font-semibold bg-zinc-900 text-white hover:bg-zinc-700 shadow-sm"
+        >
+          Get started
+        </Button>
+      </Link>
+    </>
+  )
+}
+
+// ── Main Navbar ────────────────────────────────────────────────────────────────
 
 export function Navbar() {
   const [scrolled,   setScrolled]   = useState(false)
@@ -46,10 +174,6 @@ export function Navbar() {
   const [signingOut, setSigningOut] = useState(false)
   const pathname = usePathname()
   const router   = useRouter()
-
-  // authLoading = true on first render and during route transitions.
-  // While loading, render a neutral skeleton so the layout doesn't
-  // jump between "Sign in" and the user avatar.
   const { user, profile, loading: authLoading } = useUser()
 
   useEffect(() => {
@@ -60,15 +184,6 @@ export function Navbar() {
 
   useEffect(() => { setMobileOpen(false) }, [pathname])
 
-  /**
-   * Server-side sign-out via POST /api/auth/signout.
-   *
-   * Why not just supabase.auth.signOut() on the client?
-   * Client-only signOut clears local storage but the middleware still sees the
-   * HTTP-only cookie and re-validates the session — user stays "logged in" on
-   * the server. The API route clears the cookie server-side with correct
-   * attributes (httpOnly, SameSite, Secure) and revokes the Supabase session.
-   */
   const signOut = async () => {
     if (signingOut) return
     setSigningOut(true)
@@ -81,125 +196,14 @@ export function Navbar() {
     }
   }
 
-  const navigate = (href: string) => { router.push(href) }
-
-  // Right-side auth area — three possible states:
-  // 1. authLoading  → skeleton placeholder (prevents flash of Sign In button)
-  // 2. user         → avatar dropdown + search/bell
-  // 3. no user      → Sign in + Get started buttons
-  const AuthButtons = () => {
-    if (authLoading) {
-      return (
-        <div className="flex items-center gap-2">
-          {/* Skeleton that roughly matches the "Get started" button width */}
-          <div className="h-8 w-24 rounded-xl bg-zinc-100 animate-pulse" />
-        </div>
-      )
-    }
-
-    if (user) {
-      return (
-        <>
-          {/* Search */}
-          <Button variant="ghost" size="icon"
-            className="hidden md:flex h-9 w-9 rounded-xl"
-            onClick={() => navigate("/marketplace")}>
-            <Search className="h-4 w-4" />
-          </Button>
-
-          {/* Notifications */}
-          <Button variant="ghost" size="icon"
-            className="hidden md:flex relative h-9 w-9 rounded-xl"
-            onClick={() => navigate("/dashboard")}>
-            <Bell className="h-4 w-4" />
-            <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-primary rounded-full ring-1 ring-white" />
-          </Button>
-
-          {/* User dropdown */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="h-9 gap-2 rounded-xl px-2 focus-visible:ring-0">
-                <Avatar className="h-6 w-6">
-                  <AvatarImage src={profile?.avatar_url} />
-                  <AvatarFallback className="text-[10px] bg-primary text-white">
-                    {getInitials(profile?.full_name || user.email || "U")}
-                  </AvatarFallback>
-                </Avatar>
-                <span className="hidden md:block text-sm font-medium max-w-[120px] truncate text-zinc-900">
-                  {profile?.full_name?.split(" ")[0] || "Account"}
-                </span>
-                <ChevronDown className="h-3.5 w-3.5 hidden md:block text-zinc-400" />
-              </Button>
-            </DropdownMenuTrigger>
-
-            <DropdownMenuContent align="end" className="w-56 rounded-2xl shadow-xl border-zinc-100 p-1.5" sideOffset={8}>
-              {/* User info */}
-              <DropdownMenuLabel className="px-2 py-2">
-                <p className="font-semibold text-zinc-900 truncate">
-                  {profile?.full_name || "User"}
-                </p>
-                <p className="text-xs font-normal text-zinc-400 truncate mt-0.5">
-                  {user.email}
-                </p>
-                {profile?.subscription_plan && profile.subscription_plan !== "free" && (
-                  <Badge className="mt-1.5 text-[10px] h-4 px-1.5 capitalize bg-primary/10 text-primary border-0">
-                    {profile.subscription_plan}
-                  </Badge>
-                )}
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator className="bg-zinc-100" />
-
-              {USER_MENU.map(({ href, icon: Icon, label }) => (
-                <DropdownMenuItem
-                  key={href}
-                  onClick={() => navigate(href)}
-                  className="rounded-xl cursor-pointer px-2 py-2 text-sm text-zinc-700 hover:text-zinc-900 focus:bg-zinc-50"
-                >
-                  <Icon className="h-4 w-4 mr-2.5 text-zinc-400" />
-                  {label}
-                </DropdownMenuItem>
-              ))}
-
-              <DropdownMenuSeparator className="bg-zinc-100" />
-
-              {/* Sign out */}
-              <DropdownMenuItem
-                onClick={signOut}
-                disabled={signingOut}
-                className="rounded-xl cursor-pointer px-2 py-2 text-sm text-red-600 hover:text-red-700 focus:bg-red-50 focus:text-red-700"
-              >
-                <LogOut className="h-4 w-4 mr-2.5" />
-                {signingOut ? "Signing out…" : "Sign out"}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </>
-      )
-    }
-
-    // Logged out
-    return (
-      <>
-        <Link href="/login" className="hidden md:block">
-          <Button variant="ghost" size="sm" className="rounded-xl text-sm text-zinc-600">
-            Sign in
-          </Button>
-        </Link>
-        <Link href="/signup">
-          <Button size="sm" className="rounded-xl text-sm font-semibold bg-zinc-900 text-white hover:bg-zinc-700 shadow-sm">
-            Get started
-          </Button>
-        </Link>
-      </>
-    )
-  }
+  const navigate = (href: string) => router.push(href)
 
   return (
     <header className={cn(
       "fixed top-0 inset-x-0 z-50 transition-all duration-300",
       scrolled
         ? "bg-white/90 backdrop-blur-xl border-b border-black/[0.06] shadow-sm"
-        : "bg-transparent"
+        : "bg-white/80 backdrop-blur-sm"  // always slightly white so auth buttons are visible
     )}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-14">
@@ -217,10 +221,16 @@ export function Navbar() {
                 const t = e.target as HTMLImageElement
                 t.style.display = "none"
                 const fb = t.nextElementSibling as HTMLElement
-                if (fb) fb.style.display = "flex"
+                if (fb) fb.style.removeProperty("display")
               }}
             />
-            <span className="hidden text-lg font-black text-zinc-900">AgentDyne</span>
+            {/* Fallback text — shown if logo.png is missing */}
+            <span
+              className="text-lg font-black text-zinc-900"
+              style={{ display: "none" }}
+            >
+              AgentDyne
+            </span>
           </Link>
 
           {/* Desktop nav */}
@@ -234,7 +244,7 @@ export function Navbar() {
                       "px-3.5 py-1.5 rounded-lg text-sm font-medium transition-all duration-150 block",
                       active
                         ? "bg-white text-zinc-900 shadow-sm"
-                        : "text-zinc-500 hover:text-zinc-900"
+                        : "text-zinc-600 hover:text-zinc-900"
                     )}>
                       {label}
                     </span>
@@ -246,7 +256,14 @@ export function Navbar() {
 
           {/* Right side */}
           <div className="flex items-center gap-2">
-            <AuthButtons />
+            <AuthArea
+              authLoading={authLoading}
+              user={user}
+              profile={profile}
+              onSignOut={signOut}
+              signingOut={signingOut}
+              navigate={navigate}
+            />
 
             {/* Mobile hamburger */}
             <Button
@@ -269,7 +286,7 @@ export function Navbar() {
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
             transition={{ duration: 0.18 }}
-            className="md:hidden border-t border-zinc-100 bg-white/95 backdrop-blur-xl overflow-hidden"
+            className="md:hidden border-t border-zinc-100 bg-white overflow-hidden shadow-sm"
           >
             <div className="px-4 py-4 space-y-1">
               {NAV.map(({ href, label }) => (
@@ -278,7 +295,7 @@ export function Navbar() {
                     "px-3 py-2.5 rounded-xl text-sm font-medium transition-colors",
                     pathname === href
                       ? "bg-primary/8 text-primary"
-                      : "text-zinc-500 hover:text-zinc-900 hover:bg-zinc-50"
+                      : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-50"
                   )}>
                     {label}
                   </div>
@@ -290,7 +307,7 @@ export function Navbar() {
                   <div className="border-t border-zinc-100 my-2" />
                   {USER_MENU.map(({ href, icon: Icon, label }) => (
                     <Link key={href} href={href}>
-                      <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-zinc-500 hover:text-zinc-900 hover:bg-zinc-50 transition-colors">
+                      <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-zinc-600 hover:text-zinc-900 hover:bg-zinc-50 transition-colors">
                         <Icon className="h-4 w-4" />
                         {label}
                       </div>
@@ -315,11 +332,13 @@ export function Navbar() {
                 ) : (
                   <>
                     <Link href="/login">
-                      <Button variant="outline" className="w-full rounded-xl">Sign in</Button>
+                      <Button variant="outline" className="w-full rounded-xl font-semibold">
+                        Sign in
+                      </Button>
                     </Link>
                     <Link href="/signup">
-                      <Button className="w-full rounded-xl bg-zinc-900 text-white hover:bg-zinc-700">
-                        Get started
+                      <Button className="w-full rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold">
+                        Get started free
                       </Button>
                     </Link>
                   </>
