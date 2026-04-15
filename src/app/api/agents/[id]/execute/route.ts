@@ -220,7 +220,7 @@ export async function POST(
               supabase.from("executions").update({
                 status: "success", output: fullText,
                 tokens_input: inputTokens, tokens_output: outputTokens,
-                latency_ms: latencyMs, cost,
+                latency_ms: latencyMs, cost, cost_usd: cost,
                 completed_at: new Date().toISOString(),
               }).eq("id", execution?.id ?? ""),
               supabase.rpc("increment_executions_used", { user_id_param: userId }),
@@ -263,7 +263,7 @@ export async function POST(
       supabase.from("executions").update({
         status: "success", output,
         tokens_input: inputTokens, tokens_output: outputTokens,
-        latency_ms: latencyMs, cost,
+        latency_ms: latencyMs, cost, cost_usd: cost,
         completed_at: new Date().toISOString(),
       }).eq("id", execution?.id ?? ""),
       supabase.rpc("increment_executions_used", { user_id_param: userId }),

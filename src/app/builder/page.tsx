@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { CategoryIcon } from "@/components/ui/category-icon"
+import { DashboardSidebar } from "@/components/dashboard/sidebar"
 import { categoryLabel, cn } from "@/lib/utils"
 import { MAX_SYSTEM_PROMPT_LENGTH } from "@/lib/constants"
 import toast from "react-hot-toast"
@@ -62,15 +63,6 @@ const STEP_FIELDS: Record<number, (keyof FormData)[]> = {
   1: ["name", "description", "category"],
   2: ["system_prompt", "model_name", "temperature", "max_tokens"],
   3: ["pricing_model", "price_per_call", "subscription_price_monthly"],
-}
-
-// Generates a unique slug: "my-agent-name-a1b2c" (name + 5 CSPRNG chars)
-function generateSlug(name: string): string {
-  const base = slugify(name).slice(0, 40)
-  const arr  = new Uint8Array(4)
-  crypto.getRandomValues(arr)
-  const suffix = Array.from(arr, b => b.toString(36)).join("").slice(0, 6)
-  return `${base}-${suffix}`
 }
 
 export default function BuilderPage() {
