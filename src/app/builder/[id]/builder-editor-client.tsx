@@ -9,6 +9,7 @@ import { motion } from "framer-motion"
 import {
   Save, Play, Send, ArrowLeft, Loader2, Check,
   Code2, FileText, TestTube2, Globe, Tag, Info,
+  Puzzle, Database, ExternalLink, Zap,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -23,6 +24,7 @@ import { CategoryIcon } from "@/components/ui/category-icon"
 import { createClient } from "@/lib/supabase/client"
 import { categoryLabel, cn } from "@/lib/utils"
 import { MAX_SYSTEM_PROMPT_LENGTH, SUPPORTED_MODELS } from "@/lib/constants"
+import { MCP_SERVERS } from "@/lib/mcp-servers"
 import toast from "react-hot-toast"
 import Link from "next/link"
 
@@ -264,6 +266,8 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
               <TabsList className="mb-6 bg-zinc-50 border border-zinc-100 p-1 rounded-xl">
                 <TabsTrigger value="basics"  className="rounded-lg text-sm gap-1.5 data-[state=active]:bg-white data-[state=active]:shadow-sm"><FileText className="h-3.5 w-3.5" /> Basics</TabsTrigger>
                 <TabsTrigger value="ai"      className="rounded-lg text-sm gap-1.5 data-[state=active]:bg-white data-[state=active]:shadow-sm"><Code2    className="h-3.5 w-3.5" /> AI Config</TabsTrigger>
+                <TabsTrigger value="mcp"     className="rounded-lg text-sm gap-1.5 data-[state=active]:bg-white data-[state=active]:shadow-sm"><Puzzle   className="h-3.5 w-3.5" /> MCP Tools</TabsTrigger>
+                <TabsTrigger value="rag"     className="rounded-lg text-sm gap-1.5 data-[state=active]:bg-white data-[state=active]:shadow-sm"><Database className="h-3.5 w-3.5" /> Knowledge</TabsTrigger>
                 <TabsTrigger value="pricing" className="rounded-lg text-sm gap-1.5 data-[state=active]:bg-white data-[state=active]:shadow-sm"><Tag      className="h-3.5 w-3.5" /> Pricing</TabsTrigger>
                 <TabsTrigger value="docs"    className="rounded-lg text-sm gap-1.5 data-[state=active]:bg-white data-[state=active]:shadow-sm"><Globe    className="h-3.5 w-3.5" /> Docs</TabsTrigger>
                 <TabsTrigger value="test"    className="rounded-lg text-sm gap-1.5 data-[state=active]:bg-white data-[state=active]:shadow-sm"><TestTube2 className="h-3.5 w-3.5" /> Test</TabsTrigger>

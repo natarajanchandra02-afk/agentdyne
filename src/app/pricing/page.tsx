@@ -45,7 +45,7 @@ const PLANS = [
     key: "pro", name: "Pro",
     price: { monthly: 79, yearly: 63 }, calls: "10,000",
     description: "For teams shipping at scale.",
-    cta: "Start Pro trial", href: "/signup?plan=pro", highlight: true,
+    cta: "Start Pro trial", href: "/billing?upgrade=pro", highlight: true,
     features: [
       { text: "10,000 agent calls / month", ok: true },
       { text: "All agents",                 ok: true },
