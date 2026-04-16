@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useCallback } from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -12,7 +13,7 @@ import {
   Search, Filter, CheckSquare, Square,
   Plus, Trash2, Info, ChevronDown, ChevronUp,
   Zap, Settings2, Database, Puzzle, Bot,
-  FileText, Link, Upload, BookOpen,
+  FileText, Link2 as LinkIcon, Upload, BookOpen,
   Globe, Lock,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -29,7 +30,6 @@ import { MCP_SERVERS, MCP_CATEGORIES, type MCPCategory } from "@/lib/mcp-servers
 import { MAX_SYSTEM_PROMPT_LENGTH, SUPPORTED_MODELS, MODEL_LABELS } from "@/lib/constants"
 import { categoryLabel, cn } from "@/lib/utils"
 import toast from "react-hot-toast"
-import Link from "next/link"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -107,9 +107,9 @@ function Divider() {
 function MCPPicker({
   selected, onChange,
 }: { selected: string[]; onChange: (ids: string[]) => void }) {
-  const [q,       setQ]       = useState("")
-  const [catFilter, setCat]   = useState<MCPCategory | "all">("all")
-  const [showAll, setShowAll] = useState(false)
+  const [q,         setQ]      = useState("")
+  const [catFilter, setCat]    = useState<MCPCategory | "all">("all")
+  const [showAll,   setShowAll] = useState(false)
 
   const filtered = MCP_SERVERS.filter(s => {
     const matchCat = catFilter === "all" || s.category === catFilter
@@ -125,7 +125,6 @@ function MCPPicker({
 
   return (
     <div className="space-y-4">
-      {/* Search + filter */}
       <div className="flex gap-2">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-400" />
@@ -151,7 +150,6 @@ function MCPPicker({
         </Select>
       </div>
 
-      {/* Selected badges */}
       {selected.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {selected.map(id => {
@@ -170,7 +168,6 @@ function MCPPicker({
         </div>
       )}
 
-      {/* Grid */}
       <div className="grid grid-cols-2 gap-2">
         {visible.map(srv => {
           const on = selected.includes(srv.id)
@@ -242,17 +239,14 @@ function KnowledgeSection({
 
   return (
     <div className="space-y-4">
-      {/* Coming-soon badge */}
       <div className="flex items-start gap-3 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-xs text-amber-700">
         <Info className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
         <span>
           <strong>Vector search is enabled.</strong> Add text chunks or URLs — they are embedded
-          and injected into the agent's context at runtime via semantic search (RAG).
-          Full file-upload and auto-chunking coming in v1.1.
+          and injected into the agent&apos;s context at runtime via semantic search (RAG).
         </span>
       </div>
 
-      {/* Source type buttons */}
       <div className="flex gap-2">
         <button type="button" onClick={() => setAdding("text")}
           className="flex items-center gap-2 px-3 py-2 rounded-xl border border-zinc-200 text-xs font-semibold text-zinc-700 hover:border-primary/30 hover:bg-primary/5 transition-all">
@@ -260,7 +254,7 @@ function KnowledgeSection({
         </button>
         <button type="button" onClick={() => setAdding("url")}
           className="flex items-center gap-2 px-3 py-2 rounded-xl border border-zinc-200 text-xs font-semibold text-zinc-700 hover:border-primary/30 hover:bg-primary/5 transition-all">
-          <Link className="h-3.5 w-3.5" /> Add URL
+          <LinkIcon className="h-3.5 w-3.5" /> Add URL
         </button>
         <button type="button"
           className="flex items-center gap-2 px-3 py-2 rounded-xl border border-dashed border-zinc-200 text-xs font-semibold text-zinc-400 cursor-not-allowed">
@@ -268,7 +262,6 @@ function KnowledgeSection({
         </button>
       </div>
 
-      {/* Add form */}
       <AnimatePresence>
         {adding && (
           <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
@@ -311,12 +304,10 @@ function KnowledgeSection({
         )}
       </AnimatePresence>
 
-      {/* Items list */}
       {items.length > 0 ? (
         <div className="space-y-2">
           {items.map(item => (
-            <div key={item.id}
-              className="flex items-start gap-3 bg-white border border-zinc-100 rounded-xl p-3">
+            <div key={item.id} className="flex items-start gap-3 bg-white border border-zinc-100 rounded-xl p-3">
               <div className="w-7 h-7 rounded-lg bg-zinc-50 flex items-center justify-center flex-shrink-0 mt-0.5">
                 {item.type === "url" ? <Globe className="h-3.5 w-3.5 text-zinc-400" /> : <BookOpen className="h-3.5 w-3.5 text-zinc-400" />}
               </div>
@@ -350,15 +341,13 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
   const router   = useRouter()
   const supabase = createClient()
 
-  // Editor state
-  const [saving,     setSaving]     = useState(false)
-  const [submitting, setSubmitting] = useState(false)
+  const [saving,      setSaving]      = useState(false)
+  const [submitting,  setSubmitting]  = useState(false)
   const [mcpSelected, setMcpSelected] = useState<string[]>(() =>
     Array.isArray(agent.mcp_server_ids) ? agent.mcp_server_ids : []
   )
   const [knowledgeItems, setKnowledgeItems] = useState<KnowledgeItem[]>([])
 
-  // Test panel state
   const [testInput,  setTestInput]  = useState('{"input": "Hello, what can you do?"}')
   const [testOutput, setTestOutput] = useState("")
   const [testing,    setTesting]    = useState(false)
@@ -393,7 +382,6 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
   const systemPrompt = watch("system_prompt") ?? ""
   const isPublic     = watch("is_public")
 
-  // ── Save ─────────────────────────────────────────────────────────────────
   const onSave = async (data: FormData) => {
     setSaving(true)
     try {
@@ -417,9 +405,7 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
         max_tokens:                  data.max_tokens,
         timeout_seconds:             data.timeout_seconds,
         documentation:               data.documentation ? sanitize(data.documentation) : null,
-        // MCP servers
         mcp_server_ids:              mcpSelected,
-        // Knowledge stored in JSONB column
         input_schema:                knowledgeItems.length > 0
           ? { knowledgeSources: knowledgeItems }
           : agent.input_schema || {},
@@ -435,14 +421,13 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
     }
   }
 
-  // ── Submit for review ─────────────────────────────────────────────────────
   const submitForReview = async () => {
     setSubmitting(true)
     try {
       const { error } = await supabase.from("agents")
         .update({ status: "pending_review" }).eq("id", agent.id)
       if (error) throw error
-      toast.success("Submitted for review! We'll review within 24h.")
+      toast.success("Submitted for review! We'll respond within 24h.")
       router.push("/my-agents")
     } catch (e: any) {
       toast.error(e.message || "Submission failed")
@@ -451,7 +436,6 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
     }
   }
 
-  // ── Test runner ───────────────────────────────────────────────────────────
   const runTest = useCallback(async () => {
     setTesting(true)
     setTestOutput("")
@@ -480,17 +464,12 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
     }
   }, [agent.id, testInput])
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // RENDER
-  // ─────────────────────────────────────────────────────────────────────────
   return (
     <div className="flex min-h-screen bg-white">
       <DashboardSidebar />
-
-      {/* ── Content + pinned test panel ──────────────────────────────────── */}
       <div className="flex flex-1 overflow-hidden">
 
-        {/* ── Main scrollable editor ──────────────────────────────────────── */}
+        {/* Main scrollable editor */}
         <div className="flex-1 overflow-auto">
           <div className="max-w-3xl mx-auto px-6 py-8">
 
@@ -539,7 +518,7 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
               </div>
             </div>
 
-            {/* Tabs */}
+            {/* Form */}
             <form onSubmit={handleSubmit(onSave)}>
               <Tabs defaultValue="overview">
                 <TabsList className="mb-6 bg-zinc-50 border border-zinc-100 p-1 rounded-xl">
@@ -557,15 +536,13 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
                   </TabsTrigger>
                 </TabsList>
 
-                {/* ─── OVERVIEW ──────────────────────────────────────────── */}
+                {/* OVERVIEW */}
                 <TabsContent value="overview" className="space-y-6">
-
-                  {/* Quick stats row */}
                   <div className="grid grid-cols-3 gap-3">
                     {[
-                      { label: "Total Runs",   value: agent.total_executions?.toLocaleString() || "0" },
-                      { label: "Avg Rating",   value: agent.average_rating?.toFixed(1) || "—" },
-                      { label: "Total Revenue",value: `$${(agent.total_revenue || 0).toFixed(2)}` },
+                      { label: "Total Runs",    value: agent.total_executions?.toLocaleString() || "0" },
+                      { label: "Avg Rating",    value: agent.average_rating?.toFixed(1) || "—" },
+                      { label: "Total Revenue", value: `$${(agent.total_revenue || 0).toFixed(2)}` },
                     ].map(s => (
                       <div key={s.label} className="bg-zinc-50 border border-zinc-100 rounded-xl p-3.5">
                         <p className="text-xs text-zinc-400 font-medium">{s.label}</p>
@@ -578,13 +555,11 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
                   <div className="bg-white border border-zinc-100 rounded-2xl p-5 space-y-4"
                     style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
                     <SectionTitle icon={Bot} title="Agent Identity" subtitle="How your agent appears in the marketplace" />
-
                     <div className="space-y-1.5">
                       <Label className="text-sm font-medium text-zinc-700">Name *</Label>
                       <Input {...register("name")} className="rounded-xl border-zinc-200 h-10" />
                       {errors.name && <p className="text-xs text-red-500">{errors.name.message}</p>}
                     </div>
-
                     <div className="space-y-1.5">
                       <Label className="text-sm font-medium text-zinc-700">
                         Short Description * <span className="text-zinc-400 font-normal">(shown on marketplace cards)</span>
@@ -593,7 +568,6 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
                         className="rounded-xl border-zinc-200 text-sm resize-none" />
                       {errors.description && <p className="text-xs text-red-500">{errors.description.message}</p>}
                     </div>
-
                     <div className="space-y-1.5">
                       <Label className="text-sm font-medium text-zinc-700">
                         Long Description <span className="text-zinc-400 font-normal">(detail page)</span>
@@ -602,14 +576,11 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
                         placeholder="Describe features, use cases, example inputs/outputs…"
                         className="rounded-xl border-zinc-200 text-sm resize-none" />
                     </div>
-
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1.5">
                         <Label className="text-sm font-medium text-zinc-700">Category *</Label>
                         <Select defaultValue={agent.category} onValueChange={v => setValue("category", v)}>
-                          <SelectTrigger className="rounded-xl border-zinc-200 h-10">
-                            <SelectValue />
-                          </SelectTrigger>
+                          <SelectTrigger className="rounded-xl border-zinc-200 h-10"><SelectValue /></SelectTrigger>
                           <SelectContent className="rounded-xl">
                             {CATEGORIES.map(c => (
                               <SelectItem key={c} value={c} className="text-sm">
@@ -662,16 +633,13 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
                     <SectionTitle icon={BookOpen} title="Documentation" subtitle="Plain text shown on your agent's detail page" />
                     <Textarea {...register("documentation")} rows={8}
                       className="rounded-xl border-zinc-200 font-mono text-xs resize-none"
-                      placeholder={"Overview\n--------\nThis agent takes... and returns...\n\nInput format\n------------\n{ input: \"your text\" }\n\nExamples\n--------\nInput: Summarize this email...\nOutput: { summary, action_items }"}
+                      placeholder={"Overview\n--------\nThis agent takes... and returns...\n\nInput format\n------------\n{ input: \"your text\" }"}
                     />
-                    {errors.documentation && <p className="text-xs text-red-500">{errors.documentation.message}</p>}
                   </div>
                 </TabsContent>
 
-                {/* ─── BEHAVIOR ──────────────────────────────────────────── */}
+                {/* BEHAVIOR */}
                 <TabsContent value="behavior" className="space-y-6">
-
-                  {/* Instructions */}
                   <div className="bg-white border border-zinc-100 rounded-2xl p-5"
                     style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
                     <div className="flex items-center justify-between mb-4">
@@ -689,7 +657,6 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
 
                   <Divider />
 
-                  {/* Model */}
                   <div className="bg-white border border-zinc-100 rounded-2xl p-5"
                     style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
                     <SectionTitle icon={Zap} title="Model" subtitle="Choose the AI model and tune runtime parameters" />
@@ -697,9 +664,7 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
                       <div className="space-y-1.5">
                         <Label className="text-sm font-medium text-zinc-700">AI Model</Label>
                         <Select defaultValue={agent.model_name} onValueChange={v => setValue("model_name", v)}>
-                          <SelectTrigger className="rounded-xl border-zinc-200 h-10">
-                            <SelectValue />
-                          </SelectTrigger>
+                          <SelectTrigger className="rounded-xl border-zinc-200 h-10"><SelectValue /></SelectTrigger>
                           <SelectContent className="rounded-xl">
                             {MODELS.map(m => (
                               <SelectItem key={m.value} value={m.value} className="text-sm">{m.label}</SelectItem>
@@ -730,65 +695,57 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
 
                   <Divider />
 
-                  {/* Knowledge / RAG */}
                   <div className="bg-white border border-zinc-100 rounded-2xl p-5"
                     style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-                    <SectionTitle icon={Database}
-                      title="Knowledge (RAG)"
+                    <SectionTitle icon={Database} title="Knowledge (RAG)"
                       subtitle="Ground your agent in custom facts — text chunks and URLs are embedded and retrieved at runtime" />
                     <KnowledgeSection items={knowledgeItems} onChange={setKnowledgeItems} />
                   </div>
 
                   <Divider />
 
-                  {/* MCP Tools */}
                   <div className="bg-white border border-zinc-100 rounded-2xl p-5"
                     style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-                    <SectionTitle icon={Puzzle}
-                      title="MCP Tools"
-                      subtitle={`${mcpSelected.length} integration${mcpSelected.length !== 1 ? "s" : ""} connected — gives your agent real-world capabilities`} />
+                    <SectionTitle icon={Puzzle} title="MCP Tools"
+                      subtitle={`${mcpSelected.length} integration${mcpSelected.length !== 1 ? "s" : ""} connected`} />
                     <MCPPicker selected={mcpSelected} onChange={setMcpSelected} />
                   </div>
                 </TabsContent>
 
-                {/* ─── MONETIZATION ──────────────────────────────────────── */}
+                {/* MONETIZATION */}
                 <TabsContent value="monetization" className="space-y-6">
                   <div className="bg-white border border-zinc-100 rounded-2xl p-5"
                     style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-                    <SectionTitle icon={DollarSign}
-                      title="Pricing Model"
+                    <SectionTitle icon={DollarSign} title="Pricing Model"
                       subtitle="Choose how users pay to use your agent" />
                     <div className="grid grid-cols-2 gap-3 mb-5">
                       {([
-                        { key: "free",         label: "Free",          sub: "No cost to users — platform covers inference" },
-                        { key: "per_call",     label: "Pay per Call",  sub: "Charge per execution, you earn 80%" },
-                        { key: "subscription", label: "Subscription",  sub: "Monthly recurring fee, you earn 80%" },
-                        { key: "freemium",     label: "Freemium",      sub: "Free tier + paid calls beyond quota" },
+                        { key: "free",         label: "Free",         sub: "No cost to users" },
+                        { key: "per_call",     label: "Pay per Call", sub: "Charge per execution, you earn 80%" },
+                        { key: "subscription", label: "Subscription", sub: "Monthly recurring fee, you earn 80%" },
+                        { key: "freemium",     label: "Freemium",     sub: "Free tier + paid calls beyond quota" },
                       ] as const).map(p => (
                         <button key={p.key} type="button" onClick={() => setValue("pricing_model", p.key)}
                           className={cn(
                             "p-4 rounded-xl border text-left transition-all",
-                            pricingModel === p.key
-                              ? "border-zinc-900 bg-zinc-900"
-                              : "border-zinc-200 bg-white hover:border-zinc-400"
+                            pricingModel === p.key ? "border-zinc-900 bg-zinc-900" : "border-zinc-200 bg-white hover:border-zinc-400"
                           )}>
                           <p className={cn("font-bold text-sm mb-0.5", pricingModel === p.key ? "text-white" : "text-zinc-900")}>{p.label}</p>
                           <p className={cn("text-xs leading-relaxed", pricingModel === p.key ? "text-zinc-400" : "text-zinc-500")}>{p.sub}</p>
                         </button>
                       ))}
                     </div>
-
                     {(pricingModel === "per_call" || pricingModel === "freemium") && (
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1.5">
                           <Label className="text-sm font-medium text-zinc-700">Price per Call (USD)</Label>
-                          <Input type="number" step="0.0001" min="0" placeholder="0.0100"
+                          <Input type="number" step="0.0001" min="0"
                             className="rounded-xl border-zinc-200 h-10" {...register("price_per_call")} />
                           <p className="text-xs text-zinc-400">You receive 80% of this amount</p>
                         </div>
                         <div className="space-y-1.5">
                           <Label className="text-sm font-medium text-zinc-700">Free calls/month</Label>
-                          <Input type="number" min="0" placeholder="10"
+                          <Input type="number" min="0"
                             className="rounded-xl border-zinc-200 h-10" {...register("free_calls_per_month")} />
                         </div>
                       </div>
@@ -797,32 +754,29 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1.5">
                           <Label className="text-sm font-medium text-zinc-700">Monthly Price (USD)</Label>
-                          <Input type="number" step="0.01" min="0" placeholder="9.99"
+                          <Input type="number" step="0.01" min="0"
                             className="rounded-xl border-zinc-200 h-10" {...register("subscription_price_monthly")} />
                           <p className="text-xs text-zinc-400">You receive 80% of this amount</p>
                         </div>
                         <div className="space-y-1.5">
                           <Label className="text-sm font-medium text-zinc-700">Free trial calls/month</Label>
-                          <Input type="number" min="0" placeholder="10"
+                          <Input type="number" min="0"
                             className="rounded-xl border-zinc-200 h-10" {...register("free_calls_per_month")} />
                         </div>
                       </div>
                     )}
                   </div>
 
-                  {/* Revenue estimate */}
                   {pricingModel !== "free" && (
                     <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-5">
                       <p className="text-sm font-semibold text-zinc-900 mb-1">Revenue estimate</p>
                       <p className="text-xs text-zinc-500 leading-relaxed">
-                        At <strong>1,000 runs/month</strong> with your current pricing:
+                        At <strong>1,000 runs/month</strong> with your current pricing,
                         you&apos;d earn approximately{" "}
                         <strong className="text-primary">
                           {pricingModel === "per_call" || pricingModel === "freemium"
                             ? `$${((watch("price_per_call") || 0) * 1000 * 0.8).toFixed(2)}/mo`
-                            : pricingModel === "subscription"
-                            ? `$${((watch("subscription_price_monthly") || 0) * 0.8).toFixed(2)}/mo per subscriber`
-                            : "$0"}
+                            : `$${((watch("subscription_price_monthly") || 0) * 0.8).toFixed(2)}/mo per subscriber`}
                         </strong>.
                         Payouts via Stripe Connect monthly.
                       </p>
@@ -850,7 +804,7 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
           </div>
         </div>
 
-        {/* ── Pinned Test Panel ────────────────────────────────────────────── */}
+        {/* Pinned Test Panel */}
         <div className="w-80 flex-shrink-0 border-l border-zinc-100 bg-zinc-50 flex flex-col sticky top-0 h-screen overflow-hidden">
           <div className="px-4 py-3.5 border-b border-zinc-100 bg-white">
             <div className="flex items-center gap-2">
@@ -860,40 +814,22 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
               <p className="text-sm font-semibold text-zinc-900">Test Playground</p>
             </div>
           </div>
-
           <div className="flex-1 overflow-auto p-4 space-y-3">
-            {/* Status badge */}
             {agent.status !== "active" && (
               <div className="bg-amber-50 border border-amber-100 rounded-xl px-3 py-2 text-xs text-amber-700 flex items-center gap-2">
                 <Info className="h-3.5 w-3.5 flex-shrink-0" />
-                Agent must be active to run. Save and submit for review first.
+                Agent must be active to run.
               </div>
             )}
-
-            {/* Input */}
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Input JSON</label>
-              <Textarea
-                value={testInput}
-                onChange={e => setTestInput(e.target.value)}
-                rows={6}
-                className="rounded-xl border-zinc-200 bg-white font-mono text-xs resize-none"
-              />
+              <Textarea value={testInput} onChange={e => setTestInput(e.target.value)} rows={6}
+                className="rounded-xl border-zinc-200 bg-white font-mono text-xs resize-none" />
             </div>
-
-            {/* Run button */}
-            <Button
-              type="button"
-              onClick={runTest}
-              disabled={testing}
-              className="w-full rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold gap-2"
-            >
-              {testing
-                ? <><Loader2 className="h-4 w-4 animate-spin" /> Running…</>
-                : <><Play className="h-4 w-4" /> Run</>}
+            <Button type="button" onClick={runTest} disabled={testing}
+              className="w-full rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold gap-2">
+              {testing ? <><Loader2 className="h-4 w-4 animate-spin" /> Running…</> : <><Play className="h-4 w-4" /> Run</>}
             </Button>
-
-            {/* Output */}
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Output</label>
               <div className={cn(
@@ -903,16 +839,14 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
                 {testing ? "Running…" : testOutput || <span className="text-zinc-300">Output will appear here…</span>}
               </div>
             </div>
-
-            {/* Trace */}
             {testTrace && (
               <div className="rounded-xl border border-zinc-100 bg-white px-3 py-2.5 space-y-1">
                 <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-2">Execution trace</p>
                 {[
-                  { label: "Latency",       value: `${testTrace.latencyMs}ms` },
-                  { label: "Tokens in",     value: testTrace.tokens.input.toString() },
-                  { label: "Tokens out",    value: testTrace.tokens.output.toString() },
-                  { label: "Estimated cost",value: `$${testTrace.cost.toFixed(6)}` },
+                  { label: "Latency",        value: `${testTrace.latencyMs}ms` },
+                  { label: "Tokens in",      value: testTrace.tokens.input.toString() },
+                  { label: "Tokens out",     value: testTrace.tokens.output.toString() },
+                  { label: "Estimated cost", value: `$${testTrace.cost.toFixed(6)}` },
                 ].map(r => (
                   <div key={r.label} className="flex justify-between text-xs">
                     <span className="text-zinc-400">{r.label}</span>
@@ -922,8 +856,6 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
               </div>
             )}
           </div>
-
-          {/* Quick links */}
           <div className="p-4 border-t border-zinc-100 space-y-2">
             <Link href="/docs#execute" target="_blank"
               className="flex items-center gap-2 text-xs text-zinc-400 hover:text-primary transition-colors">
