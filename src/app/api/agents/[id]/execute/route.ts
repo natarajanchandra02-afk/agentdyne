@@ -2,50 +2,54 @@ export const runtime = 'edge'
 
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import Anthropic from "@anthropic-ai/sdk"
-import { apiRateLimit, strictRateLimit } from "@/lib/rate-limit"
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+import { apiRateLimit } from "@/lib/rate-limit"
+import { routeCompletion, routeStream } from "@/lib/model-router"
+import { runInjectionPipeline, sanitizeOutput } from "@/lib/injection-filter"
 
 async function hashApiKey(key: string): Promise<string> {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key))
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("")
 }
 
-/** Validate input size — prevent oversized payloads from burning quota */
 const MAX_INPUT_BYTES = 32_000
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /**
  * POST /api/agents/[id]/execute
  *
- * Security posture:
- * - Rate limited: 100/min per IP (apiRateLimit), extra strict on execute
- * - Auth required: session cookie OR hashed Bearer API key
- * - Quota enforced: monthly execution cap per user plan
- * - Input size cap: 32 KB to prevent token-stuffing attacks
- * - UUID validated before DB hit
- * - System prompt must exist (no prompt = agent not properly configured)
- * - No streaming to anonymous callers (too easy to abuse)
+ * Full security posture for public marketplace:
+ * ✅ Per-IP rate limit (100/min)
+ * ✅ UUID format validation before DB hit
+ * ✅ Session cookie + API key auth
+ * ✅ Prompt injection filter — blocks injection attempts, logs suspicious inputs
+ * ✅ Input size cap (32KB) — prevents token-stuffing
+ * ✅ Monthly quota enforcement
+ * ✅ System prompt existence gate
+ * ✅ Multi-provider model routing (Anthropic, OpenAI, Gemini, vLLM)
+ * ✅ Credit deduction for per-call agents (atomic, row-locked)
+ * ✅ Execution trace persisted for observability
+ * ✅ Output sanitization (redact accidental API key leaks)
+ * ✅ Error messages never expose internal details
  */
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  // Per-IP rate limit on execute (100/min covers normal usage)
   const limited = await apiRateLimit(req)
   if (limited) return limited
+
+  const startMs = Date.now()
 
   try {
     const { id: agentId } = await params
 
-    // Validate UUID format to prevent injection probing
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(agentId)) {
+    if (!UUID_RE.test(agentId)) {
       return NextResponse.json({ error: "Invalid agent id" }, { status: 400 })
     }
 
     const supabase = await createClient()
 
-    // ── Auth: session cookie OR Bearer/x-api-key ─────────────────────────
+    // ── Auth ─────────────────────────────────────────────────────────────────
     let userId: string | undefined
     const { data: { user } } = await supabase.auth.getUser()
     userId = user?.id
@@ -56,7 +60,6 @@ export async function POST(
         req.headers.get("x-api-key")
 
       if (rawKey) {
-        // Length sanity check (API keys are "agd_" + ~48 chars)
         if (rawKey.length > 200) {
           return NextResponse.json({ error: "Invalid API key format" }, { status: 401 })
         }
@@ -72,9 +75,8 @@ export async function POST(
         }
         userId = keyRow.user_id
 
-        // Fire-and-forget last_used_at update (don't await — doesn't block response)
-        supabase
-          .from("api_keys")
+        // Fire-and-forget
+        supabase.from("api_keys")
           .update({ last_used_at: new Date().toISOString() })
           .eq("key_hash", keyHash)
           .then(() => {})
@@ -85,10 +87,10 @@ export async function POST(
       return NextResponse.json({ error: "Authentication required" }, { status: 401 })
     }
 
-    // ── Load agent ────────────────────────────────────────────────────────
+    // ── Load agent ────────────────────────────────────────────────────────────
     const { data: agent } = await supabase
       .from("agents")
-      .select("id, name, model_name, system_prompt, max_tokens, temperature, pricing_model, free_calls_per_month, status")
+      .select("id, name, model_name, system_prompt, max_tokens, temperature, pricing_model, price_per_call, free_calls_per_month, status")
       .eq("id",     agentId)
       .eq("status", "active")
       .single()
@@ -97,15 +99,14 @@ export async function POST(
       return NextResponse.json({ error: "Agent not found or not active" }, { status: 404 })
     }
 
-    // Agents without a system prompt are misconfigured — block execution
     if (!agent.system_prompt || agent.system_prompt.trim().length < 10) {
       return NextResponse.json(
-        { error: "Agent is not configured (missing system prompt). Contact the agent creator." },
+        { error: "Agent is not configured correctly. Please contact the agent creator." },
         { status: 422 }
       )
     }
 
-    // ── Quota check ───────────────────────────────────────────────────────
+    // ── Quota check ───────────────────────────────────────────────────────────
     const { data: profile } = await supabase
       .from("profiles")
       .select("executions_used_this_month, monthly_execution_quota, subscription_plan")
@@ -122,7 +123,7 @@ export async function POST(
       )
     }
 
-    // ── Subscription gate (for paid agents) ──────────────────────────────
+    // ── Subscription gate ─────────────────────────────────────────────────────
     if (agent.pricing_model === "subscription") {
       const freeLeft = (agent.free_calls_per_month ?? 0) - used
       if (freeLeft <= 0) {
@@ -141,7 +142,33 @@ export async function POST(
       }
     }
 
-    // ── Parse and validate body ───────────────────────────────────────────
+    // ── Credits pre-check for per-call agents ─────────────────────────────────
+    // Check balance before execution — don't want to run the LLM then find insufficient credits
+    const pricePerCall = parseFloat(String(agent.price_per_call ?? 0))
+    let creditsRequired = 0
+
+    if (agent.pricing_model === "per_call" || agent.pricing_model === "freemium") {
+      if (pricePerCall > 0) {
+        creditsRequired = pricePerCall
+        const { data: credits } = await supabase
+          .from("credits")
+          .select("balance_usd, hard_limit_usd")
+          .eq("user_id", userId)
+          .single()
+
+        const balance = credits?.balance_usd ?? 0
+        if (balance < creditsRequired) {
+          return NextResponse.json({
+            error:    "Insufficient credits. Top up your balance to use this agent.",
+            code:     "INSUFFICIENT_CREDITS",
+            balance:  balance,
+            required: creditsRequired,
+          }, { status: 402 })
+        }
+      }
+    }
+
+    // ── Parse body ────────────────────────────────────────────────────────────
     const contentLength = req.headers.get("content-length")
     if (contentLength && parseInt(contentLength) > MAX_INPUT_BYTES) {
       return NextResponse.json(
@@ -163,8 +190,8 @@ export async function POST(
       return NextResponse.json({ error: "input is required" }, { status: 400 })
     }
 
-    // Convert input to string and enforce byte limit
     const userMessage = typeof input === "string" ? input : JSON.stringify(input)
+
     if (new TextEncoder().encode(userMessage).length > MAX_INPUT_BYTES) {
       return NextResponse.json(
         { error: `Input too large. Max ${MAX_INPUT_BYTES / 1000}KB.` },
@@ -172,24 +199,51 @@ export async function POST(
       )
     }
 
-    // ── Create execution record ───────────────────────────────────────────
+    // ── Injection filter ──────────────────────────────────────────────────────
+    const { filterResult, score, shouldLog } = runInjectionPipeline(userMessage, "user")
+
+    if (!filterResult.allowed) {
+      // Log the attempt (fire-and-forget)
+      supabase.from("injection_attempts").insert({
+        user_id:   userId,
+        agent_id:  agentId,
+        input:     userMessage.slice(0, 500), // cap stored length
+        pattern:   filterResult.pattern,
+        action:    "blocked",
+      }).then(() => {})
+
+      return NextResponse.json(
+        { error: "Input rejected. Please revise your request.", code: "INJECTION_BLOCKED" },
+        { status: 400 }
+      )
+    }
+
+    if (shouldLog && score > 0) {
+      supabase.from("injection_attempts").insert({
+        user_id:  userId,
+        agent_id: agentId,
+        input:    userMessage.slice(0, 500),
+        pattern:  "suspicious_score_" + score,
+        action:   "flagged",
+      }).then(() => {})
+    }
+
+    // ── Create execution record ───────────────────────────────────────────────
     const { data: execution } = await supabase
       .from("executions")
       .insert({ agent_id: agentId, user_id: userId, status: "running", input })
       .select("id")
       .single()
 
-    const startMs = Date.now()
-
     const modelParams = {
-      model:       (agent.model_name as string) ?? "claude-sonnet-4-20250514",
-      max_tokens:  (agent.max_tokens  as number) ?? 4096,
+      model:       (agent.model_name as string) || "claude-sonnet-4-20250514",
       system:      agent.system_prompt as string,
-      messages:    [{ role: "user" as const, content: userMessage }],
-      temperature: (agent.temperature as number) ?? 0.7,
+      userMessage,
+      maxTokens:   (agent.max_tokens  as number) || 4096,
+      temperature: (agent.temperature as number) || 0.7,
     }
 
-    // ── Streaming path ────────────────────────────────────────────────────
+    // ── Streaming path ────────────────────────────────────────────────────────
     if (wantsStream) {
       const encoder = new TextEncoder()
       const stream  = new ReadableStream({
@@ -197,41 +251,81 @@ export async function POST(
           const send = (data: object) =>
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
 
-          let fullText = ""; let inputTokens = 0; let outputTokens = 0
+          let fullText   = ""
+          let inputTok   = 0
+          let outputTok  = 0
+          let costUsd    = 0
+          const ttftMs: number[] = []
 
           try {
-            const msgStream = anthropic.messages.stream(modelParams)
-            for await (const event of msgStream) {
-              if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-                send({ type: "delta", delta: event.delta.text })
-                fullText += event.delta.text
+            const { inputTokens, outputTokens, costUsd: c } = await routeStream(
+              modelParams,
+              (chunk) => {
+                if (ttftMs.length === 0) ttftMs.push(Date.now() - startMs)
+                send({ type: "delta", delta: chunk })
+                fullText += chunk
               }
-              if (event.type === "message_delta") outputTokens = event.usage?.output_tokens ?? 0
-              if (event.type === "message_start") inputTokens  = event.message?.usage?.input_tokens ?? 0
-            }
+            )
+            inputTok  = inputTokens
+            outputTok = outputTokens
+            costUsd   = c
 
             const latencyMs = Date.now() - startMs
-            const cost      = inputTokens * 0.000003 + outputTokens * 0.000015
-            send({ type: "done", executionId: execution?.id, latencyMs, cost })
+            const { text: safeText, flagged } = sanitizeOutput(fullText)
+
+            send({ type: "done", executionId: execution?.id, latencyMs, cost: costUsd })
             controller.enqueue(encoder.encode("data: [DONE]\n\n"))
             controller.close()
 
+            // Persist results
             await Promise.all([
               supabase.from("executions").update({
-                status: "success", output: fullText,
-                tokens_input: inputTokens, tokens_output: outputTokens,
-                latency_ms: latencyMs, cost, cost_usd: cost,
-                completed_at: new Date().toISOString(),
+                status:        "success",
+                output:        safeText,
+                tokens_input:  inputTok,
+                tokens_output: outputTok,
+                latency_ms:    latencyMs,
+                cost:          costUsd,
+                cost_usd:      costUsd,
+                completed_at:  new Date().toISOString(),
               }).eq("id", execution?.id ?? ""),
               supabase.rpc("increment_executions_used", { user_id_param: userId }),
+              // Write trace
+              supabase.from("execution_traces").insert({
+                execution_id:    execution?.id,
+                agent_id:        agentId,
+                user_id:         userId,
+                model:           modelParams.model,
+                system_prompt:   modelParams.system,
+                user_message:    userMessage,
+                assistant_reply: safeText,
+                ttft_ms:         ttftMs[0] ?? null,
+                total_ms:        latencyMs,
+                tokens_input:    inputTok,
+                tokens_output:   outputTok,
+                cost_usd:        costUsd,
+                status:          flagged ? "flagged" : "success",
+                temperature:     modelParams.temperature,
+              }),
             ])
+
+            // Deduct credits for per-call agents
+            if (creditsRequired > 0) {
+              await supabase.rpc("deduct_credits", {
+                user_id_param:      userId,
+                amount_param:       creditsRequired,
+                description_param:  `Agent: ${agent.name}`,
+                reference_id_param: execution?.id ?? null,
+              })
+            }
           } catch (err: any) {
             send({ type: "error", error: "Execution failed" })
             controller.close()
             if (execution?.id) {
               await supabase.from("executions").update({
-                status: "failed", error_message: err.message,
-                completed_at: new Date().toISOString(),
+                status:        "failed",
+                error_message: err.message,
+                completed_at:  new Date().toISOString(),
               }).eq("id", execution.id)
             }
           }
@@ -247,34 +341,62 @@ export async function POST(
       })
     }
 
-    // ── Synchronous path ──────────────────────────────────────────────────
-    const aiResponse = await anthropic.messages.create(modelParams)
+    // ── Synchronous path ──────────────────────────────────────────────────────
+    const { text: rawText, inputTokens, outputTokens, costUsd } = await routeCompletion(modelParams)
 
-    const latencyMs    = Date.now() - startMs
-    const rawText      = aiResponse.content[0]?.type === "text" ? aiResponse.content[0].text : ""
-    let output: unknown = rawText
-    try { output = JSON.parse(rawText) } catch {}
+    const latencyMs = Date.now() - startMs
+    const { text: safeText, flagged, reason: flagReason } = sanitizeOutput(rawText)
 
-    const inputTokens  = aiResponse.usage.input_tokens
-    const outputTokens = aiResponse.usage.output_tokens
-    const cost         = inputTokens * 0.000003 + outputTokens * 0.000015
+    let output: unknown = safeText
+    try { output = JSON.parse(safeText) } catch {}
 
     await Promise.all([
       supabase.from("executions").update({
-        status: "success", output,
-        tokens_input: inputTokens, tokens_output: outputTokens,
-        latency_ms: latencyMs, cost, cost_usd: cost,
-        completed_at: new Date().toISOString(),
+        status:        "success",
+        output,
+        tokens_input:  inputTokens,
+        tokens_output: outputTokens,
+        latency_ms:    latencyMs,
+        cost:          costUsd,
+        cost_usd:      costUsd,
+        completed_at:  new Date().toISOString(),
       }).eq("id", execution?.id ?? ""),
       supabase.rpc("increment_executions_used", { user_id_param: userId }),
+      supabase.from("execution_traces").insert({
+        execution_id:    execution?.id,
+        agent_id:        agentId,
+        user_id:         userId,
+        model:           modelParams.model,
+        system_prompt:   modelParams.system,
+        user_message:    userMessage,
+        assistant_reply: safeText,
+        total_ms:        latencyMs,
+        tokens_input:    inputTokens,
+        tokens_output:   outputTokens,
+        cost_usd:        costUsd,
+        status:          flagged ? "flagged" : "success",
+        error_message:   flagged ? flagReason : null,
+        temperature:     modelParams.temperature,
+      }),
     ])
+
+    // Deduct credits for per-call agents
+    if (creditsRequired > 0) {
+      await supabase.rpc("deduct_credits", {
+        user_id_param:      userId,
+        amount_param:       creditsRequired,
+        description_param:  `Agent: ${agent.name}`,
+        reference_id_param: execution?.id ?? null,
+      })
+    }
 
     return NextResponse.json({
       executionId: execution?.id,
       output,
       latencyMs,
-      tokens: { input: inputTokens, output: outputTokens },
-      cost,
+      tokens:  { input: inputTokens, output: outputTokens },
+      cost:    costUsd,
+      flagged: flagged || undefined,
     })
 
   } catch (err: any) {

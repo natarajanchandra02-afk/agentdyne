@@ -2,10 +2,9 @@ export const runtime = 'edge'
 
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import Anthropic from "@anthropic-ai/sdk"
 import { apiRateLimit } from "@/lib/rate-limit"
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+import { routeCompletion } from "@/lib/model-router"
+import { runInjectionPipeline, sanitizeOutput } from "@/lib/injection-filter"
 
 /**
  * POST /api/pipelines/[id]/execute
@@ -191,31 +190,36 @@ export async function POST(
           ? nodeInput
           : JSON.stringify(nodeInput)
 
+        // Injection filter on each node's input
+        const { filterResult } = runInjectionPipeline(userMessage, "user")
+        if (!filterResult.allowed) {
+          throw new Error("Input rejected by injection filter")
+        }
+
         // Prepend node-specific prompt override if set
         const systemPrompt = node.system_prompt_override ?? agent.system_prompt ?? ""
 
-        const response = await anthropic.messages.create({
-          model:       agent.model_name || "claude-sonnet-4-20250514",
-          max_tokens:  agent.max_tokens || 4096,
-          system:      systemPrompt,
-          messages:    [{ role: "user" as const, content: userMessage }],
-          temperature: agent.temperature ?? 0.7,
-        })
+        // Route to correct LLM provider based on model_name
+        const { text: rawText, inputTokens, outputTokens, costUsd: nodeCost } =
+          await routeCompletion({
+            model:       agent.model_name || "claude-sonnet-4-20250514",
+            system:      systemPrompt,
+            userMessage,
+            maxTokens:   agent.max_tokens || 4096,
+            temperature: agent.temperature ?? 0.7,
+          })
 
-        const nodeLatency  = Date.now() - nodeStart
-        const rawText      = response.content[0]?.type === "text" ? response.content[0].text : ""
-        let   nodeOutput: unknown = rawText
-        try { nodeOutput = JSON.parse(rawText) } catch {}
+        const nodeLatency = Date.now() - nodeStart
+        const { text: safeText } = sanitizeOutput(rawText)
 
-        const nodeCost =
-          response.usage.input_tokens  * 0.000003 +
-          response.usage.output_tokens * 0.000015
+        let nodeOutput: unknown = safeText
+        try { nodeOutput = JSON.parse(safeText) } catch {}
 
         nodeOutputs[node.id] = nodeOutput
         lastOutput            = nodeOutput
         totalCost            += nodeCost
-        totalTokensIn        += response.usage.input_tokens
-        totalTokensOut       += response.usage.output_tokens
+        totalTokensIn        += inputTokens
+        totalTokensOut       += outputTokens
 
         nodeResults.push({
           node_id:    node.id,
@@ -227,8 +231,8 @@ export async function POST(
           latency_ms: nodeLatency,
           cost:       nodeCost,
           tokens: {
-            input:  response.usage.input_tokens,
-            output: response.usage.output_tokens,
+            input:  inputTokens,
+            output: outputTokens,
           },
         })
 
