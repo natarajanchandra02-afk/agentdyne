@@ -1,39 +1,35 @@
-/**
- * Platform-wide constants shared between client and server.
- *
- * IMPORTANT: Do NOT import server-only modules (stripe, supabase/server, etc.)
- * in this file. It is imported by client components.
- */
+// ============================================================
+// AgentDyne Platform — Shared constants
+// ============================================================
 
-/** AgentDyne platform fee: 20% of each transaction. Seller keeps 80%. */
-export const PLATFORM_FEE_PERCENT = 0.20
+export const MAX_SYSTEM_PROMPT_LENGTH = 32_000
 
-/** Seller revenue share percentage (displayed in UI) */
-export const SELLER_REVENUE_PCT = (1 - PLATFORM_FEE_PERCENT) * 100  // 80
-
-/** Minimum executions required before an agent earns a quality score */
-export const MIN_EXECUTIONS_FOR_SCORE = 10
-
-/** Maximum capability tags per agent */
-export const MAX_CAPABILITY_TAGS = 20
-
-/** Maximum system prompt length (characters) */
-export const MAX_SYSTEM_PROMPT_LENGTH = 8000
-
-/** Maximum agent name length */
-export const MAX_AGENT_NAME_LENGTH = 60
-
-/** Maximum agent description length */
-export const MAX_AGENT_DESCRIPTION_LENGTH = 300
-
-/** Supported AI models on the platform */
 export const SUPPORTED_MODELS = [
-  "claude-sonnet-4-20250514",
   "claude-opus-4-6",
+  "claude-sonnet-4-20250514",
   "claude-haiku-4-5-20251001",
   "gpt-4o",
   "gpt-4o-mini",
   "gemini-1.5-pro",
 ] as const
 
-export type SupportedModel = typeof SUPPORTED_MODELS[number]
+export type SupportedModel = (typeof SUPPORTED_MODELS)[number]
+
+export const MODEL_LABELS: Record<string, string> = {
+  "claude-opus-4-6":            "Claude Opus 4.6 — Most powerful",
+  "claude-sonnet-4-20250514":   "Claude Sonnet 4 — Balanced (recommended)",
+  "claude-haiku-4-5-20251001":  "Claude Haiku 4.5 — Fastest / cheapest",
+  "gpt-4o":                     "GPT-4o — OpenAI flagship",
+  "gpt-4o-mini":               "GPT-4o Mini — OpenAI lightweight",
+  "gemini-1.5-pro":            "Gemini 1.5 Pro — Google flagship",
+}
+
+export const PLATFORM_TAKE_RATE = 0.20   // 20 % platform fee
+export const SELLER_SHARE       = 0.80   // 80 % to seller
+
+export const PLAN_QUOTAS: Record<string, number> = {
+  free:       100,
+  starter:    1_000,
+  pro:        10_000,
+  enterprise: -1,   // unlimited
+}

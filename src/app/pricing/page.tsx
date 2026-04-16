@@ -6,14 +6,18 @@ import { Check, Zap, ArrowRight, HelpCircle, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Navbar } from "@/components/layout/navbar"
 import { Footer } from "@/components/layout/footer"
+import { useUser } from "@/hooks/use-user"
 import { cn } from "@/lib/utils"
+
+// ── Plan definitions ─────────────────────────────────────────────────────────
 
 const PLANS = [
   {
     key: "free", name: "Free",
     price: { monthly: 0, yearly: 0 }, calls: "100",
     description: "Perfect for exploring and prototyping.",
-    cta: "Get started free", href: "/signup", highlight: false,
+    // CTA changes based on auth state — see getHref() below
+    highlight: false,
     features: [
       { text: "100 agent calls / month", ok: true },
       { text: "All free agents",         ok: true },
@@ -29,7 +33,7 @@ const PLANS = [
     key: "starter", name: "Starter",
     price: { monthly: 19, yearly: 15 }, calls: "1,000",
     description: "For developers building real products.",
-    cta: "Start free trial", href: "/signup?plan=starter", highlight: false,
+    highlight: false,
     features: [
       { text: "1,000 agent calls / month",  ok: true },
       { text: "All free + premium agents",  ok: true },
@@ -45,7 +49,7 @@ const PLANS = [
     key: "pro", name: "Pro",
     price: { monthly: 79, yearly: 63 }, calls: "10,000",
     description: "For teams shipping at scale.",
-    cta: "Start Pro trial", href: "/billing?upgrade=pro", highlight: true,
+    highlight: true,
     features: [
       { text: "10,000 agent calls / month", ok: true },
       { text: "All agents",                 ok: true },
@@ -61,16 +65,16 @@ const PLANS = [
     key: "enterprise", name: "Enterprise",
     price: { monthly: null, yearly: null }, calls: "Unlimited",
     description: "Custom contracts for large organisations.",
-    cta: "Contact sales", href: "/contact", highlight: false,
+    highlight: false,
     features: [
-      { text: "Unlimited agent calls",    ok: true },
-      { text: "All agents",               ok: true },
-      { text: "Dedicated infrastructure", ok: true },
-      { text: "Dedicated account manager",ok: true },
-      { text: "Custom SLA & uptime",      ok: true },
-      { text: "SSO / SAML",               ok: true },
-      { text: "On-premise option",        ok: true },
-      { text: "Custom contracts",         ok: true },
+      { text: "Unlimited agent calls",     ok: true },
+      { text: "All agents",                ok: true },
+      { text: "Dedicated infrastructure",  ok: true },
+      { text: "Dedicated account manager", ok: true },
+      { text: "Custom SLA & uptime",       ok: true },
+      { text: "SSO / SAML",                ok: true },
+      { text: "On-premise option",         ok: true },
+      { text: "Custom contracts",          ok: true },
     ],
   },
 ]
@@ -90,8 +94,36 @@ const FAQS = [
     a: "Sellers receive 80% of every transaction. Payouts are processed monthly via Stripe Connect directly to your bank account." },
 ]
 
+// Determine where each CTA goes based on plan + auth state
+function getCtaInfo(
+  planKey: string,
+  isLoggedIn: boolean,
+  currentPlan?: string,
+): { label: string; href: string } {
+  if (planKey === "enterprise") return { label: "Contact sales", href: "/contact" }
+
+  if (isLoggedIn) {
+    // Already on this plan
+    if (currentPlan === planKey) return { label: "Current plan", href: "/billing" }
+    // Free plan for logged-in user → go to marketplace to start using it
+    if (planKey === "free") return { label: "Go to marketplace", href: "/marketplace" }
+    // Paid plans → go straight to billing upgrade
+    return { label: planKey === "pro" ? "Upgrade to Pro" : "Upgrade to Starter", href: `/billing?upgrade=${planKey}` }
+  }
+
+  // Logged out
+  if (planKey === "free")    return { label: "Get started free",  href: "/signup" }
+  if (planKey === "starter") return { label: "Start free trial",  href: "/signup?plan=starter" }
+  return { label: "Start Pro trial", href: "/signup?plan=pro" }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function PricingPage() {
   const [yearly, setYearly] = useState(false)
+  const { user, profile }   = useUser()
+  const isLoggedIn          = !!user
+  const currentPlan         = profile?.subscription_plan
 
   return (
     <div className="min-h-screen bg-white">
@@ -110,7 +142,7 @@ export default function PricingPage() {
             <p className="text-xl text-zinc-500 max-w-xl mx-auto mb-8">
               Start free. Scale as you grow. No hidden fees, no surprise charges.
             </p>
-            {/* Toggle */}
+            {/* Monthly / yearly toggle */}
             <div className="inline-flex items-center gap-1 bg-white border border-zinc-200 rounded-xl p-1 shadow-sm">
               <button onClick={() => setYearly(false)}
                 className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-all",
@@ -129,84 +161,106 @@ export default function PricingPage() {
           </div>
         </section>
 
-        {/* Plans */}
+        {/* Plan cards */}
         <section className="py-16 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
-            {PLANS.map((plan) => (
-              <div key={plan.key}
-                className={cn(
-                  "relative flex flex-col rounded-2xl border p-6 transition-all",
-                  plan.highlight
-                    ? "border-zinc-900 bg-zinc-900 shadow-xl scale-[1.02]"
-                    : "border-zinc-100 bg-white hover:border-zinc-200 hover:shadow-md"
-                )}
-                style={{ boxShadow: plan.highlight ? undefined : "0 1px 3px rgba(0,0,0,0.04)" }}>
-                {plan.highlight && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                    <span className="bg-primary text-white text-[10px] font-bold px-3 py-0.5 rounded-full shadow-sm">
-                      Most Popular
-                    </span>
-                  </div>
-                )}
+            {PLANS.map((plan) => {
+              const { label, href } = getCtaInfo(plan.key, isLoggedIn, currentPlan)
+              const isCurrent = isLoggedIn && currentPlan === plan.key
 
-                <div className="mb-5">
-                  <h3 className={cn("font-bold text-lg", plan.highlight ? "text-white" : "text-zinc-900")}>
-                    {plan.name}
-                  </h3>
-                  <p className={cn("text-xs mt-1", plan.highlight ? "text-zinc-400" : "text-zinc-500")}>
-                    {plan.description}
-                  </p>
-                  <div className="mt-4">
-                    {plan.price.monthly === null ? (
-                      <div className={cn("text-3xl font-black", plan.highlight ? "text-white" : "text-zinc-900")}>
-                        Custom
-                      </div>
-                    ) : (
-                      <div className="flex items-baseline gap-1">
-                        <span className={cn("text-4xl font-black nums", plan.highlight ? "text-white" : "text-zinc-900")}>
-                          ${yearly ? plan.price.yearly : plan.price.monthly}
-                        </span>
-                        <span className={cn("text-sm", plan.highlight ? "text-zinc-400" : "text-zinc-400")}>/mo</span>
-                      </div>
-                    )}
-                    <p className={cn("text-xs mt-1 flex items-center gap-1", plan.highlight ? "text-zinc-400" : "text-zinc-400")}>
-                      <Zap className="h-3 w-3" />
-                      {plan.calls} calls / month
-                    </p>
-                    {yearly && plan.price.monthly && plan.price.monthly > 0 && (
-                      <p className="text-xs text-green-400 mt-0.5 nums">
-                        Save ${(plan.price.monthly - (plan.price.yearly || 0)) * 12}/year
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                <ul className="space-y-2.5 flex-1 mb-6">
-                  {plan.features.map(f => (
-                    <li key={f.text}
-                      className={cn("flex items-center gap-2 text-sm",
-                        f.ok
-                          ? plan.highlight ? "text-zinc-300" : "text-zinc-700"
-                          : "text-zinc-300 line-through")}>
-                      {f.ok
-                        ? <Check className="h-4 w-4 text-green-400 flex-shrink-0" />
-                        : <X className="h-4 w-4 flex-shrink-0 opacity-30" />}
-                      {f.text}
-                    </li>
-                  ))}
-                </ul>
-
-                <Link href={plan.href}>
-                  <Button className={cn("w-full rounded-xl font-semibold",
+              return (
+                <div key={plan.key}
+                  className={cn(
+                    "relative flex flex-col rounded-2xl border p-6 transition-all",
                     plan.highlight
-                      ? "bg-white text-zinc-900 hover:bg-zinc-100"
-                      : "bg-zinc-900 text-white hover:bg-zinc-700")}>
-                    {plan.cta}
-                    {plan.key !== "enterprise" && <ArrowRight className="h-3.5 w-3.5 ml-1.5" />}
-                  </Button>
-                </Link>
-              </div>
-            ))}
+                      ? "border-zinc-900 bg-zinc-900 shadow-xl scale-[1.02]"
+                      : "border-zinc-100 bg-white hover:border-zinc-200 hover:shadow-md"
+                  )}
+                  style={{ boxShadow: plan.highlight ? undefined : "0 1px 3px rgba(0,0,0,0.04)" }}>
+
+                  {plan.highlight && (
+                    <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                      <span className="bg-primary text-white text-[10px] font-bold px-3 py-0.5 rounded-full shadow-sm">
+                        Most Popular
+                      </span>
+                    </div>
+                  )}
+
+                  {isCurrent && (
+                    <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                      <span className="bg-green-500 text-white text-[10px] font-bold px-3 py-0.5 rounded-full shadow-sm">
+                        Your plan
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Price */}
+                  <div className="mb-5">
+                    <h3 className={cn("font-bold text-lg", plan.highlight ? "text-white" : "text-zinc-900")}>
+                      {plan.name}
+                    </h3>
+                    <p className={cn("text-xs mt-1", plan.highlight ? "text-zinc-400" : "text-zinc-500")}>
+                      {plan.description}
+                    </p>
+                    <div className="mt-4">
+                      {plan.price.monthly === null ? (
+                        <div className={cn("text-3xl font-black", plan.highlight ? "text-white" : "text-zinc-900")}>
+                          Custom
+                        </div>
+                      ) : (
+                        <div className="flex items-baseline gap-1">
+                          <span className={cn("text-4xl font-black nums", plan.highlight ? "text-white" : "text-zinc-900")}>
+                            ${yearly ? plan.price.yearly : plan.price.monthly}
+                          </span>
+                          <span className={cn("text-sm", plan.highlight ? "text-zinc-400" : "text-zinc-400")}>/mo</span>
+                        </div>
+                      )}
+                      <p className={cn("text-xs mt-1 flex items-center gap-1", plan.highlight ? "text-zinc-400" : "text-zinc-400")}>
+                        <Zap className="h-3 w-3" />
+                        {plan.calls} calls / month
+                      </p>
+                      {yearly && plan.price.monthly && plan.price.monthly > 0 && (
+                        <p className="text-xs text-green-400 mt-0.5 nums">
+                          Save ${((plan.price.monthly - (plan.price.yearly || 0)) * 12).toFixed(0)}/year
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Features */}
+                  <ul className="space-y-2.5 flex-1 mb-6">
+                    {plan.features.map(f => (
+                      <li key={f.text}
+                        className={cn("flex items-center gap-2 text-sm",
+                          f.ok
+                            ? plan.highlight ? "text-zinc-300" : "text-zinc-700"
+                            : "text-zinc-300 line-through")}>
+                        {f.ok
+                          ? <Check className="h-4 w-4 text-green-400 flex-shrink-0" />
+                          : <X className="h-4 w-4 flex-shrink-0 opacity-30" />}
+                        {f.text}
+                      </li>
+                    ))}
+                  </ul>
+
+                  {/* CTA */}
+                  <Link href={href}>
+                    <Button
+                      disabled={isCurrent}
+                      className={cn("w-full rounded-xl font-semibold",
+                        isCurrent
+                          ? "opacity-50 cursor-default bg-zinc-700 text-zinc-300"
+                          : plan.highlight
+                          ? "bg-white text-zinc-900 hover:bg-zinc-100"
+                          : "bg-zinc-900 text-white hover:bg-zinc-700"
+                      )}>
+                      {label}
+                      {!isCurrent && plan.key !== "enterprise" && <ArrowRight className="h-3.5 w-3.5 ml-1.5" />}
+                    </Button>
+                  </Link>
+                </div>
+              )
+            })}
           </div>
 
           <p className="text-center text-sm text-zinc-400 mt-8">
