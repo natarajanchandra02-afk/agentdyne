@@ -440,9 +440,27 @@ WHERE a.status::text  = 'active'
 
 -- ---------------------------------------------------------------------------
 -- 12. AGENTS — Link to knowledge base (for RAG-augmented agents)
+--
+-- Split into two steps so the migration is safe to re-run:
+--   Step A: add the column (IF NOT EXISTS is idempotent)
+--   Step B: add the FK constraint in a DO block that silently ignores
+--           "already exists" (42710) so re-running 009 never errors out.
 -- ---------------------------------------------------------------------------
-ALTER TABLE agents ADD COLUMN IF NOT EXISTS knowledge_base_id UUID
-  REFERENCES knowledge_bases(id) ON DELETE SET NULL;
+
+-- Step A: column (safe to re-run)
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS knowledge_base_id UUID;
+
+-- Step B: FK constraint (idempotent — named tag avoids dollar-sign stripping)
+DO $fix_kb_fk$
+BEGIN
+  ALTER TABLE agents
+    ADD CONSTRAINT agents_knowledge_base_id_fkey
+    FOREIGN KEY (knowledge_base_id)
+    REFERENCES knowledge_bases(id) ON DELETE SET NULL;
+EXCEPTION
+  WHEN duplicate_object THEN
+    NULL;  -- Constraint already exists — safe to ignore
+END $fix_kb_fk$;
 
 
 -- ---------------------------------------------------------------------------
