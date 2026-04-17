@@ -456,22 +456,41 @@ export default function PipelinesPage() {
           </div>
         )}
 
-        {/* Info callout */}
-        <div className="bg-blue-50 border border-blue-100 rounded-2xl px-5 py-4 flex items-start gap-3">
-          <div className="w-8 h-8 rounded-xl bg-blue-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-            <Zap className="h-4 w-4 text-blue-600" />
+        {/* Info callout — how to use in microagent scenario */}
+        <div className="bg-zinc-50 border border-zinc-100 rounded-2xl px-5 py-5 space-y-4">
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 rounded-xl bg-primary/8 flex items-center justify-center flex-shrink-0 mt-0.5">
+              <Zap className="h-4 w-4 text-primary" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-zinc-900 mb-1">How to build a multi-agent workflow</p>
+              <ol className="space-y-2 text-xs text-zinc-600 list-none">
+                <li className="flex items-start gap-2">
+                  <span className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">1</span>
+                  <span><strong>Create individual agents</strong> in Builder Studio — one agent per task (e.g. Researcher, Summariser, Email Drafter). Each agent has its own system prompt, model, and pricing.</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">2</span>
+                  <span><strong>Create a pipeline</strong> here with New Pipeline. Add your agents as nodes and draw edges between them — the output of node A becomes the input of node B.</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">3</span>
+                  <span><strong>Run via API</strong> with <code className="font-mono bg-zinc-100 px-1 py-0.5 rounded text-[11px]">POST /api/pipelines/:id/execute</code> — pass your initial input and get back per-node traces, latency, and cost.</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">4</span>
+                  <span><strong>Add MCP tools</strong> to individual nodes via Builder Studio → MCP Tools. A Researcher agent can use Browserbase to scrape URLs; a Summariser can use Notion to save results.</span>
+                </li>
+              </ol>
+            </div>
           </div>
-          <div>
-            <p className="text-sm font-semibold text-blue-900 mb-0.5">How pipelines work</p>
-            <p className="text-xs text-blue-700 leading-relaxed">
-              Each node in a pipeline is an agent. The output of agent N is automatically
-              passed as the input to agent N+1. Use the Builder Studio to add agents, wire
-              edges, and configure per-node overrides like temperature and max tokens.
-              Run a pipeline via the API with{" "}
-              <code className="font-mono bg-blue-100 px-1 rounded text-[11px]">
-                POST /api/pipelines/:id/run
-              </code>.
-            </p>
+          <div className="border-t border-zinc-200 pt-4 flex items-center gap-4 text-xs text-zinc-400">
+            <Link href="/docs#pipelines" className="text-primary hover:underline font-semibold flex items-center gap-1">
+              <ArrowRight className="h-3 w-3" /> Pipeline API docs
+            </Link>
+            <Link href="/builder" className="text-primary hover:underline font-semibold flex items-center gap-1">
+              <ArrowRight className="h-3 w-3" /> Create agents first
+            </Link>
           </div>
         </div>
       </div>

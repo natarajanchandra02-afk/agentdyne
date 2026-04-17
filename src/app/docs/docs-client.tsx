@@ -3,223 +3,347 @@
 import { useState } from "react"
 import Link from "next/link"
 import {
-  Book, Code2, Zap, Key, Webhook, Database,
-  Copy, Check, ExternalLink,
-  Shield, BarChart3, Bot, Play, Lock, RefreshCw, Activity,
-  Layers, Network, GitBranch, Search,
+  Book, Code2, Zap, Key, Webhook,
+  Copy, Check, ExternalLink, Shield, BarChart3, Bot, Play,
+  Lock, RefreshCw, Activity, Database, GitMerge, Layers,
+  CreditCard, Network, Cpu,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Navbar } from "@/components/layout/navbar"
 import { Footer } from "@/components/layout/footer"
 import { cn } from "@/lib/utils"
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Code samples — stored outside JSX to avoid parser confusion with
-// Python f-string syntax and JSX template interpolations.
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── Code samples (plain constants — no JSX interpolation risk) ──────────────
 
-const CODE_CURL_QUICKSTART = `curl -X POST https://agentdyne.com/api/agents/AGENT_ID/execute \\
+const CODE_QUICKSTART = `curl -X POST https://agentdyne.com/api/agents/AGENT_ID/execute \\
   -H "Authorization: Bearer agd_your_api_key" \\
   -H "Content-Type: application/json" \\
-  -d '{"input": "Summarise this: Q3 revenue grew 40% YoY..."}'`
+  -d '{"input": "Summarise this: Q3 revenue grew 40% YoY…"}'`
 
-const CODE_JSON_QUICKSTART = `{
+const CODE_QUICKSTART_RESP = `{
   "executionId": "exec_abc123",
-  "output": "Q3 revenue increased 40% YoY...",
+  "output": {
+    "summary": "Q3 revenue increased 40% year-over-year.",
+    "keyPoints": ["Revenue up 40%", "Strong Q4 outlook"]
+  },
   "latencyMs": 842,
   "tokens": { "input": 124, "output": 87 },
   "cost": 0.00312
 }`
 
-const CODE_AUTH_HEADER = `Authorization: Bearer agd_YourApiKeyHere`
+const CODE_AUTH = `Authorization: Bearer agd_YourApiKeyHere
+# Also accepted:
+X-API-Key: agd_YourApiKeyHere`
 
-// The correct API response shape — confirmed against /api/agents route.ts:
-// GET /api/agents returns { agents: [...], pagination: {...} }
-// NOT { data: [...] }
-const CODE_AGENTS_CURL = `# List agents — response is { agents: [...], pagination: {...} }
-curl "https://agentdyne.com/api/agents?category=coding&sort=rating&limit=10" \\
-  -H "Authorization: Bearer agd_your_key"
-
-# Response shape:
-# {
-#   "agents": [...],
-#   "pagination": { "total", "page", "limit", "pages", "hasNext", "hasPrev" }
-# }
-
-# Create an agent
-curl -X POST https://agentdyne.com/api/agents/create \\
-  -H "Authorization: Bearer agd_your_key" \\
-  -H "Content-Type: application/json" \\
-  -d '{ "name": "My Agent", "description": "...", "category": "coding",
-        "pricing_model": "free", "system_prompt": "You are...",
-        "model_name": "claude-sonnet-4-20250514",
-        "temperature": 0.7, "max_tokens": 4096 }'`
-
-const CODE_EXECUTE_TS = `// Synchronous
+const CODE_EXECUTE_SYNC = `// TypeScript — synchronous
 const res = await fetch("https://agentdyne.com/api/agents/AGENT_ID/execute", {
   method: "POST",
   headers: {
     "Authorization": "Bearer " + process.env.AGENTDYNE_API_KEY,
-    "Content-Type": "application/json",
+    "Content-Type":  "application/json",
   },
-  body: JSON.stringify({ input: "Your input here" }),
+  body: JSON.stringify({ input: "Summarise this email thread…" }),
 })
-const { executionId, output, latencyMs, tokens, cost } = await res.json()
+const { executionId, output, latencyMs, tokens, cost } = await res.json()`
 
-// Streaming (server-sent events) — Anthropic models only
-const stream = await fetch("https://agentdyne.com/api/agents/AGENT_ID/execute", {
+const CODE_EXECUTE_STREAM = `// Streaming (server-sent events)
+const res = await fetch("https://agentdyne.com/api/agents/AGENT_ID/execute", {
   method: "POST",
   headers: { "Authorization": "Bearer " + key, "Content-Type": "application/json" },
-  body: JSON.stringify({ input: "Write a blog post", stream: true }),
+  body:   JSON.stringify({ input: "Write a blog post about AI agents", stream: true }),
 })
-const reader = stream.body.getReader()
-// Each chunk: { type: "delta", delta: "..." } | { type: "done", executionId: "..." }`
+const reader = res.body.getReader()
+const dec    = new TextDecoder()
+while (true) {
+  const { done, value } = await reader.read()
+  if (done) break
+  const lines = dec.decode(value).split("\\n")
+  for (const line of lines) {
+    if (!line.startsWith("data:")) continue
+    const data = JSON.parse(line.slice(5))
+    if (data.type === "delta") process.stdout.write(data.delta)
+    if (data.type === "done")  console.log("\\nDone in", data.latencyMs, "ms")
+  }
+}`
 
-const CODE_PIPELINE_QUICKSTART = `# Create a pipeline with a 2-node DAG
+const CODE_AGENTS_LIST = `# List active agents in the "coding" category, sorted by rating
+curl "https://agentdyne.com/api/agents?category=coding&sort=rating&limit=10" \\
+  -H "Authorization: Bearer agd_your_key"
+
+# Response
+{
+  "data": [{ "id": "…", "name": "…", "description": "…", "pricing_model": "free" }],
+  "pagination": { "total": 284, "page": 1, "limit": 10, "pages": 29 }
+}`
+
+const CODE_AGENTS_CREATE = `curl -X POST https://agentdyne.com/api/agents/create \\
+  -H "Authorization: Bearer agd_your_key" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "name":          "Email Classifier",
+    "description":   "Classifies support emails into categories",
+    "category":      "customer_support",
+    "pricing_model": "free",
+    "system_prompt": "You are an email classifier. Return JSON: { category, priority }",
+    "model_name":    "claude-sonnet-4-20250514",
+    "temperature":   0.3,
+    "max_tokens":    1024
+  }'`
+
+const CODE_PIPELINE_CREATE = `# 1. Create a pipeline
 curl -X POST https://agentdyne.com/api/pipelines \\
   -H "Authorization: Bearer agd_your_key" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "name": "Research → Summarise",
+    "name": "Research → Summarise → Email",
+    "description": "Full research pipeline",
     "dag": {
       "nodes": [
-        { "id": "n1", "agent_id": "RESEARCH_AGENT_ID", "label": "Research" },
-        { "id": "n2", "agent_id": "SUMMARISE_AGENT_ID", "label": "Summarise",
-          "continue_on_failure": false }
+        { "id": "n1", "agent_id": "RESEARCHER_AGENT_ID", "label": "Research" },
+        { "id": "n2", "agent_id": "SUMMARISER_AGENT_ID", "label": "Summarise" },
+        { "id": "n3", "agent_id": "EMAIL_DRAFT_AGENT_ID",  "label": "Email Draft" }
       ],
-      "edges": [{ "from": "n1", "to": "n2" }]
-    }
-  }'
+      "edges": [
+        { "from": "n1", "to": "n2" },
+        { "from": "n2", "to": "n3" }
+      ]
+    },
+    "timeout_seconds": 120
+  }'`
 
-# Execute the pipeline — output of n1 is automatically the input to n2
+const CODE_PIPELINE_RUN = `# 2. Execute the pipeline
 curl -X POST https://agentdyne.com/api/pipelines/PIPELINE_ID/execute \\
   -H "Authorization: Bearer agd_your_key" \\
   -H "Content-Type: application/json" \\
-  -d '{ "input": "Explain the history of the internet" }'`
+  -d '{ "input": "Research recent AI breakthroughs in robotics" }'
 
-const CODE_REGISTRY_CURL = `# Find all agents that can summarise text, sorted by quality
-curl "https://agentdyne.com/api/registry/search?capability=summarize&prefer=accuracy&limit=5" \\
-  -H "Authorization: Bearer agd_your_key"
+# Response — per-node traces + final output
+{
+  "executionId":  "pex_abc",
+  "status":       "success",
+  "output":       "Dear team, here is the latest on robotics AI…",
+  "node_results": [
+    { "node_id": "n1", "status": "success", "latency_ms": 1240, "cost": 0.003 },
+    { "node_id": "n2", "status": "success", "latency_ms": 820,  "cost": 0.002 },
+    { "node_id": "n3", "status": "success", "latency_ms": 640,  "cost": 0.001 }
+  ],
+  "summary": { "total_latency_ms": 2700, "total_cost_usd": "0.006000" }
+}`
 
-# Get full registry entry for one agent (schema, versions, quality)
-curl "https://agentdyne.com/api/registry/AGENT_ID" \\
-  -H "Authorization: Bearer agd_your_key"
+const CODE_RAG_SETUP = `# 1. Create a knowledge base
+curl -X POST https://agentdyne.com/api/rag/knowledge-bases \\
+  -H "Authorization: Bearer agd_your_key" \\
+  -d '{ "name": "Product Docs", "description": "Internal product documentation" }'
+# => { "id": "kb_abc123", "name": "Product Docs", "doc_count": 0 }
 
-# Machine-readable capability graph (external tool manifest)
-curl "https://agentdyne.com/api/discover?capability=classify&max_cost=0.01" \\
-  -H "Authorization: Bearer agd_your_key"`
-
-const CODE_DISCOVER_CURL = `# Cost-aware agent routing — pick the best agent for a task
-curl -X POST https://agentdyne.com/api/agents/route \\
+# 2. Ingest a document (up to 100KB per request, 1000 docs per KB)
+curl -X POST https://agentdyne.com/api/rag/ingest \\
   -H "Authorization: Bearer agd_your_key" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "task": "summarise a legal contract",
-    "category": "legal",
-    "prefer": "accuracy",
-    "max_cost_usd": 0.05
+    "knowledge_base_id": "kb_abc123",
+    "title":   "Getting Started Guide",
+    "content": "## Installation\\n\\nnpm install @agentdyne/sdk…",
+    "chunk_size": 1200,
+    "chunk_overlap": 200
   }'
-# Returns: { matched: true, recommendation: { agent_id, name, reasoning }, alternatives: [...] }`
+# => { "document_id": "doc_xyz", "chunks_indexed": 8, "status": "indexed" }
 
-const CODE_EXECUTIONS_CURL = `# List recent executions
-curl "https://agentdyne.com/api/executions?status=failed&limit=20" \\
-  -H "Authorization: Bearer agd_your_key"`
+# 3. Attach knowledge base to your agent (via Builder Studio or API)
+curl -X PATCH https://agentdyne.com/api/agents/AGENT_ID \\
+  -d '{ "knowledge_base_id": "kb_abc123" }'`
 
-const CODE_QUOTA_CURL = `# Get your quota usage
-curl "https://agentdyne.com/api/user/quota" \\
+const CODE_RAG_QUERY = `# Semantic retrieval — called by the execute route automatically when
+# the agent has a knowledge_base_id attached. You can also call it directly:
+curl -X POST https://agentdyne.com/api/rag/query \\
+  -H "Authorization: Bearer agd_your_key" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "knowledge_base_id": "kb_abc123",
+    "query":    "How do I install the SDK?",
+    "top_k":    5,
+    "threshold": 0.65
+  }'
+# Returns: { results: [{ content, document_title, similarity }], context_string }
+# The context_string can be injected into an agent system prompt directly.`
+
+const CODE_AGENTIC_RAG = `// Agentic RAG — agent decides when to retrieve via tool calls
+// Add this to your agent's system prompt:
+const AGENTIC_SYSTEM_PROMPT = \`
+You are a knowledgeable assistant with access to a knowledge base tool.
+
+When asked a question that requires specific factual information:
+1. Call search_knowledge_base(query) to retrieve relevant context
+2. Use the returned context to formulate an accurate answer
+3. Cite the source document when referencing specific facts
+4. If no relevant context is found, clearly state the knowledge base
+   does not contain information on this topic
+
+Always prefer retrieved context over your training data for domain-specific questions.
+\``
+
+const CODE_REGISTRY = `# Machine-readable agent discovery — "DNS for agents"
+# Find all agents that can summarise text in under $0.01/call
+curl "https://agentdyne.com/api/registry?capabilities=summarize&max_cost=0.01&prefer=cost" \\
   -H "Authorization: Bearer agd_your_key"
-# => { "plan": "pro", "quota": 10000, "used": 3752, "remaining": 6248,
-#      "percentUsed": 37.52, "resetsAt": "2026-05-01T00:00:00Z" }`
 
-const CODE_WEBHOOK_JSON = `{
-  "id":        "evt_abc123",
-  "type":      "execution.completed",
-  "timestamp": "2026-04-17T12:00:00Z",
-  "data": {
-    "executionId": "exec_xyz",
-    "agentId":     "agent_abc",
-    "status":      "success",
-    "latencyMs":   842,
-    "tokens":      { "input": 124, "output": 87 }
-  }
+# Response — machine-optimised (no UI cruft)
+{
+  "agents": [
+    {
+      "id":       "agent_abc",
+      "endpoint": "https://agentdyne.com/api/agents/agent_abc/execute",
+      "capability_tags": ["summarize","extract","classify"],
+      "pricing":  { "model": "per_call", "price_per_call": 0.005 },
+      "quality":  { "composite_score": 91.2, "accuracy_score": 94.1 }
+    }
+  ],
+  "capability_graph": { "summarize": ["agent_abc", "agent_def"] },
+  "composition_hints": [
+    { "chain": ["agent_abc","agent_def"], "compatible_on": ["text"] }
+  ]
 }
 
-// All event types:
-// execution.completed   execution.failed
-// agent.approved        agent.rejected
-// subscription.created  subscription.updated  subscription.canceled
-// payout.processed      review.posted`
+# Full schema for a specific agent (input/output schemas, versions, seller)
+curl "https://agentdyne.com/api/registry/AGENT_ID"`
 
-const CODE_ERROR_JSON = `{
-  "error": "Human-readable error message",
-  "code":  "MACHINE_READABLE_CODE"
-}`
+const CODE_CREDITS = `# Get current credit balance
+curl https://agentdyne.com/api/credits \\
+  -H "Authorization: Bearer agd_your_key"
+# => { "balance": 12.50, "hard_limit": 50, "low_balance": false }
+
+# Purchase credits (creates Stripe Checkout session)
+curl -X POST https://agentdyne.com/api/credits \\
+  -H "Authorization: Bearer agd_your_key" \\
+  -d '{ "package_id": "credits_20" }'
+# packages: credits_5 ($5), credits_20 ($22), credits_50 ($57), credits_100 ($120)
+# => { "url": "https://checkout.stripe.com/…" }`
+
+const CODE_MCP = `// Attach MCP tools to an agent via the Builder Studio or API:
+// PUT /api/agents/AGENT_ID (PATCH the mcp_servers field)
+
+// In your system prompt, reference the tools by name:
+const SYSTEM_PROMPT = \`
+You have access to the following tools:
+- GitHub: read repositories, create pull requests, manage issues
+- Supabase: query tables, run SQL, fetch records
+- Slack: send messages, read channels
+
+When the user asks you to perform an action that requires one of these tools,
+use the tool explicitly before responding. Always confirm the action was
+completed successfully before reporting to the user.
+\`
+
+// Available MCP servers in Builder Studio:
+// databases: supabase, postgres, mysql, mongodb, redis
+// communication: gmail, slack, twilio, discord
+// productivity: google-calendar, notion, google-drive, linear, asana
+// development: github, filesystem, browserbase, puppeteer
+// cloud: aws, gcp, cloudflare, vercel
+// ai: anthropic, openai, pinecone, qdrant
+// finance: stripe, plaid
+// marketing: hubspot, salesforce`
+
+const CODE_WEBHOOK = `// Register a webhook URL in Settings → Webhooks
+// Every event is signed with HMAC-SHA256 in X-AgentDyne-Signature
+
+// Next.js App Router handler:
+export async function POST(req: Request) {
+  const sig  = req.headers.get("x-agentdyne-signature") ?? ""
+  const body = await req.text()
+
+  // Verify signature (prevents spoofed events)
+  const expected = await computeHmac(process.env.AGENTDYNE_WEBHOOK_SECRET!, body)
+  if (sig !== expected) return new Response("Unauthorized", { status: 401 })
+
+  const event = JSON.parse(body)
+  switch (event.type) {
+    case "execution.completed":  await onExecutionDone(event.data);  break
+    case "execution.failed":     await onExecutionFailed(event.data); break
+    case "agent.approved":       await onAgentApproved(event.data);  break
+    case "payout.processed":     await recordPayout(event.data);     break
+  }
+  return Response.json({ received: true })
+}
+
+// Event types:
+// execution.completed | execution.failed
+// agent.approved | agent.rejected
+// subscription.created | subscription.updated | subscription.canceled
+// payout.processed | review.posted | credits.low`
+
+const CODE_ERRORS = `// Every error response has this shape:
+{
+  "error": "Human-readable message",
+  "code":  "MACHINE_READABLE_CODE",   // e.g. QUOTA_EXCEEDED, INSUFFICIENT_CREDITS
+  "retryAfter": 60                    // only on 429
+}
+
+// Common codes:
+// QUOTA_EXCEEDED          — monthly call limit reached; upgrade plan
+// INSUFFICIENT_CREDITS    — balance < agent price; top up at /billing
+// SUBSCRIPTION_REQUIRED   — agent requires active subscription
+// INJECTION_BLOCKED       — input rejected by security filter
+// AGENT_NOT_CONFIGURED    — system prompt missing or too short`
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sidebar sections
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SECTIONS = [
-  { id: "quickstart",     label: "Quick Start",        icon: Zap },
-  { id: "authentication", label: "Authentication",      icon: Key },
-  { id: "execute",        label: "Execute Agent",       icon: Play },
-  { id: "agents-api",    label: "Agents API",          icon: Bot },
-  { id: "pipelines",     label: "Pipelines (DAG)",     icon: Layers },
-  { id: "registry",      label: "Agent Registry",      icon: Network },
-  { id: "routing",       label: "Smart Routing",       icon: GitBranch },
-  { id: "executions-api",label: "Executions API",      icon: BarChart3 },
-  { id: "user-api",      label: "User & Quota",        icon: Shield },
-  { id: "webhooks",      label: "Webhooks",            icon: Webhook },
-  { id: "rate-limits",   label: "Rate Limits",         icon: Shield },
-  { id: "errors",        label: "Error Codes",         icon: BarChart3 },
-]
-
-const AUTH_FEATURES = [
-  { icon: Lock,      title: "Secure",       desc: "Keys are SHA-256 hashed. AgentDyne cannot see your raw key." },
-  { icon: RefreshCw, title: "Rotatable",    desc: "Create and revoke keys from your API Keys dashboard." },
-  { icon: Activity,  title: "Trackable",    desc: "Each key tracks total calls, last used date, and quota." },
-  { icon: Zap,       title: "Rate-limited", desc: "60 req/min default per key. Enterprise: custom limits." },
+  { id: "quickstart",   label: "Quick Start",       icon: Zap },
+  { id: "auth",         label: "Authentication",    icon: Key },
+  { id: "execute",      label: "Execute Agent",     icon: Play },
+  { id: "agents",       label: "Agents API",        icon: Bot },
+  { id: "pipelines",    label: "Pipelines API",     icon: GitMerge },
+  { id: "rag",          label: "RAG & Knowledge",   icon: Database },
+  { id: "registry",     label: "Agent Registry",    icon: Network },
+  { id: "credits",      label: "Credits API",       icon: CreditCard },
+  { id: "mcp",          label: "MCP Integrations",  icon: Layers },
+  { id: "webhooks",     label: "Webhooks",          icon: Webhook },
+  { id: "rate-limits",  label: "Rate Limits",       icon: Shield },
+  { id: "errors",       label: "Error Codes",       icon: BarChart3 },
 ]
 
 const AGENTS_ENDPOINTS = [
-  { method: "GET",  path: "/api/agents",                desc: "List active agents. Params: q, category, pricing, sort (popular|rating|newest|revenue), page, limit. Returns { agents: [...], pagination: {...} }." },
-  { method: "POST", path: "/api/agents/create",         desc: "Create a new agent (draft). Body: name, description, category, pricing_model, system_prompt, model_name, temperature, max_tokens. Returns the created agent object." },
-  { method: "GET",  path: "/api/agents/{id}",           desc: "Get a single active agent with seller profile." },
-  { method: "PATCH",path: "/api/agents/{id}",           desc: "Update capability_tags (seller-only, session auth required)." },
-  { method: "POST", path: "/api/agents/{id}/execute",   desc: "Execute an agent. Body: { input, stream? }. Supports sync and streaming. Enforces quota and subscription gating." },
-  { method: "GET",  path: "/api/agents/{id}/score",     desc: "Get quality score breakdown for an agent." },
-  { method: "GET",  path: "/api/agents/{id}/reviews",   desc: "List approved reviews. Params: page, limit." },
-  { method: "POST", path: "/api/agents/{id}/reviews",   desc: "Post a review. Requires at least one prior successful execution." },
+  { method: "GET",   path: "/api/agents",                      desc: "List active agents. Params: q, category, pricing_model, sort (popular|rating|newest), page, limit." },
+  { method: "GET",   path: "/api/agents/{id}",                 desc: "Single agent detail with full seller profile and version history." },
+  { method: "POST",  path: "/api/agents/create",               desc: "Create a new agent (server-validated). Returns { id, name, slug, status: 'draft' }." },
+  { method: "PATCH", path: "/api/agents/{id}",                 desc: "Update agent fields: system_prompt, model_name, pricing, capability_tags, knowledge_base_id." },
+  { method: "POST",  path: "/api/agents/{id}/execute",         desc: "Execute agent. Enforces quota, credits, injection filter, streaming (stream: true)." },
+  { method: "GET",   path: "/api/agents/{id}/reviews",         desc: "List approved reviews. Params: page, limit." },
+  { method: "POST",  path: "/api/agents/{id}/reviews",         desc: "Post a review (1–5 stars). Requires prior successful execution." },
 ]
 
 const PIPELINE_ENDPOINTS = [
-  { method: "GET",    path: "/api/pipelines",           desc: "List your pipelines. Params: public=true, page, limit. Returns { data: [...], pagination: {...} }." },
-  { method: "POST",   path: "/api/pipelines",           desc: "Create a pipeline. Body: name, description, dag { nodes[], edges[] }, is_public, timeout_seconds." },
-  { method: "GET",    path: "/api/pipelines/{id}",      desc: "Get pipeline with enriched agent data per node." },
-  { method: "PATCH",  path: "/api/pipelines/{id}",      desc: "Update pipeline. Allowed fields: name, description, dag, is_public, is_active, timeout_seconds, retry_on_failure, max_retries, tags." },
-  { method: "DELETE", path: "/api/pipelines/{id}",      desc: "Delete a pipeline (owner only)." },
-  { method: "POST",   path: "/api/pipelines/{id}/execute", desc: "Execute pipeline DAG. Body: { input, variables? }. Output of each node is automatically the input to downstream nodes." },
+  { method: "GET",   path: "/api/pipelines",                  desc: "List your pipelines. Params: public=true for public ones, limit, page." },
+  { method: "POST",  path: "/api/pipelines",                  desc: "Create pipeline. Body: { name, description, dag: { nodes, edges }, timeout_seconds }." },
+  { method: "GET",   path: "/api/pipelines/{id}",             desc: "Single pipeline with full DAG definition." },
+  { method: "PATCH", path: "/api/pipelines/{id}",             desc: "Update DAG, name, timeout, visibility." },
+  { method: "DELETE",path: "/api/pipelines/{id}",             desc: "Delete pipeline and all execution history." },
+  { method: "POST",  path: "/api/pipelines/{id}/execute",     desc: "Run pipeline DAG. Returns per-node traces, final output, total cost + latency." },
+]
+
+const RAG_ENDPOINTS = [
+  { method: "GET",   path: "/api/rag/knowledge-bases",        desc: "List knowledge bases you own." },
+  { method: "POST",  path: "/api/rag/knowledge-bases",        desc: "Create knowledge base. Body: { name, description, is_public }. Max 10 per account." },
+  { method: "POST",  path: "/api/rag/ingest",                 desc: "Ingest document. Body: { knowledge_base_id, content, title, chunk_size, chunk_overlap }. Max 100KB." },
+  { method: "GET",   path: "/api/rag/ingest?knowledge_base_id=", desc: "List documents in a knowledge base." },
+  { method: "DELETE",path: "/api/rag/ingest?document_id=",    desc: "Delete a document and all its chunks." },
+  { method: "POST",  path: "/api/rag/query",                  desc: "Semantic search. Body: { knowledge_base_id, query, top_k, threshold }. Returns context_string." },
 ]
 
 const REGISTRY_ENDPOINTS = [
-  { method: "GET", path: "/api/registry/search",       desc: "Capability-based agent search. Params: capability, capabilities (comma list), input_type, output_type, category, max_cost, min_score, prefer (accuracy|speed|cost|balanced), limit." },
-  { method: "GET", path: "/api/registry/{id}",         desc: "Full registry entry for one agent: schema, quality, version history, MCP tools, execution endpoints." },
-  { method: "GET", path: "/api/discover",              desc: "OpenAI-compatible tool manifest for agent-to-agent discovery. Used by AI planners to select tools." },
-  { method: "POST",path: "/api/agents/route",          desc: "Smart agent routing. Body: { task, category?, max_cost_usd?, prefer?, capability? }. Returns best matching agent with reasoning." },
+  { method: "GET",   path: "/api/registry",                   desc: "Capability-based agent discovery. Params: capabilities, category, input_type, output_type, max_cost, min_score, prefer (accuracy|speed|cost|balanced), limit." },
+  { method: "GET",   path: "/api/registry/{id}",              desc: "Full machine-readable agent schema: input_schema, output_schema, capability_tags, version history, seller." },
 ]
 
-const EXECUTIONS_ENDPOINTS = [
-  { method: "GET", path: "/api/executions",            desc: "List your executions. Params: agentId, status, since (ISO 8601), page, limit." },
-  { method: "GET", path: "/api/executions/{id}",       desc: "Get a single execution by ID." },
+const CREDITS_ENDPOINTS = [
+  { method: "GET",   path: "/api/credits",                    desc: "Balance, hard_limit, alert_threshold, transaction history. Params: page, limit." },
+  { method: "POST",  path: "/api/credits",                    desc: "Create Stripe Checkout session to top up. Body: { package_id }. Returns { url }." },
 ]
 
-const USER_ENDPOINTS = [
-  { method: "GET",   path: "/api/user/me",             desc: "Full profile including subscription plan and Stripe onboarding status." },
-  { method: "PATCH", path: "/api/user/me",             desc: "Update: full_name, username, bio, website, company, avatar_url." },
-  { method: "GET",   path: "/api/user/quota",          desc: "Quota usage: plan, quota, used, remaining, percentUsed, resetsAt." },
-]
-
-const RATE_LIMIT_ROWS = [
+const RATE_ROWS = [
   { plan: "Free",       monthly: "100",       rpm: "10",     c: "1" },
   { plan: "Starter",    monthly: "1,000",     rpm: "30",     c: "3" },
   { plan: "Pro",        monthly: "10,000",    rpm: "60",     c: "10" },
@@ -227,22 +351,20 @@ const RATE_LIMIT_ROWS = [
 ]
 
 const ERROR_ROWS = [
-  { code: "400", title: "Bad Request",           desc: "Missing or invalid parameters." },
-  { code: "401", title: "Unauthorized",          desc: "Missing, invalid, or revoked API key." },
-  { code: "402", title: "Payment Required",      desc: "Insufficient credits. Top up in Billing." },
-  { code: "403", title: "Forbidden",             desc: "Subscription required (SUBSCRIPTION_REQUIRED) or not the resource owner." },
-  { code: "404", title: "Not Found",             desc: "Agent, execution, or resource does not exist." },
-  { code: "408", title: "Request Timeout",       desc: "Pipeline execution exceeded timeout_seconds." },
-  { code: "413", title: "Payload Too Large",     desc: "Input exceeds 32 KB limit." },
-  { code: "429", title: "Too Many Requests",     desc: "Rate limit or monthly quota exhausted (QUOTA_EXCEEDED)." },
-  { code: "500", title: "Internal Server Error", desc: "AgentDyne server error — retry with exponential back-off." },
+  { code: "400", title: "Bad Request",       cls: "ValidationError",             desc: "Missing or invalid parameters." },
+  { code: "401", title: "Unauthorized",      cls: "AuthenticationError",          desc: "Missing, invalid, or revoked API key." },
+  { code: "402", title: "Payment Required",  cls: "InsufficientCreditsError",     desc: "Credit balance below agent price (INSUFFICIENT_CREDITS)." },
+  { code: "403", title: "Forbidden",         cls: "SubscriptionRequiredError",    desc: "Agent requires subscription (SUBSCRIPTION_REQUIRED)." },
+  { code: "404", title: "Not Found",         cls: "NotFoundError",               desc: "Agent, pipeline, or resource does not exist." },
+  { code: "429", title: "Too Many Requests", cls: "RateLimitError",               desc: "Rate limit or monthly quota exhausted (QUOTA_EXCEEDED)." },
+  { code: "500", title: "Server Error",      cls: "InternalServerError",          desc: "AgentDyne error. Retry with exponential back-off." },
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sub-components
 // ─────────────────────────────────────────────────────────────────────────────
 
-function CodeBlock({ code, language = "bash" }: { code: string; language?: string }) {
+function Code({ code, lang = "bash" }: { code: string; lang?: string }) {
   const [copied, setCopied] = useState(false)
   const copy = () => {
     navigator.clipboard.writeText(code)
@@ -250,37 +372,38 @@ function CodeBlock({ code, language = "bash" }: { code: string; language?: strin
     setTimeout(() => setCopied(false), 2000)
   }
   return (
-    <div className="relative rounded-xl border border-zinc-200 bg-zinc-950 overflow-hidden my-4">
+    <div className="relative rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden my-4">
       <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800">
-        <span className="text-xs text-zinc-400 font-mono">{language}</span>
+        <span className="text-xs text-zinc-400 font-mono">{lang}</span>
         <button onClick={copy}
           className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-200 transition-colors">
           {copied ? <Check className="h-3.5 w-3.5 text-green-400" /> : <Copy className="h-3.5 w-3.5" />}
           {copied ? "Copied!" : "Copy"}
         </button>
       </div>
-      <pre className="p-4 text-sm font-mono text-slate-300 overflow-x-auto whitespace-pre leading-relaxed">
+      <pre className="p-4 text-sm font-mono text-zinc-300 overflow-x-auto whitespace-pre leading-relaxed">
         <code>{code}</code>
       </pre>
     </div>
   )
 }
 
-function SectionHeader({ id, title, desc }: { id: string; title: string; desc: string }) {
+function SH({ id, title, desc }: { id: string; title: string; desc: string }) {
   return (
     <div id={id} className="scroll-mt-24 pt-10 pb-4 border-b border-zinc-100 mb-6">
       <h2 className="text-2xl font-bold tracking-tight text-zinc-900">{title}</h2>
-      <p className="text-zinc-500 mt-1.5 text-sm">{desc}</p>
+      <p className="text-zinc-500 mt-1.5 text-sm leading-relaxed">{desc}</p>
     </div>
   )
 }
 
-function MethodBadge({ method }: { method: string }) {
+function MB({ method }: { method: string }) {
   const cls =
-    method === "GET"    ? "bg-blue-50 text-blue-700 border-blue-100" :
+    method === "GET"    ? "bg-blue-50  text-blue-700  border-blue-100"  :
+    method === "POST"   ? "bg-green-50 text-green-700 border-green-100" :
     method === "PATCH"  ? "bg-amber-50 text-amber-700 border-amber-100" :
-    method === "DELETE" ? "bg-red-50 text-red-700 border-red-100" :
-                          "bg-green-50 text-green-700 border-green-100"
+    method === "DELETE" ? "bg-red-50   text-red-700   border-red-100"   :
+                          "bg-zinc-50  text-zinc-700  border-zinc-100"
   return (
     <span className={cn("font-mono text-xs font-bold px-2 py-0.5 rounded-full border flex-shrink-0 mt-0.5", cls)}>
       {method}
@@ -288,30 +411,23 @@ function MethodBadge({ method }: { method: string }) {
   )
 }
 
-function EndpointList({ endpoints }: { endpoints: { method: string; path: string; desc: string }[] }) {
+function EndpointRow({ method, path, desc }: { method: string; path: string; desc: string }) {
   return (
-    <div className="space-y-3">
-      {endpoints.map(e => (
-        <div key={e.method + e.path}
-          className="bg-white border border-zinc-100 rounded-xl p-4 flex items-start gap-3"
-          style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-          <MethodBadge method={e.method} />
-          <div className="min-w-0">
-            <code className="font-mono text-sm text-zinc-900">{e.path}</code>
-            <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">{e.desc}</p>
-          </div>
-        </div>
-      ))}
+    <div className="bg-white border border-zinc-100 rounded-xl p-4 flex items-start gap-3"
+      style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+      <MB method={method} />
+      <div>
+        <code className="font-mono text-sm text-zinc-900">{path}</code>
+        <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">{desc}</p>
+      </div>
     </div>
   )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Main
-// ─────────────────────────────────────────────────────────────────────────────
 
 export default function DocsClient() {
-  const [activeSection, setActiveSection] = useState("quickstart")
+  const [active, setActive] = useState("quickstart")
 
   return (
     <div className="min-h-screen bg-white">
@@ -319,17 +435,17 @@ export default function DocsClient() {
       <div className="pt-14 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex gap-8 py-10">
 
-          {/* ── Sidebar ─────────────────────────────────────────────────── */}
+          {/* Sidebar */}
           <aside className="hidden lg:block w-56 flex-shrink-0">
             <div className="sticky top-24">
-              <p className="section-header mb-3">Documentation</p>
+              <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-widest px-3 mb-3">Documentation</p>
               <nav className="space-y-0.5">
                 {SECTIONS.map(s => (
-                  <a key={s.id} href={"#" + s.id}
-                    onClick={() => setActiveSection(s.id)}
+                  <a key={s.id} href={`#${s.id}`}
+                    onClick={() => setActive(s.id)}
                     className={cn(
                       "flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium transition-all",
-                      activeSection === s.id
+                      active === s.id
                         ? "bg-primary/8 text-primary"
                         : "text-zinc-500 hover:text-zinc-900 hover:bg-zinc-50"
                     )}>
@@ -339,13 +455,12 @@ export default function DocsClient() {
                 ))}
               </nav>
               <div className="mt-6 pt-6 border-t border-zinc-100">
-                <p className="section-header mb-3">Resources</p>
+                <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-widest px-3 mb-3">Resources</p>
                 <div className="space-y-0.5">
                   {[
                     { label: "API Status",      href: "https://status.agentdyne.com" },
                     { label: "GitHub",           href: "https://github.com/agentdyne" },
                     { label: "Discord",          href: "https://discord.gg/agentdyne" },
-                    { label: "Publishing Guide", href: "/PUBLISHING_GUIDE.md" },
                   ].map(r => (
                     <a key={r.label} href={r.href} target="_blank" rel="noopener noreferrer"
                       className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm text-zinc-500 hover:text-zinc-900 hover:bg-zinc-50 transition-all">
@@ -357,20 +472,18 @@ export default function DocsClient() {
             </div>
           </aside>
 
-          {/* ── Content ─────────────────────────────────────────────────── */}
+          {/* Content */}
           <main className="flex-1 min-w-0">
 
             {/* Hero */}
             <div className="mb-10">
               <div className="inline-flex items-center gap-2 bg-primary/8 text-primary border border-primary/20 text-xs px-3 py-1.5 rounded-full font-semibold mb-4">
-                <Book className="h-3.5 w-3.5" /> API v1
+                <Book className="h-3.5 w-3.5" /> API v1 · April 2026
               </div>
-              <h1 className="text-4xl font-black tracking-tight text-zinc-900 mb-3">
-                AgentDyne Documentation
-              </h1>
-              <p className="text-lg text-zinc-500 max-w-2xl">
-                Everything you need to build, deploy, and monetize with AgentDyne.
-                Single agents, multi-agent pipelines, Agent Registry, and MCP integrations.
+              <h1 className="text-4xl font-black tracking-tight text-zinc-900 mb-3">AgentDyne Docs</h1>
+              <p className="text-lg text-zinc-500 max-w-2xl leading-relaxed">
+                Complete reference for the AgentDyne API — execute agents, build pipelines,
+                manage RAG knowledge bases, and integrate 40+ MCP tools.
               </p>
               <div className="flex gap-3 mt-5">
                 <Link href="/marketplace">
@@ -386,25 +499,25 @@ export default function DocsClient() {
               </div>
             </div>
 
-            {/* ── Quick Start ─────────────────────────────────────────── */}
-            <SectionHeader id="quickstart" title="Quick Start"
-              desc="Your first agent call in under 2 minutes." />
+            {/* ── Quick Start ──────────────────────────────────────────────── */}
+            <SH id="quickstart" title="Quick Start" desc="Your first agent call in under 2 minutes." />
             <p className="text-sm text-zinc-500 mb-2">
               Get your API key from the{" "}
-              <Link href="/api-keys" className="text-primary hover:underline font-medium">
-                API Keys dashboard
-              </Link>, then:
+              <Link href="/api-keys" className="text-primary hover:underline font-medium">API Keys dashboard</Link>, then:
             </p>
-            <CodeBlock language="bash" code={CODE_CURL_QUICKSTART} />
-            <p className="text-sm text-zinc-500 mb-2">Response:</p>
-            <CodeBlock language="json" code={CODE_JSON_QUICKSTART} />
+            <Code code={CODE_QUICKSTART} lang="bash" />
+            <Code code={CODE_QUICKSTART_RESP} lang="json" />
 
-            {/* ── Authentication ──────────────────────────────────────── */}
-            <SectionHeader id="authentication" title="Authentication"
-              desc="All API requests require a valid API key." />
-            <CodeBlock language="bash" code={CODE_AUTH_HEADER} />
+            {/* ── Auth ──────────────────────────────────────────────────────── */}
+            <SH id="auth" title="Authentication" desc="All API requests require a valid API key in the Authorization header." />
+            <Code code={CODE_AUTH} lang="http" />
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
-              {AUTH_FEATURES.map(f => (
+              {[
+                { icon: Lock,      title: "Secure",       desc: "Keys are hashed SHA-256. AgentDyne never stores the raw key." },
+                { icon: RefreshCw, title: "Rotatable",    desc: "Create and revoke keys anytime from your API Keys dashboard." },
+                { icon: Activity,  title: "Trackable",    desc: "Each key tracks total calls, last used timestamp, and rate limits." },
+                { icon: Zap,       title: "Rate-limited", desc: "Default 60 req/min. Quota enforced per plan. Headers: X-RateLimit-*." },
+              ].map(f => (
                 <div key={f.title} className="bg-white border border-zinc-100 rounded-xl p-4"
                   style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
                   <div className="flex items-center gap-2.5 mb-1.5">
@@ -418,107 +531,132 @@ export default function DocsClient() {
               ))}
             </div>
 
-            {/* ── Execute Agent ────────────────────────────────────────── */}
-            <SectionHeader id="execute" title="Execute Agent"
-              desc="Run any agent synchronously or stream output token-by-token." />
-            <CodeBlock language="typescript" code={CODE_EXECUTE_TS} />
+            {/* ── Execute Agent ─────────────────────────────────────────────── */}
+            <SH id="execute" title="Execute Agent"
+              desc="Run any active agent — synchronously or token-by-token streaming. Enforces quota, credits, and injection filter automatically." />
+            <EndpointRow method="POST" path="/api/agents/{id}/execute"
+              desc="Body: { input, stream? }. stream:true returns Server-Sent Events. Input can be string or JSON object." />
+            <Code code={CODE_EXECUTE_SYNC}   lang="typescript" />
+            <Code code={CODE_EXECUTE_STREAM} lang="typescript" />
 
-            {/* ── Agents API ───────────────────────────────────────────── */}
-            <SectionHeader id="agents-api" title="Agents API"
-              desc="List, search, create, and manage agents. NOTE: list response key is 'agents', not 'data'." />
-            <EndpointList endpoints={AGENTS_ENDPOINTS} />
-            <CodeBlock language="bash" code={CODE_AGENTS_CURL} />
-
-            {/* ── Pipelines ────────────────────────────────────────────── */}
-            <SectionHeader id="pipelines" title="Pipelines (Multi-Agent DAG)"
-              desc="Chain agents into multi-step workflows. Output of node N becomes input to node N+1." />
-            <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-xs text-blue-700 mb-4">
-              <strong>How it works:</strong> Create a pipeline with a DAG (Directed Acyclic Graph) of agent nodes.
-              When you execute it, nodes run in topological order. Each node's output is automatically passed to
-              downstream nodes. Nodes can be configured with <code>continue_on_failure: true</code> so the pipeline
-              doesn't abort on a single node error.
+            {/* ── Agents API ───────────────────────────────────────────────── */}
+            <SH id="agents" title="Agents API" desc="Create, list, search, and manage agents via REST." />
+            <div className="space-y-3">
+              {AGENTS_ENDPOINTS.map(e => <EndpointRow key={e.method+e.path} {...e} />)}
             </div>
-            <EndpointList endpoints={PIPELINE_ENDPOINTS} />
-            <CodeBlock language="bash" code={CODE_PIPELINE_QUICKSTART} />
+            <Code code={CODE_AGENTS_LIST}   lang="bash" />
+            <Code code={CODE_AGENTS_CREATE} lang="bash" />
 
-            {/* ── Agent Registry ───────────────────────────────────────── */}
-            <SectionHeader id="registry" title="Agent Registry"
-              desc="Machine-readable capability discovery. Used by the Agent Graph Engine and AI planners." />
-            <div className="bg-zinc-50 border border-zinc-100 rounded-xl p-4 mb-4 text-sm text-zinc-600 leading-relaxed">
-              <strong className="text-zinc-900">Registry vs Discover:</strong>{" "}
-              <code className="font-mono text-xs bg-white border border-zinc-200 px-1.5 py-0.5 rounded">/api/registry/search</code>{" "}
-              is for internal routing with quality-score preference weighting.{" "}
-              <code className="font-mono text-xs bg-white border border-zinc-200 px-1.5 py-0.5 rounded">/api/discover</code>{" "}
-              returns an OpenAI-compatible tool manifest for external AI planners.
-              Both are backed by the same <code>agent_capabilities</code> view.
+            {/* ── Pipelines API ────────────────────────────────────────────── */}
+            <SH id="pipelines" title="Pipelines API"
+              desc="Chain multiple agents into a DAG workflow. Each node is an agent — output of node N feeds node N+1. The topological sort engine handles dependencies automatically." />
+
+            <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 mb-4 text-xs text-blue-700 leading-relaxed">
+              <strong>How pipelines work:</strong> Create a pipeline with a DAG (directed acyclic graph) of agent nodes.
+              When you run it, each agent is called in topological order — the text/JSON output of one agent
+              is automatically stringified and passed as the <code className="font-mono bg-blue-100 px-1 rounded">input</code> to
+              the next agent. All nodes run the same execution pipeline as direct agent calls (quota, credits, injection filter).
             </div>
-            <EndpointList endpoints={REGISTRY_ENDPOINTS} />
-            <CodeBlock language="bash" code={CODE_REGISTRY_CURL} />
 
-            {/* ── Smart Routing ────────────────────────────────────────── */}
-            <SectionHeader id="routing" title="Smart Agent Routing"
-              desc="Let AgentDyne pick the best agent for your task automatically." />
-            <CodeBlock language="bash" code={CODE_DISCOVER_CURL} />
+            <div className="space-y-3 mb-4">
+              {PIPELINE_ENDPOINTS.map(e => <EndpointRow key={e.method+e.path} {...e} />)}
+            </div>
+            <Code code={CODE_PIPELINE_CREATE} lang="bash" />
+            <Code code={CODE_PIPELINE_RUN}    lang="bash" />
 
-            {/* ── Executions API ───────────────────────────────────────── */}
-            <SectionHeader id="executions-api" title="Executions API"
-              desc="Retrieve your execution history." />
-            <EndpointList endpoints={EXECUTIONS_ENDPOINTS} />
-            <CodeBlock language="bash" code={CODE_EXECUTIONS_CURL} />
+            {/* ── RAG & Knowledge ──────────────────────────────────────────── */}
+            <SH id="rag" title="RAG & Knowledge Base"
+              desc="Augment agents with custom documents. Upload text, code, or data — it's chunked, embedded (OpenAI text-embedding-3-small), and stored in pgvector. Agents retrieve relevant context at runtime via cosine similarity search." />
 
-            {/* ── User & Quota ─────────────────────────────────────────── */}
-            <SectionHeader id="user-api" title="User & Quota API"
-              desc="Access your profile, subscription plan, and quota usage." />
-            <EndpointList endpoints={USER_ENDPOINTS} />
-            <CodeBlock language="bash" code={CODE_QUOTA_CURL} />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+              {[
+                { icon: Database, title: "Standard RAG",  desc: "Documents ingest → chunked → embedded → stored in pgvector. Agent retrieves top-k chunks at execution time via semantic search." },
+                { icon: Cpu,      title: "Agentic RAG",   desc: "Agent decides when to search using a tool call pattern. More accurate for multi-step questions. Configure via system prompt." },
+              ].map(f => (
+                <div key={f.title} className="bg-white border border-zinc-100 rounded-xl p-4"
+                  style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+                  <div className="flex items-center gap-2.5 mb-1.5">
+                    <div className="w-7 h-7 rounded-lg bg-primary/8 flex items-center justify-center">
+                      <f.icon className="h-3.5 w-3.5 text-primary" />
+                    </div>
+                    <p className="font-semibold text-zinc-900 text-sm">{f.title}</p>
+                  </div>
+                  <p className="text-xs text-zinc-500 leading-relaxed">{f.desc}</p>
+                </div>
+              ))}
+            </div>
 
-            {/* ── Webhooks ─────────────────────────────────────────────── */}
-            <SectionHeader id="webhooks" title="Webhooks"
-              desc="Receive real-time events pushed to your endpoint." />
-            <p className="text-sm text-zinc-500 mb-4">
-              Register a webhook URL in{" "}
-              <Link href="/settings" className="text-primary hover:underline font-medium">Settings</Link>.
-              Every event is signed with <code className="bg-zinc-50 border border-zinc-200 px-1.5 py-0.5 rounded text-xs font-mono text-zinc-700">HMAC-SHA256</code> —
-              verify the <code className="bg-zinc-50 border border-zinc-200 px-1.5 py-0.5 rounded text-xs font-mono text-zinc-700">X-AgentDyne-Signature</code> header.
-            </p>
-            <CodeBlock language="json" code={CODE_WEBHOOK_JSON} />
+            <div className="space-y-3 mb-4">
+              {RAG_ENDPOINTS.map(e => <EndpointRow key={e.method+e.path} {...e} />)}
+            </div>
+            <Code code={CODE_RAG_SETUP}    lang="bash" />
+            <Code code={CODE_RAG_QUERY}    lang="bash" />
+            <Code code={CODE_AGENTIC_RAG}  lang="typescript" />
 
-            {/* ── Rate Limits ──────────────────────────────────────────── */}
-            <SectionHeader id="rate-limits" title="Rate Limits"
-              desc="Limits apply per API key and vary by plan." />
+            <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-xs text-amber-700 leading-relaxed">
+              <strong>External vector stores:</strong> For enterprise-scale RAG (100M+ vectors), use Pinecone or Qdrant
+              via their MCP integrations. Add the Pinecone MCP server to your agent in Builder Studio → MCP Tools,
+              then call <code className="font-mono bg-amber-100 px-1 rounded">upsert_vectors</code> and <code className="font-mono bg-amber-100 px-1 rounded">query</code> from
+              your system prompt. The built-in RAG API (pgvector) handles up to ~10M vectors efficiently.
+            </div>
+
+            {/* ── Agent Registry ───────────────────────────────────────────── */}
+            <SH id="registry" title="Agent Registry"
+              desc="Machine-readable agent discovery API — the 'DNS for agents'. Used by pipelines, orchestrators, and developer tooling to find the right agent by capability, cost, and quality." />
+            <div className="space-y-3 mb-4">
+              {REGISTRY_ENDPOINTS.map(e => <EndpointRow key={e.method+e.path} {...e} />)}
+            </div>
+            <Code code={CODE_REGISTRY} lang="bash" />
+
+            {/* ── Credits API ──────────────────────────────────────────────── */}
+            <SH id="credits" title="Credits API"
+              desc="Per-call and freemium agents deduct from your credit balance. Free agents and subscription agents do not use credits. Top up via Stripe Checkout." />
+            <div className="space-y-3 mb-4">
+              {CREDITS_ENDPOINTS.map(e => <EndpointRow key={e.method+e.path} {...e} />)}
+            </div>
+            <Code code={CODE_CREDITS} lang="bash" />
+
+            {/* ── MCP Integrations ─────────────────────────────────────────── */}
+            <SH id="mcp" title="MCP Integrations"
+              desc="40+ verified MCP (Model Context Protocol) servers. Attach tools to any agent in Builder Studio → MCP Tools tab. Tools appear in the agent's execution context — reference them in your system prompt." />
+            <Code code={CODE_MCP} lang="typescript" />
+            <div className="mt-3">
+              <Link href="/integrations" className="text-sm text-primary hover:underline font-semibold flex items-center gap-1">
+                Browse all integrations <ExternalLink className="h-3.5 w-3.5" />
+              </Link>
+            </div>
+
+            {/* ── Webhooks ─────────────────────────────────────────────────── */}
+            <SH id="webhooks" title="Webhooks"
+              desc="Real-time events pushed to your HTTPS endpoint. Register URLs in Settings → Webhooks. All events are HMAC-SHA256 signed." />
+            <Code code={CODE_WEBHOOK} lang="typescript" />
+
+            {/* ── Rate Limits ──────────────────────────────────────────────── */}
+            <SH id="rate-limits" title="Rate Limits" desc="Limits apply per API key and scale with your plan." />
             <div className="overflow-hidden rounded-xl border border-zinc-100">
               <table className="w-full text-sm">
                 <thead className="bg-zinc-50 border-b border-zinc-100">
                   <tr>
-                    {["Plan", "Calls/month", "Req/min per key", "Concurrency"].map(h => (
-                      <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">
-                        {h}
-                      </th>
+                    {["Plan", "Calls/month", "Req/min", "Concurrency"].map(h => (
+                      <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-50">
-                  {RATE_LIMIT_ROWS.map(r => (
+                  {RATE_ROWS.map(r => (
                     <tr key={r.plan} className="hover:bg-zinc-50 transition-colors">
                       <td className="px-4 py-3 font-semibold text-zinc-900 text-sm">{r.plan}</td>
-                      <td className="px-4 py-3 text-zinc-500 font-mono text-sm nums">{r.monthly}</td>
-                      <td className="px-4 py-3 text-zinc-500 font-mono text-sm nums">{r.rpm}</td>
+                      <td className="px-4 py-3 text-zinc-500 font-mono text-sm">{r.monthly}</td>
+                      <td className="px-4 py-3 text-zinc-500 font-mono text-sm">{r.rpm}</td>
                       <td className="px-4 py-3 text-zinc-500 text-sm">{r.c}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            <p className="text-xs text-zinc-400 mt-2">
-              Response headers:{" "}
-              <code className="bg-zinc-50 border border-zinc-100 px-1 py-0.5 rounded font-mono">X-RateLimit-Remaining</code>{" "}
-              <code className="bg-zinc-50 border border-zinc-100 px-1 py-0.5 rounded font-mono">X-RateLimit-Reset</code>{" "}
-              <code className="bg-zinc-50 border border-zinc-100 px-1 py-0.5 rounded font-mono">Retry-After</code>
-            </p>
 
-            {/* ── Error Codes ──────────────────────────────────────────── */}
-            <SectionHeader id="errors" title="Error Codes"
-              desc="Standard HTTP status codes with AgentDyne machine-readable codes." />
+            {/* ── Error Codes ──────────────────────────────────────────────── */}
+            <SH id="errors" title="Error Codes" desc="Standard HTTP codes plus AgentDyne machine-readable codes." />
             <div className="space-y-2">
               {ERROR_ROWS.map(e => (
                 <div key={e.code}
@@ -532,31 +670,28 @@ export default function DocsClient() {
                   )}>
                     {e.code}
                   </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-sm text-zinc-900">{e.title}</p>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-semibold text-sm text-zinc-900">{e.title}</p>
+                      <code className="text-[10px] font-mono bg-primary/8 text-primary px-1.5 py-0.5 rounded">{e.cls}</code>
+                    </div>
                     <p className="text-xs text-zinc-500 mt-0.5">{e.desc}</p>
                   </div>
                 </div>
               ))}
             </div>
-            <CodeBlock language="json" code={CODE_ERROR_JSON} />
+            <Code code={CODE_ERRORS} lang="json" />
 
             {/* CTA */}
             <div className="mt-12 mb-8 p-6 bg-zinc-50 border border-zinc-100 rounded-2xl text-center">
               <h3 className="font-bold text-zinc-900 text-lg mb-2">Need help?</h3>
-              <p className="text-zinc-500 text-sm mb-4">
-                Our team responds within 4 hours on Pro and Enterprise plans.
-              </p>
+              <p className="text-zinc-500 text-sm mb-4">We respond within 4 hours on Pro and Enterprise plans.</p>
               <div className="flex justify-center gap-3">
                 <a href="https://discord.gg/agentdyne" target="_blank" rel="noopener noreferrer">
-                  <Button className="rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold">
-                    Join Discord
-                  </Button>
+                  <Button className="rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold">Join Discord</Button>
                 </a>
                 <Link href="/contact">
-                  <Button variant="outline" className="rounded-xl border-zinc-200 font-semibold">
-                    Contact Support
-                  </Button>
+                  <Button variant="outline" className="rounded-xl border-zinc-200 font-semibold">Contact Support</Button>
                 </Link>
               </div>
             </div>
