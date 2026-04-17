@@ -9,9 +9,9 @@ import {
   FlaskConical, Scale, Settings2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { Navbar } from "@/components/layout/navbar"
 import { Footer } from "@/components/layout/footer"
+import { useUser } from "@/hooks/use-user"
 import { formatNumber } from "@/lib/utils"
 
 const STATS = [
@@ -61,6 +61,24 @@ function FadeUp({ children, delay = 0 }: { children: React.ReactNode; delay?: nu
 }
 
 export default function HomePage() {
+  const { user, profile } = useUser()
+  const isLoggedIn = !!user
+  const currentPlan = profile?.subscription_plan
+
+  // Returns the correct CTA label + href based on plan + auth state
+  function planCta(planKey: string): { label: string; href: string } {
+    if (planKey === "Enterprise") return { label: "Contact sales", href: "/contact" }
+    if (isLoggedIn) {
+      if (currentPlan === planKey.toLowerCase())
+        return { label: "Your current plan", href: "/billing" }
+      if (planKey === "Free")
+        return { label: "Go to marketplace", href: "/marketplace" }
+      return { label: `Upgrade to ${planKey}`, href: `/billing?upgrade=${planKey.toLowerCase()}` }
+    }
+    if (planKey === "Free")    return { label: "Get started free", href: "/signup" }
+    if (planKey === "Starter") return { label: "Start free trial", href: "/signup?plan=starter" }
+    return { label: "Start Pro trial", href: "/signup?plan=pro" }
+  }
   return (
     <div className="min-h-screen bg-white">
       <Navbar />
@@ -185,39 +203,44 @@ export default function HomePage() {
               { name: "Pro",        price: "$79",    period: "/mo", calls: "10,000 calls/mo", features: ["All agents", "Priority execution", "Advanced analytics", "API access"], highlight: true, cta: "Start Pro trial" },
               { name: "Enterprise", price: "Custom", period: "",    calls: "Unlimited",        features: ["Custom SLA", "Dedicated infra", "SSO / SAML", "Custom contracts"], highlight: false, cta: "Contact sales" },
             ].map((plan, i) => (
-              <FadeUp key={plan.name} delay={i * 0.08}>
-                <div className={`rounded-2xl p-7 text-left border relative ${
+            <FadeUp key={plan.name} delay={i * 0.08}>
+            <div className={`rounded-2xl p-7 text-left border relative ${
+            plan.highlight
+            ? "bg-zinc-900 border-zinc-900 shadow-xl"
+            : "bg-white border-zinc-100"
+            }`}>
+            {plan.highlight && (
+            <div className="absolute -top-3 left-6">
+            <span className="bg-primary text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full shadow-sm">Most Popular</span>
+            </div>
+            )}
+            <p className={`font-semibold mb-2 text-sm ${plan.highlight ? "text-zinc-400" : "text-zinc-500"}`}>{plan.name}</p>
+            <div className={`text-4xl font-black mb-1 ${plan.highlight ? "text-white" : "text-zinc-900"}`}>
+            {plan.price}<span className="text-sm font-normal opacity-40">{plan.period}</span>
+            </div>
+            <p className={`text-xs mb-6 ${plan.highlight ? "text-zinc-500" : "text-zinc-400"}`}>{plan.calls}</p>
+            <ul className="space-y-2.5 mb-7">
+            {plan.features.map(f => (
+            <li key={f} className={`flex items-center gap-2 text-sm ${plan.highlight ? "text-zinc-300" : "text-zinc-600"}`}>
+            <CheckCircle className="h-4 w-4 flex-shrink-0 text-green-400" />
+            {f}
+            </li>
+            ))}
+            </ul>
+            {(() => {
+            const { label, href } = planCta(plan.name)
+            return (
+            <Link href={href}>
+            <Button className={`w-full rounded-xl font-semibold ${
                   plan.highlight
-                    ? "bg-zinc-900 border-zinc-900 shadow-xl"
-                    : "bg-white border-zinc-100"
-                }`}>
-                  {plan.highlight && (
-                    <div className="absolute -top-3 left-6">
-                      <span className="bg-primary text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full shadow-sm">Most Popular</span>
-                    </div>
-                  )}
-                  <p className={`font-semibold mb-2 text-sm ${plan.highlight ? "text-zinc-400" : "text-zinc-500"}`}>{plan.name}</p>
-                  <div className={`text-4xl font-black mb-1 ${plan.highlight ? "text-white" : "text-zinc-900"}`}>
-                    {plan.price}<span className="text-sm font-normal opacity-40">{plan.period}</span>
-                  </div>
-                  <p className={`text-xs mb-6 ${plan.highlight ? "text-zinc-500" : "text-zinc-400"}`}>{plan.calls}</p>
-                  <ul className="space-y-2.5 mb-7">
-                    {plan.features.map(f => (
-                      <li key={f} className={`flex items-center gap-2 text-sm ${plan.highlight ? "text-zinc-300" : "text-zinc-600"}`}>
-                        <CheckCircle className="h-4 w-4 flex-shrink-0 text-green-400" />
-                        {f}
-                      </li>
-                    ))}
-                  </ul>
-                  <Link href={plan.name === "Enterprise" ? "/contact" : "/signup"}>
-                    <Button className={`w-full rounded-xl font-semibold ${
-                      plan.highlight
-                        ? "bg-white text-zinc-900 hover:bg-zinc-100"
-                        : "bg-zinc-900 text-white hover:bg-zinc-700"
-                    }`}>
-                      {plan.cta}
-                    </Button>
-                  </Link>
+                  ? "bg-white text-zinc-900 hover:bg-zinc-100"
+                    : "bg-zinc-900 text-white hover:bg-zinc-700"
+                  }`}>
+                      {label}
+                      </Button>
+                      </Link>
+                    )
+                  })()}
                 </div>
               </FadeUp>
             ))}

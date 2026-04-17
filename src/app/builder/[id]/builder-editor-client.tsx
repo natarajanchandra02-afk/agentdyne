@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useCallback } from "react"
-import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -10,12 +9,18 @@ import { motion, AnimatePresence } from "framer-motion"
 import {
   Save, Play, Send, ArrowLeft, Loader2, Check, X,
   Brain, DollarSign, LayoutDashboard,
-  Search, Filter, CheckSquare, Square,
+  Search, CheckSquare, Square,
   Plus, Trash2, Info, ChevronDown, ChevronUp,
   Zap, Settings2, Database, Puzzle, Bot,
-  FileText, Link2 as LinkIcon, Upload, BookOpen,
+  FileText, Link2, Upload, BookOpen,
   Globe, Lock,
 } from "lucide-react"
+// NOTE: lucide-react exports a "Link" icon, but we also import the Next.js
+// <Link> component below. To avoid the duplicate-identifier webpack error we
+// import the lucide icon as "Link2" (already the canonical lucide name for
+// the chain-link icon). Any JSX that previously used <Link /> for the icon
+// now uses <Link2 />.
+import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -72,13 +77,13 @@ const schema = z.object({
 type FormData = z.infer<typeof schema>
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Small helpers
+// Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 function statusVariant(status: string): "success" | "warning" | "secondary" | "destructive" {
-  if (status === "active")          return "success"
-  if (status === "pending_review")  return "warning"
-  if (status === "suspended")       return "destructive"
+  if (status === "active")         return "success"
+  if (status === "pending_review") return "warning"
+  if (status === "suspended")      return "destructive"
   return "secondary"
 }
 
@@ -96,19 +101,15 @@ function SectionTitle({ icon: Icon, title, subtitle }: { icon: any; title: strin
   )
 }
 
-function Divider() {
-  return <div className="border-t border-zinc-100 my-8" />
-}
+function Divider() { return <div className="border-t border-zinc-100 my-8" /> }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MCP Tool Picker
 // ─────────────────────────────────────────────────────────────────────────────
 
-function MCPPicker({
-  selected, onChange,
-}: { selected: string[]; onChange: (ids: string[]) => void }) {
-  const [q,         setQ]      = useState("")
-  const [catFilter, setCat]    = useState<MCPCategory | "all">("all")
+function MCPPicker({ selected, onChange }: { selected: string[]; onChange: (ids: string[]) => void }) {
+  const [q,         setQ]       = useState("")
+  const [catFilter, setCat]     = useState<MCPCategory | "all">("all")
   const [showAll,   setShowAll] = useState(false)
 
   const filtered = MCP_SERVERS.filter(s => {
@@ -118,22 +119,17 @@ function MCPPicker({
   })
 
   const visible = showAll ? filtered : filtered.slice(0, 12)
-
-  const toggle = (id: string) => {
+  const toggle  = (id: string) =>
     onChange(selected.includes(id) ? selected.filter(s => s !== id) : [...selected, id])
-  }
 
   return (
     <div className="space-y-4">
       <div className="flex gap-2">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-400" />
-          <Input
-            value={q}
-            onChange={e => setQ(e.target.value)}
+          <Input value={q} onChange={e => setQ(e.target.value)}
             placeholder="Search integrations…"
-            className="pl-9 h-9 rounded-xl border-zinc-200 text-sm"
-          />
+            className="pl-9 h-9 rounded-xl border-zinc-200 text-sm" />
         </div>
         <Select value={catFilter} onValueChange={v => setCat(v as any)}>
           <SelectTrigger className="h-9 w-44 rounded-xl border-zinc-200 text-sm">
@@ -181,7 +177,9 @@ function MCPPicker({
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-semibold text-zinc-900 truncate">{srv.name}</span>
-                  {srv.verified && <span className="text-[9px] font-bold bg-green-50 text-green-700 px-1.5 py-0.5 rounded-full flex-shrink-0">✓</span>}
+                  {srv.verified && (
+                    <span className="text-[9px] font-bold bg-green-50 text-green-700 px-1.5 py-0.5 rounded-full flex-shrink-0">✓</span>
+                  )}
                 </div>
                 <p className="text-[11px] text-zinc-400 mt-0.5 line-clamp-1">{srv.description}</p>
               </div>
@@ -215,9 +213,7 @@ function MCPPicker({
 
 type KnowledgeItem = { id: string; type: "text" | "url"; label: string; content: string }
 
-function KnowledgeSection({
-  items, onChange,
-}: { items: KnowledgeItem[]; onChange: (items: KnowledgeItem[]) => void }) {
+function KnowledgeSection({ items, onChange }: { items: KnowledgeItem[]; onChange: (items: KnowledgeItem[]) => void }) {
   const [adding, setAdding] = useState<"text" | "url" | null>(null)
   const [draft,  setDraft]  = useState({ label: "", content: "" })
 
@@ -239,11 +235,11 @@ function KnowledgeSection({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start gap-3 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-xs text-amber-700">
+      <div className="flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-xs text-blue-700">
         <Info className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
         <span>
-          <strong>Vector search is enabled.</strong> Add text chunks or URLs — they are embedded
-          and injected into the agent&apos;s context at runtime via semantic search (RAG).
+          <strong>RAG is enabled.</strong> Add text chunks or URLs — they are embedded and injected
+          into the agent's context at runtime via semantic search. Full file upload coming in v1.1.
         </span>
       </div>
 
@@ -254,10 +250,11 @@ function KnowledgeSection({
         </button>
         <button type="button" onClick={() => setAdding("url")}
           className="flex items-center gap-2 px-3 py-2 rounded-xl border border-zinc-200 text-xs font-semibold text-zinc-700 hover:border-primary/30 hover:bg-primary/5 transition-all">
-          <LinkIcon className="h-3.5 w-3.5" /> Add URL
+          {/* Use Link2 (chain icon) here — NOT the Next.js <Link> component */}
+          <Link2 className="h-3.5 w-3.5" /> Add URL
         </button>
-        <button type="button"
-          className="flex items-center gap-2 px-3 py-2 rounded-xl border border-dashed border-zinc-200 text-xs font-semibold text-zinc-400 cursor-not-allowed">
+        <button type="button" disabled
+          className="flex items-center gap-2 px-3 py-2 rounded-xl border border-dashed border-zinc-200 text-xs font-semibold text-zinc-300 cursor-not-allowed">
           <Upload className="h-3.5 w-3.5" /> Upload file (soon)
         </button>
       </div>
@@ -307,13 +304,18 @@ function KnowledgeSection({
       {items.length > 0 ? (
         <div className="space-y-2">
           {items.map(item => (
-            <div key={item.id} className="flex items-start gap-3 bg-white border border-zinc-100 rounded-xl p-3">
+            <div key={item.id}
+              className="flex items-start gap-3 bg-white border border-zinc-100 rounded-xl p-3">
               <div className="w-7 h-7 rounded-lg bg-zinc-50 flex items-center justify-center flex-shrink-0 mt-0.5">
-                {item.type === "url" ? <Globe className="h-3.5 w-3.5 text-zinc-400" /> : <BookOpen className="h-3.5 w-3.5 text-zinc-400" />}
+                {item.type === "url"
+                  ? <Globe className="h-3.5 w-3.5 text-zinc-400" />
+                  : <BookOpen className="h-3.5 w-3.5 text-zinc-400" />}
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-zinc-900 truncate">{item.label}</p>
-                <p className="text-xs text-zinc-400 truncate mt-0.5">{item.content.slice(0, 80)}{item.content.length > 80 ? "…" : ""}</p>
+                <p className="text-xs text-zinc-400 truncate mt-0.5">
+                  {item.content.slice(0, 80)}{item.content.length > 80 ? "…" : ""}
+                </p>
               </div>
               <button type="button" onClick={() => remove(item.id)}
                 className="text-zinc-400 hover:text-red-500 transition-colors p-1 flex-shrink-0">
@@ -341,13 +343,12 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
   const router   = useRouter()
   const supabase = createClient()
 
-  const [saving,      setSaving]      = useState(false)
-  const [submitting,  setSubmitting]  = useState(false)
-  const [mcpSelected, setMcpSelected] = useState<string[]>(() =>
+  const [saving,       setSaving]       = useState(false)
+  const [submitting,   setSubmitting]   = useState(false)
+  const [mcpSelected,  setMcpSelected]  = useState<string[]>(() =>
     Array.isArray(agent.mcp_server_ids) ? agent.mcp_server_ids : []
   )
   const [knowledgeItems, setKnowledgeItems] = useState<KnowledgeItem[]>([])
-
   const [testInput,  setTestInput]  = useState('{"input": "Hello, what can you do?"}')
   const [testOutput, setTestOutput] = useState("")
   const [testing,    setTesting]    = useState(false)
@@ -382,6 +383,7 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
   const systemPrompt = watch("system_prompt") ?? ""
   const isPublic     = watch("is_public")
 
+  // ── Save ─────────────────────────────────────────────────────────────────
   const onSave = async (data: FormData) => {
     setSaving(true)
     try {
@@ -421,13 +423,14 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
     }
   }
 
+  // ── Submit for review ─────────────────────────────────────────────────────
   const submitForReview = async () => {
     setSubmitting(true)
     try {
       const { error } = await supabase.from("agents")
         .update({ status: "pending_review" }).eq("id", agent.id)
       if (error) throw error
-      toast.success("Submitted for review! We'll respond within 24h.")
+      toast.success("Submitted for review! We'll respond within 24 hours.")
       router.push("/my-agents")
     } catch (e: any) {
       toast.error(e.message || "Submission failed")
@@ -436,6 +439,7 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
     }
   }
 
+  // ── Test runner ───────────────────────────────────────────────────────────
   const runTest = useCallback(async () => {
     setTesting(true)
     setTestOutput("")
@@ -446,9 +450,8 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
       try { parsedInput = JSON.parse(testInput) } catch { parsedInput = testInput }
 
       const res  = await fetch(`/api/agents/${agent.id}/execute`, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ input: parsedInput }),
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body:   JSON.stringify({ input: parsedInput }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
@@ -464,12 +467,15 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
     }
   }, [agent.id, testInput])
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // RENDER
+  // ─────────────────────────────────────────────────────────────────────────
   return (
     <div className="flex min-h-screen bg-white">
       <DashboardSidebar />
-      <div className="flex flex-1 overflow-hidden">
 
-        {/* Main scrollable editor */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* ── Main scrollable editor ────────────────────────────────────── */}
         <div className="flex-1 overflow-auto">
           <div className="max-w-3xl mx-auto px-6 py-8">
 
@@ -518,7 +524,7 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
               </div>
             </div>
 
-            {/* Form */}
+            {/* Tabs */}
             <form onSubmit={handleSubmit(onSave)}>
               <Tabs defaultValue="overview">
                 <TabsList className="mb-6 bg-zinc-50 border border-zinc-100 p-1 rounded-xl">
@@ -536,7 +542,7 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
                   </TabsTrigger>
                 </TabsList>
 
-                {/* OVERVIEW */}
+                {/* ─── OVERVIEW ──────────────────────────────────── */}
                 <TabsContent value="overview" className="space-y-6">
                   <div className="grid grid-cols-3 gap-3">
                     {[
@@ -551,7 +557,6 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
                     ))}
                   </div>
 
-                  {/* Identity */}
                   <div className="bg-white border border-zinc-100 rounded-2xl p-5 space-y-4"
                     style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
                     <SectionTitle icon={Bot} title="Agent Identity" subtitle="How your agent appears in the marketplace" />
@@ -562,7 +567,7 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
                     </div>
                     <div className="space-y-1.5">
                       <Label className="text-sm font-medium text-zinc-700">
-                        Short Description * <span className="text-zinc-400 font-normal">(shown on marketplace cards)</span>
+                        Short Description * <span className="text-zinc-400 font-normal">(marketplace cards)</span>
                       </Label>
                       <Textarea {...register("description")} rows={2}
                         className="rounded-xl border-zinc-200 text-sm resize-none" />
@@ -570,7 +575,7 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
                     </div>
                     <div className="space-y-1.5">
                       <Label className="text-sm font-medium text-zinc-700">
-                        Long Description <span className="text-zinc-400 font-normal">(detail page)</span>
+                        Long Description <span className="text-zinc-400 font-normal">(detail page — optional)</span>
                       </Label>
                       <Textarea {...register("long_description")} rows={4}
                         placeholder="Describe features, use cases, example inputs/outputs…"
@@ -606,24 +611,20 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
                     style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
                     <SectionTitle icon={Globe} title="Visibility" subtitle="Control who can discover and use this agent" />
                     <div className="flex gap-3">
-                      <button type="button" onClick={() => setValue("is_public", false)}
-                        className={cn("flex-1 p-3 rounded-xl border text-left transition-all",
-                          !isPublic ? "border-zinc-900 bg-zinc-900" : "border-zinc-200 bg-white hover:border-zinc-400")}>
-                        <div className="flex items-center gap-2 mb-1">
-                          <Lock className={cn("h-4 w-4", !isPublic ? "text-white" : "text-zinc-500")} />
-                          <span className={cn("font-bold text-sm", !isPublic ? "text-white" : "text-zinc-900")}>Private</span>
-                        </div>
-                        <p className={cn("text-xs", !isPublic ? "text-zinc-400" : "text-zinc-500")}>Only you can use this agent</p>
-                      </button>
-                      <button type="button" onClick={() => setValue("is_public", true)}
-                        className={cn("flex-1 p-3 rounded-xl border text-left transition-all",
-                          isPublic ? "border-zinc-900 bg-zinc-900" : "border-zinc-200 bg-white hover:border-zinc-400")}>
-                        <div className="flex items-center gap-2 mb-1">
-                          <Globe className={cn("h-4 w-4", isPublic ? "text-white" : "text-zinc-500")} />
-                          <span className={cn("font-bold text-sm", isPublic ? "text-white" : "text-zinc-900")}>Public</span>
-                        </div>
-                        <p className={cn("text-xs", isPublic ? "text-zinc-400" : "text-zinc-500")}>Listed on the marketplace</p>
-                      </button>
+                      {[
+                        { val: false, icon: Lock,  label: "Private", sub: "Only you can use this agent"     },
+                        { val: true,  icon: Globe, label: "Public",  sub: "Listed on the marketplace" },
+                      ].map(opt => (
+                        <button key={String(opt.val)} type="button" onClick={() => setValue("is_public", opt.val)}
+                          className={cn("flex-1 p-3 rounded-xl border text-left transition-all",
+                            isPublic === opt.val ? "border-zinc-900 bg-zinc-900" : "border-zinc-200 bg-white hover:border-zinc-400")}>
+                          <div className="flex items-center gap-2 mb-1">
+                            <opt.icon className={cn("h-4 w-4", isPublic === opt.val ? "text-white" : "text-zinc-500")} />
+                            <span className={cn("font-bold text-sm", isPublic === opt.val ? "text-white" : "text-zinc-900")}>{opt.label}</span>
+                          </div>
+                          <p className={cn("text-xs", isPublic === opt.val ? "text-zinc-400" : "text-zinc-500")}>{opt.sub}</p>
+                        </button>
+                      ))}
                     </div>
                   </div>
 
@@ -635,11 +636,13 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
                       className="rounded-xl border-zinc-200 font-mono text-xs resize-none"
                       placeholder={"Overview\n--------\nThis agent takes... and returns...\n\nInput format\n------------\n{ input: \"your text\" }"}
                     />
+                    {errors.documentation && <p className="text-xs text-red-500">{errors.documentation.message}</p>}
                   </div>
                 </TabsContent>
 
-                {/* BEHAVIOR */}
+                {/* ─── BEHAVIOR ──────────────────────────────────── */}
                 <TabsContent value="behavior" className="space-y-6">
+                  {/* System prompt */}
                   <div className="bg-white border border-zinc-100 rounded-2xl p-5"
                     style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
                     <div className="flex items-center justify-between mb-4">
@@ -657,9 +660,10 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
 
                   <Divider />
 
+                  {/* Model */}
                   <div className="bg-white border border-zinc-100 rounded-2xl p-5"
                     style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-                    <SectionTitle icon={Zap} title="Model" subtitle="Choose the AI model and tune runtime parameters" />
+                    <SectionTitle icon={Zap} title="Model & Parameters" subtitle="Choose the AI model and tune runtime settings" />
                     <div className="space-y-4">
                       <div className="space-y-1.5">
                         <Label className="text-sm font-medium text-zinc-700">AI Model</Label>
@@ -695,57 +699,59 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
 
                   <Divider />
 
+                  {/* Knowledge / RAG */}
                   <div className="bg-white border border-zinc-100 rounded-2xl p-5"
                     style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-                    <SectionTitle icon={Database} title="Knowledge (RAG)"
+                    <SectionTitle icon={Database}
+                      title="Knowledge Base (RAG)"
                       subtitle="Ground your agent in custom facts — text chunks and URLs are embedded and retrieved at runtime" />
                     <KnowledgeSection items={knowledgeItems} onChange={setKnowledgeItems} />
                   </div>
 
                   <Divider />
 
+                  {/* MCP Tools */}
                   <div className="bg-white border border-zinc-100 rounded-2xl p-5"
                     style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-                    <SectionTitle icon={Puzzle} title="MCP Tools"
-                      subtitle={`${mcpSelected.length} integration${mcpSelected.length !== 1 ? "s" : ""} connected`} />
+                    <SectionTitle icon={Puzzle}
+                      title="MCP Tools & Integrations"
+                      subtitle={`${mcpSelected.length} integration${mcpSelected.length !== 1 ? "s" : ""} connected — gives your agent real-world capabilities`} />
                     <MCPPicker selected={mcpSelected} onChange={setMcpSelected} />
                   </div>
                 </TabsContent>
 
-                {/* MONETIZATION */}
+                {/* ─── MONETIZATION ──────────────────────────────── */}
                 <TabsContent value="monetization" className="space-y-6">
                   <div className="bg-white border border-zinc-100 rounded-2xl p-5"
                     style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-                    <SectionTitle icon={DollarSign} title="Pricing Model"
-                      subtitle="Choose how users pay to use your agent" />
+                    <SectionTitle icon={DollarSign} title="Pricing Model" subtitle="Choose how users pay to use your agent" />
                     <div className="grid grid-cols-2 gap-3 mb-5">
                       {([
-                        { key: "free",         label: "Free",         sub: "No cost to users" },
+                        { key: "free",         label: "Free",         sub: "No cost — platform covers inference" },
                         { key: "per_call",     label: "Pay per Call", sub: "Charge per execution, you earn 80%" },
-                        { key: "subscription", label: "Subscription", sub: "Monthly recurring fee, you earn 80%" },
-                        { key: "freemium",     label: "Freemium",     sub: "Free tier + paid calls beyond quota" },
+                        { key: "subscription", label: "Subscription", sub: "Monthly recurring, you earn 80%"    },
+                        { key: "freemium",     label: "Freemium",     sub: "Free tier + paid calls above quota" },
                       ] as const).map(p => (
                         <button key={p.key} type="button" onClick={() => setValue("pricing_model", p.key)}
-                          className={cn(
-                            "p-4 rounded-xl border text-left transition-all",
-                            pricingModel === p.key ? "border-zinc-900 bg-zinc-900" : "border-zinc-200 bg-white hover:border-zinc-400"
-                          )}>
+                          className={cn("p-4 rounded-xl border text-left transition-all",
+                            pricingModel === p.key ? "border-zinc-900 bg-zinc-900" : "border-zinc-200 bg-white hover:border-zinc-400")}>
                           <p className={cn("font-bold text-sm mb-0.5", pricingModel === p.key ? "text-white" : "text-zinc-900")}>{p.label}</p>
-                          <p className={cn("text-xs leading-relaxed", pricingModel === p.key ? "text-zinc-400" : "text-zinc-500")}>{p.sub}</p>
+                          <p className={cn("text-xs", pricingModel === p.key ? "text-zinc-400" : "text-zinc-500")}>{p.sub}</p>
                         </button>
                       ))}
                     </div>
+
                     {(pricingModel === "per_call" || pricingModel === "freemium") && (
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1.5">
                           <Label className="text-sm font-medium text-zinc-700">Price per Call (USD)</Label>
-                          <Input type="number" step="0.0001" min="0"
+                          <Input type="number" step="0.0001" min="0" placeholder="0.0100"
                             className="rounded-xl border-zinc-200 h-10" {...register("price_per_call")} />
-                          <p className="text-xs text-zinc-400">You receive 80% of this amount</p>
+                          <p className="text-xs text-zinc-400">You receive 80 % of this amount</p>
                         </div>
                         <div className="space-y-1.5">
                           <Label className="text-sm font-medium text-zinc-700">Free calls/month</Label>
-                          <Input type="number" min="0"
+                          <Input type="number" min="0" placeholder="10"
                             className="rounded-xl border-zinc-200 h-10" {...register("free_calls_per_month")} />
                         </div>
                       </div>
@@ -754,13 +760,13 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1.5">
                           <Label className="text-sm font-medium text-zinc-700">Monthly Price (USD)</Label>
-                          <Input type="number" step="0.01" min="0"
+                          <Input type="number" step="0.01" min="0" placeholder="9.99"
                             className="rounded-xl border-zinc-200 h-10" {...register("subscription_price_monthly")} />
-                          <p className="text-xs text-zinc-400">You receive 80% of this amount</p>
+                          <p className="text-xs text-zinc-400">You receive 80 % of this amount</p>
                         </div>
                         <div className="space-y-1.5">
                           <Label className="text-sm font-medium text-zinc-700">Free trial calls/month</Label>
-                          <Input type="number" min="0"
+                          <Input type="number" min="0" placeholder="10"
                             className="rounded-xl border-zinc-200 h-10" {...register("free_calls_per_month")} />
                         </div>
                       </div>
@@ -771,14 +777,15 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
                     <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-5">
                       <p className="text-sm font-semibold text-zinc-900 mb-1">Revenue estimate</p>
                       <p className="text-xs text-zinc-500 leading-relaxed">
-                        At <strong>1,000 runs/month</strong> with your current pricing,
-                        you&apos;d earn approximately{" "}
+                        At <strong>1,000 runs/month</strong>:{" "}
                         <strong className="text-primary">
                           {pricingModel === "per_call" || pricingModel === "freemium"
                             ? `$${((watch("price_per_call") || 0) * 1000 * 0.8).toFixed(2)}/mo`
-                            : `$${((watch("subscription_price_monthly") || 0) * 0.8).toFixed(2)}/mo per subscriber`}
+                            : pricingModel === "subscription"
+                            ? `$${((watch("subscription_price_monthly") || 0) * 0.8).toFixed(2)}/mo per subscriber`
+                            : "$0"}
                         </strong>.
-                        Payouts via Stripe Connect monthly.
+                        Payouts via Stripe Connect, monthly.
                       </p>
                     </div>
                   )}
@@ -804,7 +811,7 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
           </div>
         </div>
 
-        {/* Pinned Test Panel */}
+        {/* ── Pinned Test Panel ──────────────────────────────────────────── */}
         <div className="w-80 flex-shrink-0 border-l border-zinc-100 bg-zinc-50 flex flex-col sticky top-0 h-screen overflow-hidden">
           <div className="px-4 py-3.5 border-b border-zinc-100 bg-white">
             <div className="flex items-center gap-2">
@@ -814,22 +821,28 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
               <p className="text-sm font-semibold text-zinc-900">Test Playground</p>
             </div>
           </div>
+
           <div className="flex-1 overflow-auto p-4 space-y-3">
             {agent.status !== "active" && (
               <div className="bg-amber-50 border border-amber-100 rounded-xl px-3 py-2 text-xs text-amber-700 flex items-center gap-2">
                 <Info className="h-3.5 w-3.5 flex-shrink-0" />
-                Agent must be active to run.
+                Agent must be active to run. Save and submit for review first.
               </div>
             )}
+
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Input JSON</label>
-              <Textarea value={testInput} onChange={e => setTestInput(e.target.value)} rows={6}
-                className="rounded-xl border-zinc-200 bg-white font-mono text-xs resize-none" />
+              <Textarea value={testInput} onChange={e => setTestInput(e.target.value)}
+                rows={6} className="rounded-xl border-zinc-200 bg-white font-mono text-xs resize-none" />
             </div>
+
             <Button type="button" onClick={runTest} disabled={testing}
               className="w-full rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold gap-2">
-              {testing ? <><Loader2 className="h-4 w-4 animate-spin" /> Running…</> : <><Play className="h-4 w-4" /> Run</>}
+              {testing
+                ? <><Loader2 className="h-4 w-4 animate-spin" /> Running…</>
+                : <><Play className="h-4 w-4" /> Run</>}
             </Button>
+
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Output</label>
               <div className={cn(
@@ -839,13 +852,14 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
                 {testing ? "Running…" : testOutput || <span className="text-zinc-300">Output will appear here…</span>}
               </div>
             </div>
+
             {testTrace && (
               <div className="rounded-xl border border-zinc-100 bg-white px-3 py-2.5 space-y-1">
                 <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-2">Execution trace</p>
                 {[
                   { label: "Latency",        value: `${testTrace.latencyMs}ms` },
-                  { label: "Tokens in",      value: testTrace.tokens.input.toString() },
-                  { label: "Tokens out",     value: testTrace.tokens.output.toString() },
+                  { label: "Tokens in",      value: String(testTrace.tokens.input) },
+                  { label: "Tokens out",     value: String(testTrace.tokens.output) },
                   { label: "Estimated cost", value: `$${testTrace.cost.toFixed(6)}` },
                 ].map(r => (
                   <div key={r.label} className="flex justify-between text-xs">
@@ -856,10 +870,11 @@ export function BuilderEditorClient({ agent }: { agent: any }) {
               </div>
             )}
           </div>
+
           <div className="p-4 border-t border-zinc-100 space-y-2">
             <Link href="/docs#execute" target="_blank"
               className="flex items-center gap-2 text-xs text-zinc-400 hover:text-primary transition-colors">
-              <Settings2 className="h-3.5 w-3.5" /> API docs & SDK
+              <Settings2 className="h-3.5 w-3.5" /> API docs &amp; SDK
             </Link>
             <Link href="/my-agents"
               className="flex items-center gap-2 text-xs text-zinc-400 hover:text-primary transition-colors">

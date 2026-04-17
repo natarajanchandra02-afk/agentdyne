@@ -1,21 +1,29 @@
 export const runtime = 'edge'
 
+/**
+ * GET /api/registry/[id]
+ *
+ * Returns the full registry entry for a single agent, including:
+ *   - Schema (input/output types, capability tags)
+ *   - Quality score breakdown
+ *   - Version history (from agent_registry_versions table)
+ *   - Economics & performance
+ *   - MCP dependencies
+ *   - Execution endpoint
+ *
+ * Used by:
+ *   - Agent Graph Engine: validate a node before scheduling it
+ *   - Planner Agent: inspect schema before composing pipelines
+ *   - External developers: programmatic capability discovery
+ *
+ * Query params:
+ *   version — specific version string (e.g. "1.2.0"). Omit for latest.
+ */
+
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { apiRateLimit } from "@/lib/rate-limit"
 
-/**
- * GET /api/registry/[id]
- *
- * Full machine-readable schema for a specific agent.
- * Intended for:
- *   - Graph Engine node validation (does this agent accept my output?)
- *   - SDK client auto-configuration
- *   - Developer tooling / type generation
- *
- * Returns full input_schema + output_schema + capability metadata.
- * Different from /api/agents/[id] which is the marketplace-facing endpoint.
- */
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -24,128 +32,165 @@ export async function GET(
   if (limited) return limited
 
   try {
-    const { id } = await params
+    const { id }   = await params
     const supabase = await createClient()
 
+    // Validate UUID format
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) {
       return NextResponse.json({ error: "Invalid agent id" }, { status: 400 })
     }
 
-    const { data: agent, error } = await supabase
+    const { searchParams }  = new URL(req.url)
+    const requestedVersion  = searchParams.get("version")
+
+    // Load agent with seller profile and score
+    const { data: agent, error: agentErr } = await supabase
       .from("agents")
       .select(`
-        id, name, slug, description, long_description,
-        category, tags, status, version,
-        capability_tags, input_types, output_types, languages, compliance_tags,
-        input_schema, output_schema,
-        pricing_model, price_per_call, subscription_price_monthly, free_calls_per_month,
-        model_name, average_latency_ms, average_rating, total_executions,
-        composite_score, is_verified, created_at, updated_at,
-        profiles!seller_id(id, full_name, username, is_verified)
+        *,
+        profiles!seller_id(id, full_name, username, avatar_url, is_verified),
+        agent_scores(*)
       `)
       .eq("id",     id)
       .eq("status", "active")
       .single()
 
-    if (error || !agent) {
+    if (agentErr || !agent) {
       return NextResponse.json({ error: "Agent not found" }, { status: 404 })
     }
 
-    // Fetch score details if available
-    const { data: scores } = await supabase
-      .from("agent_scores")
-      .select("accuracy_score, latency_score, cost_score, reliability_score, popularity_score, global_rank, is_top_rated, is_fastest")
-      .eq("agent_id", id)
-      .single()
+    // Optionally load a specific version snapshot
+    let snapshot: any = null
+    if (requestedVersion) {
+      const { data: versionRow } = await supabase
+        .from("agent_registry_versions")
+        .select("snapshot, created_at, changelog")
+        .eq("agent_id", id)
+        .eq("version",  requestedVersion)
+        .single()
+      snapshot = versionRow
+    }
 
-    // Fetch recent version snapshots from registry_versions table (if exists)
+    // Version history (last 10)
     const { data: versions } = await supabase
       .from("agent_registry_versions")
-      .select("version, changelog, created_at")
+      .select("version, created_at, changelog")
       .eq("agent_id", id)
       .order("created_at", { ascending: false })
-      .limit(5)
+      .limit(10)
 
-    const appBase = process.env.NEXT_PUBLIC_APP_URL || "https://agentdyne.com"
-    const seller  = (agent as any).profiles
+    const score  = (agent as any).agent_scores?.[0] ?? null
+    const seller = (agent as any).profiles ?? {}
+    const src    = snapshot?.snapshot ?? agent   // use snapshot if specific version requested
 
     return NextResponse.json({
-      schema_version: "1.1",
-      id:             agent.id,
-      name:           agent.name,
-      slug:           agent.slug,
-      description:    agent.description,
-      long_description: agent.long_description,
-      version:        agent.version ?? "1.0.0",
-      status:         agent.status,
-      is_verified:    agent.is_verified,
+      // Identity
+      id:          agent.id,
+      name:        src.name        ?? agent.name,
+      slug:        src.slug        ?? agent.slug,
+      description: src.description ?? agent.description,
+      category:    src.category    ?? agent.category,
 
-      // Capability metadata (machine-readable)
-      capabilities: {
-        tags:            (agent as any).capability_tags ?? [],
-        input_types:     (agent as any).input_types     ?? ["text"],
-        output_types:    (agent as any).output_types    ?? ["text"],
-        languages:       (agent as any).languages       ?? ["en"],
-        compliance_tags: (agent as any).compliance_tags ?? [],
-        category:        agent.category,
+      // Version
+      version:           agent.version ?? "1.0.0",
+      requested_version: requestedVersion ?? "latest",
+      snapshot_date:     snapshot?.created_at ?? null,
+
+      // Schema — critical for Graph Engine composition
+      schema: {
+        input:        agent.input_schema   ?? { type: "object" },
+        output:       agent.output_schema  ?? { type: "object" },
+        input_types:  agent.input_types    ?? ["text"],
+        output_types: agent.output_types   ?? ["text"],
+        languages:    agent.languages      ?? ["en"],
       },
 
-      // Schema (JSON Schema format for automatic validation)
-      input_schema:  (agent as any).input_schema  ?? { type: "object", properties: { input: { type: "string" } } },
-      output_schema: (agent as any).output_schema ?? { type: "object", properties: { output: { type: "string" } } },
+      // Capabilities
+      capabilities:    agent.capability_tags  ?? [],
+      compliance_tags: agent.compliance_tags  ?? [],
+      mcp_tools:       agent.mcp_server_ids   ?? [],
+      has_rag:         !!agent.knowledge_base_id,
 
-      // Quality signals
-      quality: {
-        composite_score:   (agent as any).composite_score   ?? 0,
-        accuracy_score:    scores?.accuracy_score   ?? null,
-        latency_score:     scores?.latency_score    ?? null,
-        cost_score:        scores?.cost_score       ?? null,
-        reliability_score: scores?.reliability_score ?? null,
-        global_rank:       scores?.global_rank      ?? null,
-        is_top_rated:      scores?.is_top_rated     ?? false,
-        is_fastest:        scores?.is_fastest        ?? false,
-        total_executions:  agent.total_executions,
-        average_rating:    agent.average_rating,
+      // Quality
+      quality: score ? {
+        composite:    +Number(score.composite_score).toFixed(1),
+        accuracy:     +Number(score.accuracy_score).toFixed(1),
+        reliability:  +Number(score.reliability_score).toFixed(1),
+        latency:      +Number(score.latency_score).toFixed(1),
+        cost:         +Number(score.cost_score).toFixed(1),
+        popularity:   +Number(score.popularity_score).toFixed(1),
+        grade:        scoreToGrade(Number(score.composite_score)),
+        badges: {
+          top_rated:    score.is_top_rated,
+          fastest:      score.is_fastest,
+          cheapest:     score.is_cheapest,
+          most_reliable:score.is_most_reliable,
+        },
+        ranks:       { category: score.category_rank, global: score.global_rank },
+        sample_size: score.sample_size,
+        computed_at: score.computed_at,
+      } : {
+        composite: 0, grade: "F",
+        note: `Needs ${Math.max(0, 10 - (agent.total_executions ?? 0))} more executions to generate a score`,
       },
 
       // Economics
-      pricing: {
-        model:             agent.pricing_model,
-        price_per_call:    agent.price_per_call,
-        monthly_usd:       agent.subscription_price_monthly,
+      economics: {
+        pricing_model:        agent.pricing_model,
+        price_per_call_usd:   agent.price_per_call,
+        subscription_monthly: agent.subscription_price_monthly,
         free_calls_per_month: agent.free_calls_per_month,
       },
 
       // Performance
       performance: {
-        avg_latency_ms: agent.average_latency_ms,
-        model:          agent.model_name,
+        avg_latency_ms:        agent.average_latency_ms,
+        model_name:            agent.model_name,
+        max_tokens:            agent.max_tokens,
+        timeout_seconds:       agent.timeout_seconds,
+        total_executions:      agent.total_executions,
+        successful_executions: agent.successful_executions,
+        success_rate: (agent.total_executions ?? 0) > 0
+          ? +(((agent.successful_executions ?? 0) / (agent.total_executions ?? 1)) * 100).toFixed(1)
+          : null,
       },
 
       // Seller
-      seller: seller ? {
+      seller: {
         id:          seller.id,
         name:        seller.full_name,
         username:    seller.username,
+        avatar_url:  seller.avatar_url,
         is_verified: seller.is_verified,
-      } : null,
-
-      // Integration endpoints
-      endpoints: {
-        execute:    `${appBase}/api/agents/${agent.id}/execute`,
-        marketplace:`${appBase}/marketplace/${agent.id}`,
-        registry:   `${appBase}/api/registry/${agent.id}`,
       },
 
       // Version history
-      versions: versions ?? [],
+      version_history: (versions ?? []).map((v: any) => ({
+        version:    v.version,
+        published:  v.created_at,
+        changelog:  v.changelog,
+      })),
 
-      // Timestamps
-      created_at: agent.created_at,
-      updated_at: agent.updated_at,
+      // Execution endpoints
+      endpoints: {
+        execute:    `/api/agents/${id}/execute`,
+        score:      `/api/agents/${id}/score`,
+        reviews:    `/api/agents/${id}/reviews`,
+        registry:   `/api/registry/${id}`,
+        marketplace:`/marketplace/${id}`,
+      },
     })
   } catch (err: any) {
     console.error("GET /api/registry/[id]:", err)
-    return NextResponse.json({ error: "Registry lookup failed" }, { status: 500 })
+    return NextResponse.json({ error: err.message }, { status: 500 })
   }
+}
+
+function scoreToGrade(score: number): string {
+  if (score >= 90) return "S"
+  if (score >= 80) return "A"
+  if (score >= 70) return "B"
+  if (score >= 60) return "C"
+  if (score >= 40) return "D"
+  return "F"
 }

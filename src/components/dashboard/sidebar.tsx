@@ -1,13 +1,13 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
 import {
   LayoutDashboard, Bot, BarChart3, CreditCard, Key,
   Settings, Store, ShieldCheck, LogOut, Zap, ChevronRight,
-  HelpCircle, Trophy, Layers,
+  HelpCircle, Trophy, Layers, ChevronLeft, Menu, X,
 } from "lucide-react"
 import { cn, getInitials } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -16,26 +16,23 @@ import { Badge } from "@/components/ui/badge"
 import { useUser } from "@/hooks/use-user"
 
 const MAIN_NAV = [
-  { href: "/dashboard",   icon: LayoutDashboard, label: "Overview"     },
-  { href: "/my-agents",   icon: Bot,             label: "My Agents"    },
-  { href: "/pipelines",   icon: Layers,          label: "Pipelines"    },
-  { href: "/analytics",   icon: BarChart3,        label: "Analytics"    },
-  { href: "/api-keys",    icon: Key,              label: "API Keys"     },
-  { href: "/leaderboard", icon: Trophy,            label: "Leaderboard"  },
+  { href: "/dashboard",   icon: LayoutDashboard, label: "Overview"    },
+  { href: "/my-agents",   icon: Bot,             label: "My Agents"   },
+  { href: "/pipelines",   icon: Layers,          label: "Pipelines"   },
+  { href: "/analytics",   icon: BarChart3,       label: "Analytics"   },
+  { href: "/api-keys",    icon: Key,             label: "API Keys"    },
+  { href: "/leaderboard", icon: Trophy,          label: "Leaderboard" },
 ]
 
 const MONEY_NAV = [
   { href: "/billing", icon: CreditCard, label: "Billing & Plans" },
-  { href: "/seller",  icon: Store,      label: "Seller Portal", badge: "Earn" },
+  { href: "/seller",  icon: Store,      label: "Seller Portal",  badge: "Earn" },
 ]
 
-const ADMIN_NAV = [
-  { href: "/admin", icon: ShieldCheck, label: "Admin Panel" },
-]
-
+const ADMIN_NAV  = [{ href: "/admin",    icon: ShieldCheck, label: "Admin Panel" }]
 const BOTTOM_NAV = [
   { href: "/settings", icon: Settings,   label: "Settings" },
-  { href: "/docs",     icon: HelpCircle, label: "Docs"     },
+  { href: "/docs",     icon: HelpCircle, label: "Docs" },
 ]
 
 function NavItem({
@@ -69,37 +66,31 @@ export function DashboardSidebar() {
   const pathname     = usePathname()
   const router       = useRouter()
   const { user, profile, loading: authLoading } = useUser()
-  const [signingOut, setSigningOut] = useState(false)
+  const [signingOut,  setSigningOut]  = useState(false)
+  const [mobileOpen,  setMobileOpen]  = useState(false)
 
-  /**
-   * Server-side sign-out — same pattern as Navbar.
-   * Clears httpOnly session cookies server-side so middleware stops seeing the session.
-   */
+  // Close mobile menu on navigation
+  useEffect(() => { setMobileOpen(false) }, [pathname])
+
   const signOut = async () => {
     if (signingOut) return
     setSigningOut(true)
-    try {
-      await fetch("/api/auth/signout", { method: "POST" })
-    } finally {
-      router.push("/login")
-      router.refresh()
-      setSigningOut(false)
-    }
+    try { await fetch("/api/auth/signout", { method: "POST" }) }
+    finally { router.push("/login"); router.refresh(); setSigningOut(false) }
   }
 
-  return (
-    <aside className="w-60 flex-shrink-0 border-r border-zinc-100 bg-white min-h-screen flex flex-col">
-
-      {/* Logo */}
-      <div className="h-14 flex items-center px-4 border-b border-zinc-100 flex-shrink-0">
-        <Link href="/">
-          <Image
-            src="/logo.png"
-            alt="AgentDyne"
-            width={120}
-            height={32}
-            className="h-7 w-auto object-contain"
-          />
+  const SidebarContent = () => (
+    <>
+      {/* Logo + back-to-site */}
+      <div className="h-14 flex items-center justify-between px-4 border-b border-zinc-100 flex-shrink-0">
+        <Link href="/" className="flex items-center gap-2 group">
+          <Image src="/logo.png" alt="AgentDyne" width={120} height={32}
+            className="h-7 w-auto object-contain" />
+        </Link>
+        {/* Back to site — subtle link */}
+        <Link href="/marketplace"
+          className="text-[11px] text-zinc-400 hover:text-primary transition-colors flex items-center gap-0.5 font-medium">
+          <ChevronLeft className="h-3 w-3" /> Site
         </Link>
       </div>
 
@@ -108,8 +99,7 @@ export function DashboardSidebar() {
         <Link href="/builder">
           <Button size="sm"
             className="w-full rounded-xl justify-start gap-2 font-semibold bg-primary hover:bg-primary/90 text-white shadow-sm">
-            <Zap className="h-3.5 w-3.5" />
-            New Agent
+            <Zap className="h-3.5 w-3.5" /> New Agent
           </Button>
         </Link>
       </div>
@@ -119,18 +109,14 @@ export function DashboardSidebar() {
         <div>
           <p className="section-header px-3 mb-2">Platform</p>
           <div className="space-y-0.5">
-            {MAIN_NAV.map(item => (
-              <NavItem key={item.href} {...item} pathname={pathname} />
-            ))}
+            {MAIN_NAV.map(item => <NavItem key={item.href} {...item} pathname={pathname} />)}
           </div>
         </div>
 
         <div>
           <p className="section-header px-3 mb-2">Monetize</p>
           <div className="space-y-0.5">
-            {MONEY_NAV.map(item => (
-              <NavItem key={item.href} {...item} pathname={pathname} />
-            ))}
+            {MONEY_NAV.map(item => <NavItem key={item.href} {...item} pathname={pathname} />)}
           </div>
         </div>
 
@@ -138,9 +124,7 @@ export function DashboardSidebar() {
           <div>
             <p className="section-header px-3 mb-2">Admin</p>
             <div className="space-y-0.5">
-              {ADMIN_NAV.map(item => (
-                <NavItem key={item.href} {...item} pathname={pathname} />
-              ))}
+              {ADMIN_NAV.map(item => <NavItem key={item.href} {...item} pathname={pathname} />)}
             </div>
           </div>
         )}
@@ -148,9 +132,7 @@ export function DashboardSidebar() {
         <div>
           <p className="section-header px-3 mb-2">General</p>
           <div className="space-y-0.5">
-            {BOTTOM_NAV.map(item => (
-              <NavItem key={item.href} {...item} pathname={pathname} />
-            ))}
+            {BOTTOM_NAV.map(item => <NavItem key={item.href} {...item} pathname={pathname} />)}
           </div>
         </div>
       </nav>
@@ -164,8 +146,7 @@ export function DashboardSidebar() {
             <div
               className="flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-zinc-50 transition-colors cursor-pointer"
               onClick={() => router.push("/settings")}
-              role="button"
-              tabIndex={0}
+              role="button" tabIndex={0}
               onKeyDown={e => e.key === "Enter" && router.push("/settings")}
             >
               <Avatar className="h-7 w-7 flex-shrink-0">
@@ -184,8 +165,7 @@ export function DashboardSidebar() {
                 onClick={e => { e.stopPropagation(); signOut() }}
                 disabled={signingOut}
                 className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-lg hover:bg-red-50"
-                aria-label="Sign out"
-                title="Sign out"
+                aria-label="Sign out" title="Sign out"
               >
                 <LogOut className="h-3.5 w-3.5 text-zinc-400 hover:text-red-500 transition-colors" />
               </button>
@@ -193,6 +173,52 @@ export function DashboardSidebar() {
           </div>
         ) : null}
       </div>
-    </aside>
+    </>
+  )
+
+  return (
+    <>
+      {/* ── Desktop sidebar ─────────────────────────────────────────────── */}
+      <aside className="hidden md:flex w-60 flex-shrink-0 border-r border-zinc-100 bg-white min-h-screen flex-col">
+        <SidebarContent />
+      </aside>
+
+      {/* ── Mobile: top bar + slide-in drawer ──────────────────────────── */}
+      <div className="md:hidden fixed top-0 inset-x-0 z-50 h-14 bg-white border-b border-zinc-100 flex items-center px-4 gap-3">
+        <button
+          onClick={() => setMobileOpen(o => !o)}
+          className="p-2 rounded-xl text-zinc-500 hover:bg-zinc-50"
+          aria-label="Open navigation menu">
+          {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+        </button>
+        <Link href="/">
+          <Image src="/logo.png" alt="AgentDyne" width={100} height={28}
+            className="h-6 w-auto object-contain" />
+        </Link>
+        <div className="flex-1" />
+        <Link href="/marketplace"
+          className="text-xs font-semibold text-zinc-400 hover:text-primary transition-colors">
+          ← Site
+        </Link>
+      </div>
+
+      {/* Mobile drawer overlay */}
+      {mobileOpen && (
+        <div
+          className="md:hidden fixed inset-0 z-40 bg-black/20 backdrop-blur-sm"
+          onClick={() => setMobileOpen(false)} />
+      )}
+
+      {/* Mobile drawer */}
+      <aside className={cn(
+        "md:hidden fixed top-0 left-0 z-50 h-screen w-60 bg-white border-r border-zinc-100 flex flex-col transition-transform duration-200",
+        mobileOpen ? "translate-x-0" : "-translate-x-full"
+      )}>
+        <SidebarContent />
+      </aside>
+
+      {/* Spacer for mobile top bar */}
+      <div className="md:hidden h-14 flex-shrink-0" />
+    </>
   )
 }
