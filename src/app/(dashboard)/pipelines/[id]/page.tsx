@@ -1,4 +1,7 @@
 "use client"
+// Required for Cloudflare Pages — all dynamic routes must run on the edge runtime.
+// Without this export, @cloudflare/next-on-pages rejects the build.
+export const runtime = 'edge'
 
 import { useState, useEffect, useCallback } from "react"
 import { useParams, useRouter } from "next/navigation"
@@ -7,7 +10,7 @@ import {
   ArrowLeft, Plus, Trash2, Play, Save, Loader2,
   Search, AlertCircle, ChevronRight, Zap,
   Bot, ArrowRight, Settings2, Globe, Lock,
-  Check, X, GripVertical, Info, RefreshCw,
+  Info,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
