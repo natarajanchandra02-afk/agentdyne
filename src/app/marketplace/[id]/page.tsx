@@ -1,7 +1,5 @@
 "use client"
-
-// NOTE: No `export const runtime = 'edge'` here — this is a client component.
-// Edge runtime declarations only apply to Server Components and Route Handlers.
+export const runtime = 'edge'
 
 import { useEffect, useState, useRef } from "react"
 import { useParams } from "next/navigation"
@@ -14,13 +12,11 @@ export default function AgentDetailPage() {
   const [data, setData] = useState<any>(null)
   const [notFound, setNotFound] = useState(false)
 
-  // Stable ref — prevents supabase from being recreated on every render
   const supabaseRef = useRef(createClient())
   const supabase    = supabaseRef.current
 
   useEffect(() => {
     if (!id) return
-
     let cancelled = false
 
     async function load() {
@@ -57,22 +53,16 @@ export default function AgentDetailPage() {
         ])
 
         if (!cancelled) {
-          setData({
-            agent,
-            reviews:          reviews ?? [],
-            user,
-            userSubscription: subscription,
-          })
+          setData({ agent, reviews: reviews ?? [], user, userSubscription: subscription })
         }
-      } catch (err) {
-        console.error("AgentDetailPage load error:", err)
+      } catch {
         if (!cancelled) setNotFound(true)
       }
     }
 
     load()
     return () => { cancelled = true }
-  }, [id]) // supabase is stable via ref — safe to omit from deps
+  }, [id])
 
   if (notFound) {
     return (
@@ -89,9 +79,7 @@ export default function AgentDetailPage() {
     return (
       <div className="pt-20 max-w-7xl mx-auto px-6 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {[...Array(3)].map((_, i) => (
-            <Skeleton key={i} className="h-64 rounded-2xl" />
-          ))}
+          {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-64 rounded-2xl" />)}
         </div>
       </div>
     )
