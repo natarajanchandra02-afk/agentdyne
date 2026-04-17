@@ -1,7 +1,9 @@
 "use client"
+export const dynamic = 'force-dynamic'
 
 import { useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Check, Zap, ArrowRight, HelpCircle, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Navbar } from "@/components/layout/navbar"

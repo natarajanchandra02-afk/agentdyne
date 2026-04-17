@@ -1,4 +1,6 @@
 "use client"
+// Prevent Next.js static prerender — builder uses client-only auth and hooks
+export const dynamic = 'force-dynamic'
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"

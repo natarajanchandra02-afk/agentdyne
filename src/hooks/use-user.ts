@@ -1,103 +1,164 @@
+/**
+ * useUser — Supabase auth hook with module-level cache.
+ *
+ * ROOT CAUSE of "infinite loading" on navigation:
+ * Each component instance calls useState(loading: true) independently.
+ * Navigation to /my-agents, /billing etc. mounted a fresh component
+ * that started from loading=true and waited for getSession() every time.
+ *
+ * FIX: Module-level cache. After the first resolution, all subsequent
+ * hook calls return the cached user instantly (loading: false).
+ * Cache is invalidated on sign-in / sign-out via onAuthStateChange.
+ */
+
 import { useState, useEffect, useRef, useCallback } from "react"
 import { createClient } from "@/lib/supabase/client"
 import type { User } from "@supabase/supabase-js"
 
-// Module-level singleton — one Supabase client for the entire app lifetime.
+// ─── Module-level singletons (survive across component mounts/unmounts) ───────
+
 let _supabase: ReturnType<typeof createClient> | null = null
 function getSupabase() {
   if (!_supabase) _supabase = createClient()
   return _supabase
 }
 
-export function useUser() {
-  const [user,    setUser]    = useState<User | null>(null)
-  const [profile, setProfile] = useState<any>(null)
-  const [loading, setLoading] = useState(true)
-  const mounted   = useRef(true)
+// Resolved cache — once set, all hook instances start with this
+let _cachedUser:     User | null = null
+let _cachedProfile:  any        = null
+let _cacheResolved:  boolean    = false   // true = we know the auth state for sure
+let _cacheLoading:   boolean    = true    // false once first resolution completes
 
-  const fetchProfile = useCallback(async (userId: string) => {
-    try {
-      const supabase = getSupabase()
-      const { data: p } = await supabase
-        .from("profiles")
-        .select("id, full_name, username, avatar_url, role, subscription_plan, is_verified")
-        .eq("id", userId)
-        .single()
-      if (mounted.current) setProfile(p)
-    } catch {
-      // Profile fetch failure is non-critical — don't block the auth flow
+// Subscribers — components that need to re-render when cache changes
+const _subscribers = new Set<() => void>()
+
+function notifySubscribers() {
+  _subscribers.forEach(fn => fn())
+}
+
+// ─── Background auth init (runs once, shared across all instances) ────────────
+
+let _initStarted = false
+
+async function initAuth() {
+  if (_initStarted) return
+  _initStarted = true
+
+  const supabase = getSupabase()
+
+  // Safety net: even if Supabase hangs, show buttons after 1.5s
+  const safetyTimer = setTimeout(() => {
+    if (_cacheLoading) {
+      _cacheLoading   = false
+      _cacheResolved  = true
+      notifySubscribers()
     }
-  }, [])
+  }, 1500)
+
+  try {
+    // FAST: read session from cookies/localStorage (no network, ~0–5ms)
+    const { data: { session } } = await supabase.auth.getSession()
+    clearTimeout(safetyTimer)
+
+    _cachedUser    = session?.user ?? null
+    _cacheLoading  = false
+    _cacheResolved = true
+    notifySubscribers()
+
+    // Load profile in background (non-blocking)
+    if (_cachedUser) {
+      loadProfile(_cachedUser.id)
+    }
+
+    // SECURE: server-validate the JWT (runs in background, ~200–500ms)
+    supabase.auth.getUser().then(({ data }) => {
+      const serverUser = data.user ?? null
+      if (serverUser?.id !== _cachedUser?.id) {
+        _cachedUser = serverUser
+        if (!serverUser) _cachedProfile = null
+        else loadProfile(serverUser.id)
+        notifySubscribers()
+      }
+    }).catch(() => { /* keep local session on network failure */ })
+
+  } catch {
+    clearTimeout(safetyTimer)
+    _cacheLoading  = false
+    _cacheResolved = true
+    notifySubscribers()
+  }
+
+  // Listen for login / logout / token refresh
+  supabase.auth.onAuthStateChange(async (event, session) => {
+    const u = session?.user ?? null
+    _cachedUser    = u
+    _cacheLoading  = false
+    _cacheResolved = true
+    if (u) await loadProfile(u.id)
+    else    _cachedProfile = null
+    notifySubscribers()
+  })
+}
+
+async function loadProfile(userId: string) {
+  try {
+    const supabase = getSupabase()
+    const { data } = await supabase
+      .from("profiles")
+      .select("id, full_name, username, avatar_url, role, subscription_plan, is_verified")
+      .eq("id", userId)
+      .single()
+    _cachedProfile = data
+    notifySubscribers()
+  } catch {
+    // Non-critical — auth still works without profile
+  }
+}
+
+// ─── Hook ─────────────────────────────────────────────────────────────────────
+
+export function useUser() {
+  // Initialise from cache immediately — no loading flash on navigation
+  const [state, setState] = useState(() => ({
+    user:    _cachedUser,
+    profile: _cachedProfile,
+    loading: _cacheLoading,
+  }))
+
+  const mounted = useRef(true)
 
   useEffect(() => {
     mounted.current = true
-    const supabase  = getSupabase()
 
-    // ── SAFETY NET — always show buttons within 3s even if Supabase hangs ──
-    // Cloudflare env vars missing or network slow → loading skeleton must not
-    // spin forever. After 3s we force loading=false and show Sign In buttons.
-    const safetyTimer = setTimeout(() => {
-      if (mounted.current) setLoading(false)
-    }, 3000)
-
-    // ── FAST PATH: read from localStorage (~0ms) ────────────────────────────
-    // getSession() is synchronous-ish (reads IndexedDB/localStorage).
-    // Sets loading=false immediately so the navbar renders Sign In / avatar
-    // without waiting for a network round-trip to Supabase.
-    const fastInit = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession()
-        if (!mounted.current) return
-        clearTimeout(safetyTimer)           // Network responded — cancel the safety timer
-        const u = session?.user ?? null
-        setUser(u)
-        setLoading(false)                   // ← buttons visible NOW
-        if (u) fetchProfile(u.id)
-      } catch {
-        // getSession not available (dummy client or SSR) — safety net takes over
-        if (mounted.current) {
-          clearTimeout(safetyTimer)
-          setLoading(false)
-        }
+    // Subscribe to cache changes
+    const update = () => {
+      if (mounted.current) {
+        setState({
+          user:    _cachedUser,
+          profile: _cachedProfile,
+          loading: _cacheLoading,
+        })
       }
     }
-    fastInit()
+    _subscribers.add(update)
 
-    // ── SECURE PATH: server-validate the JWT ───────────────────────────────
-    // Runs in background. If token is expired/revoked, corrects displayed state.
-    supabase.auth.getUser().then(({ data }) => {
-      if (!mounted.current) return
-      const serverUser = data.user ?? null
-      setUser(prev => {
-        if (prev?.id !== serverUser?.id) {
-          if (!serverUser) setProfile(null)
-          else fetchProfile(serverUser.id)
-          return serverUser
-        }
-        return prev
+    // Kick off shared init (idempotent — only runs once across all instances)
+    initAuth()
+
+    // If cache already resolved, sync immediately
+    if (_cacheResolved) {
+      setState({
+        user:    _cachedUser,
+        profile: _cachedProfile,
+        loading: false,
       })
-    }).catch(() => {
-      // Network validation failed — keep whatever getSession returned
-    })
-
-    // ── REALTIME: login / logout / token-refresh events ────────────────────
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (!mounted.current) return
-        const u = session?.user ?? null
-        setUser(u)
-        if (u) await fetchProfile(u.id)
-        else    setProfile(null)
-        setLoading(false)
-      }
-    )
+    }
 
     return () => {
       mounted.current = false
-      clearTimeout(safetyTimer)
-      subscription.unsubscribe()
+      _subscribers.delete(update)
     }
-  }, [fetchProfile])
+  }, [])
 
-  return { user, profile, loading }
+  return state
 }
