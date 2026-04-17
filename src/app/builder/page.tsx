@@ -2,8 +2,8 @@
 // Prevent Next.js static prerender — builder uses client-only auth and hooks
 export const dynamic = 'force-dynamic'
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { useState, useEffect } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/select"
 import { CategoryIcon } from "@/components/ui/category-icon"
 import { DashboardSidebar } from "@/components/dashboard/sidebar"
+import { Navbar } from "@/components/layout/navbar"
 import { categoryLabel, cn } from "@/lib/utils"
 import {
   SUPPORTED_MODELS, MODEL_LABELS, MAX_SYSTEM_PROMPT_LENGTH,
@@ -103,7 +104,8 @@ const WIZARD_STEPS = [
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function BuilderPage() {
-  const router = useRouter()
+  const router       = useRouter()
+  const searchParams = useSearchParams()
   const [loading,   setLoading]   = useState(false)
   const [step,      setStep]      = useState(0)  // 0 = type selector
   const [agentType, setAgentType] = useState<AgentType>("single")
@@ -120,6 +122,20 @@ export default function BuilderPage() {
       max_tokens:    4096,
     },
   })
+
+  // Pre-fill from dashboard template links (?template=x&category=y&prompt=...)
+  useEffect(() => {
+    const templatePrompt   = searchParams.get("prompt")
+    const templateCategory = searchParams.get("category")
+    if (templatePrompt) {
+      setValue("system_prompt", decodeURIComponent(templatePrompt))
+      setStep(1)   // jump straight to Details step
+    }
+    if (templateCategory) {
+      setValue("category", templateCategory, { shouldValidate: false })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const pricingModel = watch("pricing_model")
   const modelName    = watch("model_name")
