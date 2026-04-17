@@ -1,9 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useState, Suspense } from "react"
 import Link from "next/link"
 import Image from "next/image"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
@@ -21,13 +21,29 @@ const schema = z.object({
   confirm_password: z.string(),
 }).refine(d => d.password === d.confirm_password, {
   message: "Passwords do not match",
-  path: ["confirm_password"],
+  path:    ["confirm_password"],
 })
 type FormData = z.infer<typeof schema>
 
-export default function SignupPage() {
-  const router   = useRouter()
-  const supabase = createClient()
+// Valid plan keys — used to validate the ?plan= param
+const VALID_PLANS = new Set(["starter", "pro"])
+
+function SignupForm() {
+  const router      = useRouter()
+  const params      = useSearchParams()
+  const supabase    = createClient()
+
+  // Capture ?plan= from URL — used to redirect to billing upgrade after signup
+  const rawPlan     = params.get("plan") ?? ""
+  const planParam   = VALID_PLANS.has(rawPlan) ? rawPlan : ""
+
+  // After email confirmation, Supabase calls /auth/callback.
+  // We pass `next` so the callback redirects to billing upgrade.
+  // /auth/callback validates that `next` starts with "/" (safe path).
+  const postSignupPath = planParam
+    ? `/billing?upgrade=${planParam}`
+    : "/dashboard"
+
   const [loading, setLoading] = useState(false)
   const [done, setDone]       = useState(false)
 
@@ -41,21 +57,34 @@ export default function SignupPage() {
       const { error } = await supabase.auth.signUp({
         email:    data.email,
         password: data.password,
-        options:  { data: { full_name: data.full_name } },
+        options:  {
+          data:        { full_name: data.full_name },
+          // After clicking the email confirmation link, redirect here.
+          // /auth/callback reads ?next= and validates it before redirecting.
+          emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(postSignupPath)}`,
+        },
       })
       if (error) throw error
       setDone(true)
     } catch (err: any) {
       toast.error(err.message || "Signup failed")
-    } finally { setLoading(false) }
+    } finally {
+      setLoading(false)
+    }
   }
 
   const signInWithOAuth = async (provider: "github" | "google") => {
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider,
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
-    })
-    if (error) toast.error(error.message)
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(postSignupPath)}`,
+        },
+      })
+      if (error) throw error
+    } catch (err: any) {
+      toast.error(err.message)
+    }
   }
 
   if (done) return (
@@ -66,7 +95,8 @@ export default function SignupPage() {
         </div>
         <h2 className="text-2xl font-bold text-zinc-900 mb-2">Check your email</h2>
         <p className="text-zinc-500 text-sm leading-relaxed mb-6">
-          We sent a confirmation link to your email. Click it to activate your account.
+          We sent a confirmation link to your email. Click it to activate your account
+          {planParam && ` and start your ${planParam.charAt(0).toUpperCase() + planParam.slice(1)} trial`}.
         </p>
         <Link href="/login">
           <Button variant="outline" className="rounded-xl border-zinc-200">Back to Sign in</Button>
@@ -86,7 +116,16 @@ export default function SignupPage() {
                 className="h-8 w-auto object-contain mb-8" />
             </Link>
             <h1 className="text-[28px] font-bold tracking-tight text-zinc-900">Create an account</h1>
-            <p className="text-zinc-500 text-sm mt-1.5">Start building and deploying agents today</p>
+            <p className="text-zinc-500 text-sm mt-1.5">
+              {planParam
+                ? `Start your ${planParam.charAt(0).toUpperCase() + planParam.slice(1)} trial — no credit card required`
+                : "Start building and deploying agents today"}
+            </p>
+            {planParam && (
+              <div className="mt-3 bg-primary/8 text-primary border border-primary/20 text-xs px-3 py-2 rounded-xl font-semibold">
+                14-day free trial · No credit card required · Cancel anytime
+              </div>
+            )}
           </div>
 
           {/* OAuth */}
@@ -97,7 +136,7 @@ export default function SignupPage() {
             ].map(({ provider, icon: Icon, label }) => (
               <button key={provider} onClick={() => signInWithOAuth(provider)}
                 className="flex items-center justify-center gap-2 h-10 rounded-xl border border-zinc-200 bg-white text-zinc-700 text-sm font-medium hover:bg-zinc-50 transition-colors">
-                <Icon className="h-4 w-4" />{label}
+                <Icon className="h-4 w-4" /> {label}
               </button>
             ))}
           </div>
@@ -113,7 +152,9 @@ export default function SignupPage() {
               <Label className="text-sm font-medium text-zinc-700">Full Name</Label>
               <div className="relative">
                 <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                <Input placeholder="John Smith" className="pl-10 h-10 rounded-xl border-zinc-200" {...register("full_name")} />
+                <Input placeholder="John Smith"
+                  className="pl-10 h-10 rounded-xl border-zinc-200"
+                  {...register("full_name")} />
               </div>
               {errors.full_name && <p className="text-xs text-red-500">{errors.full_name.message}</p>}
             </div>
@@ -122,7 +163,9 @@ export default function SignupPage() {
               <Label className="text-sm font-medium text-zinc-700">Email</Label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                <Input type="email" placeholder="you@company.com" className="pl-10 h-10 rounded-xl border-zinc-200" {...register("email")} />
+                <Input type="email" placeholder="you@company.com"
+                  className="pl-10 h-10 rounded-xl border-zinc-200"
+                  {...register("email")} />
               </div>
               {errors.email && <p className="text-xs text-red-500">{errors.email.message}</p>}
             </div>
@@ -131,7 +174,9 @@ export default function SignupPage() {
               <Label className="text-sm font-medium text-zinc-700">Password</Label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                <Input type="password" placeholder="Min. 8 characters" className="pl-10 h-10 rounded-xl border-zinc-200" {...register("password")} />
+                <Input type="password" placeholder="Min. 8 characters"
+                  className="pl-10 h-10 rounded-xl border-zinc-200"
+                  {...register("password")} />
               </div>
               {errors.password && <p className="text-xs text-red-500">{errors.password.message}</p>}
             </div>
@@ -140,15 +185,17 @@ export default function SignupPage() {
               <Label className="text-sm font-medium text-zinc-700">Confirm Password</Label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                <Input type="password" placeholder="Repeat password" className="pl-10 h-10 rounded-xl border-zinc-200" {...register("confirm_password")} />
+                <Input type="password" placeholder="Repeat password"
+                  className="pl-10 h-10 rounded-xl border-zinc-200"
+                  {...register("confirm_password")} />
               </div>
               {errors.confirm_password && <p className="text-xs text-red-500">{errors.confirm_password.message}</p>}
             </div>
 
             <Button type="submit" disabled={loading}
               className="w-full h-10 rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold mt-1">
-              {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              {loading ? "Creating account…" : "Create account"}
+              {loading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+              {loading ? "Creating account…" : planParam ? `Start ${planParam.charAt(0).toUpperCase() + planParam.slice(1)} Trial` : "Create account"}
             </Button>
           </form>
 
@@ -190,11 +237,22 @@ export default function SignupPage() {
                 <div key={i} className="h-1 flex-1 rounded-full bg-primary" />
               ))}
             </div>
-            <p className="text-sm text-zinc-600 italic">"Made $12K in my first month as a seller. AgentDyne handles everything."</p>
+            <p className="text-sm text-zinc-600 italic">
+              "Made $12K in my first month as a seller. AgentDyne handles everything."
+            </p>
             <p className="text-xs text-zinc-400 mt-2 font-medium">— Priya S., Agent Creator</p>
           </div>
         </div>
       </div>
     </div>
+  )
+}
+
+// Wrap in Suspense because useSearchParams() requires it in Next.js 15
+export default function SignupPage() {
+  return (
+    <Suspense>
+      <SignupForm />
+    </Suspense>
   )
 }

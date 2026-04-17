@@ -4,7 +4,8 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { apiRateLimit } from "@/lib/rate-limit"
 import { routeCompletion, routeStream } from "@/lib/model-router"
-import { runInjectionPipeline, sanitizeOutput } from "@/lib/injection-filter"
+import { checkInput, processOutput } from "@/lib/guardrails"
+import { runInjectionPipeline } from "@/lib/injection-filter"
 
 async function hashApiKey(key: string): Promise<string> {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key))
@@ -199,31 +200,44 @@ export async function POST(
       )
     }
 
-    // ── Injection filter ──────────────────────────────────────────────────────
+    // ── Combined guardrails: injection filter + PII + content policy ────────
+    const guardrailResult = checkInput(userMessage)
     const { filterResult, score, shouldLog } = runInjectionPipeline(userMessage, "user")
 
-    if (!filterResult.allowed) {
-      // Log the attempt (fire-and-forget)
+    if (!guardrailResult.allowed) {
       supabase.from("injection_attempts").insert({
-        user_id:   userId,
-        agent_id:  agentId,
-        input:     userMessage.slice(0, 500), // cap stored length
-        pattern:   filterResult.pattern,
-        action:    "blocked",
+        user_id:  userId,
+        agent_id: agentId,
+        input:    userMessage.slice(0, 500),
+        pattern:  guardrailResult.blocked_by ?? "content_policy",
+        action:   "blocked",
       }).then(() => {})
+      return NextResponse.json(
+        { error: "Input rejected. Please revise your request.", code: "GUARDRAIL_BLOCKED" },
+        { status: 400 }
+      )
+    }
 
+    if (!filterResult.allowed) {
+      supabase.from("injection_attempts").insert({
+        user_id:  userId,
+        agent_id: agentId,
+        input:    userMessage.slice(0, 500),
+        pattern:  filterResult.pattern,
+        action:   "blocked",
+      }).then(() => {})
       return NextResponse.json(
         { error: "Input rejected. Please revise your request.", code: "INJECTION_BLOCKED" },
         { status: 400 }
       )
     }
 
-    if (shouldLog && score > 0) {
+    if (shouldLog && score > 0 || guardrailResult.flagged) {
       supabase.from("injection_attempts").insert({
         user_id:  userId,
         agent_id: agentId,
         input:    userMessage.slice(0, 500),
-        pattern:  "suspicious_score_" + score,
+        pattern:  guardrailResult.pii_found.length > 0 ? `pii:${guardrailResult.pii_found.join(",")}` : `score_${score}`,
         action:   "flagged",
       }).then(() => {})
     }
@@ -271,7 +285,8 @@ export async function POST(
             costUsd   = c
 
             const latencyMs = Date.now() - startMs
-            const { text: safeText, flagged } = sanitizeOutput(fullText)
+            const { safe: safeText, scrub } = processOutput(fullText, (agent as any).output_schema)
+            const flagged = scrub.flagged
 
             send({ type: "done", executionId: execution?.id, latencyMs, cost: costUsd })
             controller.enqueue(encoder.encode("data: [DONE]\n\n"))
@@ -345,10 +360,9 @@ export async function POST(
     const { text: rawText, inputTokens, outputTokens, costUsd } = await routeCompletion(modelParams)
 
     const latencyMs = Date.now() - startMs
-    const { text: safeText, flagged, reason: flagReason } = sanitizeOutput(rawText)
-
-    let output: unknown = safeText
-    try { output = JSON.parse(safeText) } catch {}
+    const { safe: safeText, scrub, parsed: parsedOut } = processOutput(rawText, (agent as any).output_schema)
+    const flagged = scrub.flagged
+    const output  = parsedOut.isJSON ? parsedOut.parsed : safeText
 
     await Promise.all([
       supabase.from("executions").update({
@@ -375,7 +389,7 @@ export async function POST(
         tokens_output:   outputTokens,
         cost_usd:        costUsd,
         status:          flagged ? "flagged" : "success",
-        error_message:   flagged ? flagReason : null,
+        error_message:   flagged ? scrub.redacted.join(",") : null,
         temperature:     modelParams.temperature,
       }),
     ])

@@ -313,7 +313,7 @@ function PipelineCard({
             )}
           </div>
 
-          <Link href={`/builder?pipeline=${pipeline.id}`}>
+          <Link href={`/pipelines/${pipeline.id}`}>
             <button className="flex items-center gap-1 text-xs font-semibold text-primary hover:gap-2 transition-all px-2 py-1.5 rounded-lg hover:bg-primary/8">
               Edit <ArrowRight className="h-3 w-3" />
             </button>
