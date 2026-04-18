@@ -131,14 +131,15 @@ export async function POST(
       .select()
       .single()
 
-    // ── Topological sort ─────────────────────────────────────────────────────
-    const sorted = topologicalSort(dag.nodes, dag.edges)
-    if (!sorted) {
+    // ── Topological sort + level grouping ─────────────────────────────────────
+    // Nodes in the same level have no dependency on each other → run in parallel.
+    const { levels, cycle } = topologicalLevels(dag.nodes, dag.edges)
+    if (cycle) {
       await failPipelineExec(supabase, pipelineExec!.id, "Pipeline DAG has a cycle — cannot execute")
       return NextResponse.json({ error: "Pipeline DAG contains a cycle" }, { status: 422 })
     }
 
-    // ── Execute each node in order ───────────────────────────────────────────
+    // ── Execute each level — nodes within a level run in parallel ──────────────
     const nodeOutputs: Record<string, unknown> = {}
     const nodeResults: NodeResult[] = []
     let   totalCost      = 0
@@ -149,7 +150,7 @@ export async function POST(
     const timeoutMs = (pipeline.timeout_seconds ?? 300) * 1000
     const deadline  = Date.now() + timeoutMs
 
-    for (const node of sorted) {
+    for (const level of levels) {
       if (Date.now() > deadline) {
         await failPipelineExec(
           supabase, pipelineExec!.id, "Pipeline execution timed out",
@@ -158,150 +159,46 @@ export async function POST(
         return NextResponse.json({ error: "Pipeline timed out", executionId: pipelineExec!.id }, { status: 408 })
       }
 
-      const agent = agentMap.get(node.agent_id) as any
-      if (!agent) continue
+      // Run all nodes in this level concurrently
+      const levelResults = await Promise.all(
+        level.map(node => executeNode(node, dag.edges, agentMap, nodeOutputs, input, variables, user.id, supabase))
+      )
 
-      // Build input for this node
-      const upstreamEdges = dag.edges.filter(e => e.to === node.id)
-      let nodeInput: unknown
-
-      if (upstreamEdges.length === 0) {
-        // Root node — use pipeline input
-        nodeInput = interpolate(
-          typeof input === "string" ? input : JSON.stringify(input),
-          variables,
-          nodeOutputs
-        )
-      } else {
-        // Merge outputs from all upstream nodes
-        const upstreamOutputs = upstreamEdges
-          .map(e => nodeOutputs[e.from])
-          .filter(v => v !== undefined)
-
-        nodeInput = upstreamOutputs.length === 1
-          ? upstreamOutputs[0]
-          : upstreamOutputs
-
-        if (node.input_mapping) {
-          nodeInput = applyInputMapping(node.input_mapping, upstreamOutputs, variables)
+      // Collect results and check for fatal failures
+      let levelFailed = false
+      for (const result of levelResults) {
+        nodeResults.push(result)
+        nodeOutputs[result.node_id] = result.output
+        if (result.status === "success") {
+          totalCost      += result.cost
+          totalTokensIn  += result.tokens?.input  ?? 0
+          totalTokensOut += result.tokens?.output ?? 0
+          lastOutput      = result.output
+        } else {
+          // Failed node
+          const node = dag.nodes.find(n => n.id === result.node_id)
+          if (!node?.continue_on_failure) {
+            levelFailed = true
+          } else {
+            nodeOutputs[result.node_id] = null
+          }
         }
       }
 
-      const nodeStart = Date.now()
-
-      try {
-        const userMessage = typeof nodeInput === "string"
-          ? nodeInput
-          : JSON.stringify(nodeInput)
-
-        // Injection filter on each node's input
-        const { filterResult } = runInjectionPipeline(userMessage, "user")
-        if (!filterResult.allowed) {
-          throw new Error("Input rejected by injection filter")
-        }
-
-        // Base system prompt (node override takes priority)
-        let systemPrompt: string = node.system_prompt_override ?? agent.system_prompt ?? ""
-
-        // RAG context injection if agent has a knowledge base
-        if (agent.knowledge_base_id) {
-          const ragResult = await retrieveRAGContext(
-            supabase,
-            agent.knowledge_base_id,
-            userMessage,
-            { topK: 5, threshold: 0.65 }
-          )
-          systemPrompt = buildRAGSystemPrompt(systemPrompt, ragResult)
-        }
-
-        // Route to correct LLM provider
-        const { text: rawText, inputTokens, outputTokens, costUsd: nodeCost } =
-          await routeCompletion({
-            model:       agent.model_name || "claude-sonnet-4-20250514",
-            system:      systemPrompt,
-            userMessage,
-            maxTokens:   agent.max_tokens  || 4096,
-            temperature: agent.temperature ?? 0.7,
-          })
-
-        const nodeLatency = Date.now() - nodeStart
-        const { text: safeText } = sanitizeOutput(rawText)
-
-        let nodeOutput: unknown = safeText
-        // Try JSON parse for structured output
-        try {
-          const stripped = safeText.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/, "").trim()
-          nodeOutput = JSON.parse(stripped)
-        } catch { /* stay as string */ }
-
-        nodeOutputs[node.id] = nodeOutput
-        lastOutput            = nodeOutput
-        totalCost            += nodeCost
-        totalTokensIn        += inputTokens
-        totalTokensOut       += outputTokens
-
-        nodeResults.push({
-          node_id:    node.id,
-          agent_id:   node.agent_id,
-          agent_name: agent.name ?? node.id,
-          status:     "success",
-          input:      nodeInput,
-          output:     nodeOutput,
-          latency_ms: nodeLatency,
-          cost:       nodeCost,
-          tokens: { input: inputTokens, output: outputTokens },
-        })
-
-        // Persist individual execution record per node (fire-and-forget)
-        supabase.from("executions").insert({
-          agent_id:      node.agent_id,
-          user_id:       user.id,
-          status:        "success",
-          input:         nodeInput,
-          output:        nodeOutput,
-          tokens_input:  inputTokens,
-          tokens_output: outputTokens,
-          latency_ms:    nodeLatency,
-          cost:          nodeCost,
-          cost_usd:      nodeCost,
-          completed_at:  new Date().toISOString(),
-        }).then(() => {})
-
-        // Increment quota per node (fire-and-forget)
-        supabase.rpc("increment_executions_used", { user_id_param: user.id }).then(() => {})
-
-      } catch (nodeErr: any) {
-        const nodeLatency = Date.now() - nodeStart
-
-        nodeResults.push({
-          node_id:    node.id,
-          agent_id:   node.agent_id,
-          agent_name: (agentMap.get(node.agent_id) as any)?.name ?? node.id,
-          status:     "failed",
-          input:      nodeInput,
-          output:     null,
-          latency_ms: nodeLatency,
-          cost:       0,
-          error:      nodeErr.message,
-        })
-
-        if (!node.continue_on_failure) {
-          await failPipelineExec(
-            supabase, pipelineExec!.id,
-            `Node "${node.label || node.id}" failed: ${nodeErr.message}`,
-            nodeResults, totalCost, totalTokensIn, totalTokensOut, Date.now() - startTotal
-          )
-          return NextResponse.json({
-            error:          `Pipeline failed at node "${node.label || node.id}"`,
-            failed_node:    node.id,
-            executionId:    pipelineExec!.id,
-            node_results:   nodeResults,
-            partial_output: lastOutput,
-          }, { status: 500 })
-        }
-
-        // continue_on_failure=true: pass null downstream
-        nodeOutputs[node.id] = null
+      if (levelFailed) {
+        const failedResult = levelResults.find(r => r.status === "failed")
+        await failPipelineExec(
+          supabase, pipelineExec!.id,
+          `Node "${failedResult?.agent_name ?? failedResult?.node_id}" failed: ${failedResult?.error}`,
+          nodeResults, totalCost, totalTokensIn, totalTokensOut, Date.now() - startTotal
+        )
+        return NextResponse.json({
+          error:          `Pipeline failed at node "${failedResult?.node_id}"`,
+          failed_node:    failedResult?.node_id,
+          executionId:    pipelineExec!.id,
+          node_results:   nodeResults,
+          partial_output: lastOutput,
+        }, { status: 500 })
       }
     }
 
