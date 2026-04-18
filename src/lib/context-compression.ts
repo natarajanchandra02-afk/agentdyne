@@ -1,194 +1,133 @@
 /**
- * AgentDyne — Context Compression & Token Optimization
+ * Context Compression + Cost-Optimal Model Selection
  *
- * Implements cost-saving strategies before LLM calls:
+ * Two utilities wired into the agent execute route:
  *
- * 1. BUDGET COMPRESSOR — Trims context to fit within a token budget
- *    (prevents expensive overruns on large RAG injections or long conversations)
+ * 1. compressToTokenBudget — trims system prompt + user message to fit
+ *    within a token budget, preventing over-spend and context overflow.
  *
- * 2. SEMANTIC DEDUPLICATION — Removes near-duplicate RAG chunks
- *    (prevents paying 3× for the same paragraph embedded slightly differently)
+ * 2. cheapestModelForTask — given the preferred model and estimated
+ *    input tokens, downgrades to a cheaper model when the task is simple
+ *    enough that the premium model adds no value.
  *
- * 3. PRIORITY RANKING — Keeps highest-similarity chunks when truncating
- *    (ensures the most relevant context stays, less relevant is trimmed)
- *
- * 4. PROMPT SKELETON — Strips redundant whitespace/formatting from system prompts
- *    (typical 8–15% token reduction with zero quality loss)
- *
- * Cost impact: ~20–40% token reduction on RAG-augmented agents at scale.
- * At $3/1M input tokens, 100k daily executions → saves ~$150-300/day.
- *
- * Edge-compatible: no Node.js APIs, no dependencies.
+ * Edge-runtime safe: pure TypeScript, no Node.js APIs.
  */
 
 export interface CompressedContext {
-  systemPrompt:    string
-  userMessage:     string
+  systemPrompt: string
+  userMessage:  string
+  wasCompressed: boolean
   estimatedTokens: number
-  savedTokens:     number
-  compressionPct:  number
 }
 
-// ── Rough token estimation ────────────────────────────────────────────────────
-// Rule of thumb: 1 token ≈ 4 characters for English prose.
-// This is close enough for budget planning without calling the tokenizer API.
-export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4)
-}
-
-// ── Whitespace normalisation ──────────────────────────────────────────────────
-// Collapses 3+ blank lines to 2, strips trailing spaces.
-// Typical savings: 8–15% on system prompts written by non-technical users.
-export function normaliseWhitespace(text: string): string {
-  return text
-    .replace(/\t/g, "  ")                // tabs → 2 spaces
-    .replace(/[^\S\n]+$/gm, "")          // trailing spaces per line
-    .replace(/\n{3,}/g, "\n\n")          // 3+ blank lines → 2
-    .trim()
-}
-
-// ── RAG chunk deduplication ───────────────────────────────────────────────────
-// Removes chunks whose content is ≥ threshold% identical to an already-kept chunk.
-// Uses character n-gram overlap (Jaccard similarity) — fast, no ML needed.
-export function deduplicateChunks<T extends { content: string; similarity: number }>(
-  chunks:    T[],
-  threshold: number = 0.85
-): T[] {
-  if (chunks.length <= 1) return chunks
-
-  // Sort by similarity desc — keep the most relevant version of duplicates
-  const sorted = [...chunks].sort((a, b) => b.similarity - a.similarity)
-  const kept:  T[]       = []
-  const sigs:  Set<string>[] = []
-
-  for (const chunk of sorted) {
-    const sig = buildNgramSet(chunk.content, 4)
-    let isDuplicate = false
-
-    for (const keptSig of sigs) {
-      if (jaccardSimilarity(sig, keptSig) >= threshold) {
-        isDuplicate = true
-        break
-      }
-    }
-
-    if (!isDuplicate) {
-      kept.push(chunk)
-      sigs.push(sig)
-    }
-  }
-
-  return kept
-}
-
-function buildNgramSet(text: string, n: number): Set<string> {
-  const cleaned = text.toLowerCase().replace(/\s+/g, " ").trim()
-  const set = new Set<string>()
-  for (let i = 0; i <= cleaned.length - n; i++) {
-    set.add(cleaned.slice(i, i + n))
-  }
-  return set
-}
-
-function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 || b.size === 0) return 0
-  let intersection = 0
-  for (const item of a) {
-    if (b.has(item)) intersection++
-  }
-  return intersection / (a.size + b.size - intersection)
-}
-
-// ── Budget compressor ─────────────────────────────────────────────────────────
-// Trims system prompt + user message to fit within maxTokens.
-// Strategy:
-//   1. Normalise whitespace on both
-//   2. If still over budget, truncate user message first (preserve system prompt)
-//   3. If still over budget, truncate system prompt tail (preserve first 500 chars)
-
+/**
+ * compressToTokenBudget
+ *
+ * Fits system prompt + user message within a total character budget
+ * (proxy for token budget at ~4 chars/token).
+ *
+ * Priority: preserve userMessage over systemPrompt, since the user
+ * message is the actual task. System prompt is trimmed last.
+ *
+ * Strategy:
+ *   1. Strip leading/trailing whitespace and collapse runs of blank lines
+ *   2. If still over budget, truncate the knowledge-base context block first
+ *      (it's injected between <knowledge_base_context> tags)
+ *   3. If still over budget, truncate the user message
+ *   4. As last resort, truncate the system prompt
+ */
 export function compressToTokenBudget(
   systemPrompt: string,
   userMessage:  string,
-  maxTokens:    number = 16_000  // safe budget leaving room for output
+  maxTokens:    number = 14_000   // safe budget leaving ~2k tokens for output
 ): CompressedContext {
-  const originalTokens = estimateTokens(systemPrompt) + estimateTokens(userMessage)
+  const maxChars = maxTokens * 4  // ~4 chars per token (rough but safe)
 
-  // Step 1: Normalise whitespace
-  let sp = normaliseWhitespace(systemPrompt)
-  let um = normaliseWhitespace(userMessage)
+  // Step 1: basic whitespace normalisation
+  let sys  = normalise(systemPrompt)
+  let user = normalise(userMessage)
 
-  // Step 2: Check if within budget
-  let currentTokens = estimateTokens(sp) + estimateTokens(um)
-  if (currentTokens <= maxTokens) {
-    return {
-      systemPrompt:    sp,
-      userMessage:     um,
-      estimatedTokens: currentTokens,
-      savedTokens:     originalTokens - currentTokens,
-      compressionPct:  Math.round(((originalTokens - currentTokens) / originalTokens) * 100),
+  const totalChars = sys.length + user.length
+  if (totalChars <= maxChars) {
+    return { systemPrompt: sys, userMessage: user, wasCompressed: false, estimatedTokens: Math.ceil(totalChars / 4) }
+  }
+
+  // Step 2: truncate knowledge_base_context block first — it's the most expendable
+  if (sys.includes("<knowledge_base_context>")) {
+    const kbStart = sys.indexOf("<knowledge_base_context>")
+    const kbEnd   = sys.indexOf("</knowledge_base_context>") + "</knowledge_base_context>".length
+    if (kbEnd > kbStart) {
+      const budget  = Math.max(2000, maxChars - user.length - (sys.length - (kbEnd - kbStart)))
+      const kbBlock = sys.slice(kbStart, kbEnd)
+      const truncated = kbBlock.slice(0, budget) + "\n[Context truncated for token budget]\n</knowledge_base_context>"
+      sys = sys.slice(0, kbStart) + truncated + sys.slice(kbEnd)
     }
   }
 
-  // Step 3: Trim user message first (truncate to maxTokens * 0.6 chars)
-  const umBudgetChars = Math.floor(maxTokens * 0.6 * 4)
-  if (um.length > umBudgetChars) {
-    um = um.slice(0, umBudgetChars) + "\n\n[Input truncated for token budget]"
+  if (sys.length + user.length <= maxChars) {
+    return { systemPrompt: sys, userMessage: user, wasCompressed: true, estimatedTokens: Math.ceil((sys.length + user.length) / 4) }
   }
 
-  currentTokens = estimateTokens(sp) + estimateTokens(um)
-  if (currentTokens <= maxTokens) {
-    return {
-      systemPrompt:    sp,
-      userMessage:     um,
-      estimatedTokens: currentTokens,
-      savedTokens:     originalTokens - currentTokens,
-      compressionPct:  Math.round(((originalTokens - currentTokens) / originalTokens) * 100),
-    }
+  // Step 3: truncate user message (keep at least 1000 chars)
+  const userBudget = Math.max(1000, maxChars - sys.length)
+  if (user.length > userBudget) {
+    user = user.slice(0, userBudget) + "\n[Input truncated]"
   }
 
-  // Step 4: Trim system prompt — keep first 600 chars + ellipsis, then trim
-  const spBudgetChars = Math.max(600, Math.floor((maxTokens - estimateTokens(um)) * 4 * 0.9))
-  if (sp.length > spBudgetChars) {
-    sp = sp.slice(0, spBudgetChars) + "\n\n[System prompt truncated for token budget]"
+  if (sys.length + user.length <= maxChars) {
+    return { systemPrompt: sys, userMessage: user, wasCompressed: true, estimatedTokens: Math.ceil((sys.length + user.length) / 4) }
   }
 
-  currentTokens = estimateTokens(sp) + estimateTokens(um)
+  // Step 4: truncate system prompt as last resort (keep at least 500 chars)
+  const sysBudget = Math.max(500, maxChars - user.length)
+  sys = sys.slice(0, sysBudget) + "\n[System prompt truncated]"
 
-  return {
-    systemPrompt:    sp,
-    userMessage:     um,
-    estimatedTokens: currentTokens,
-    savedTokens:     Math.max(0, originalTokens - currentTokens),
-    compressionPct:  Math.round((Math.max(0, originalTokens - currentTokens) / originalTokens) * 100),
-  }
+  const finalChars = sys.length + user.length
+  return { systemPrompt: sys, userMessage: user, wasCompressed: true, estimatedTokens: Math.ceil(finalChars / 4) }
 }
 
-// ── Cost estimator ────────────────────────────────────────────────────────────
-// Returns estimated USD cost for a completion given token counts.
-
-const COST_TABLE: Record<string, { input: number; output: number }> = {
-  "claude-opus-4-6":           { input: 0.015,    output: 0.075   },
-  "claude-sonnet-4-20250514":  { input: 0.003,    output: 0.015   },
-  "claude-haiku-4-5-20251001": { input: 0.00025,  output: 0.00125 },
-  "gpt-4o":                    { input: 0.005,    output: 0.015   },
-  "gpt-4o-mini":               { input: 0.00015,  output: 0.0006  },
-  "gemini-1.5-pro":            { input: 0.00125,  output: 0.005   },
-  "_default":                  { input: 0.003,    output: 0.015   },
+function normalise(s: string): string {
+  return s
+    .replace(/\r\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
 }
 
-export function estimateCost(model: string, inputTokens: number, outputTokens: number): number {
-  const rates = COST_TABLE[model] ?? COST_TABLE["_default"]!
-  return (inputTokens / 1000) * rates.input + (outputTokens / 1000) * rates.output
-}
-
-export function cheapestModelForTask(preferredModel: string, inputTokens: number): string {
-  // If the call is small (<1000 tokens input), use Haiku instead of Sonnet/GPT-4o
-  // for ~10x cost reduction with minimal quality loss on simple tasks
-  if (inputTokens < 1000 && preferredModel === "claude-sonnet-4-20250514") {
+/**
+ * cheapestModelForTask
+ *
+ * Returns the cost-optimal model based on:
+ *   - The seller's chosen model (their explicit quality choice)
+ *   - Estimated input token count
+ *
+ * Policy (April 2026):
+ *   - For very small inputs (<500 tokens) where quality difference is negligible,
+ *     downgrade Sonnet→Haiku (~10x cheaper per token).
+ *   - Never downgrade Opus (sellers paid for it explicitly).
+ *   - Never downgrade non-Anthropic models (no equivalent cheaper option in router).
+ *   - Threshold is conservative: only downgrade when we're highly confident
+ *     the cheaper model is sufficient.
+ */
+export function cheapestModelForTask(
+  preferredModel: string,
+  estimatedInputTokens: number
+): string {
+  // Only auto-downgrade Sonnet on tiny tasks
+  if (
+    preferredModel === "claude-sonnet-4-20250514" &&
+    estimatedInputTokens < 500
+  ) {
     return "claude-haiku-4-5-20251001"
   }
-  if (inputTokens < 500 && preferredModel === "gpt-4o") {
-    return "gpt-4o-mini"
-  }
+
+  // All other models: respect seller's choice
   return preferredModel
+}
+
+/**
+ * estimateTokens — quick token count estimate from character length.
+ * Rule of thumb: 1 token ≈ 4 English chars, 2 code chars.
+ */
+export function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 3.5)  // slightly conservative
 }
