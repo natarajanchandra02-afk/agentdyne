@@ -7,7 +7,7 @@ import { usePathname, useRouter } from "next/navigation"
 import {
   LayoutDashboard, Bot, BarChart3, CreditCard, Key,
   Settings, Store, ShieldCheck, LogOut, Zap, ChevronRight,
-  HelpCircle, Trophy, Layers, ChevronLeft, Menu, X,
+  HelpCircle, Trophy, Layers, ChevronLeft, Menu, X, History,
 } from "lucide-react"
 import { cn, getInitials } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -19,6 +19,7 @@ const MAIN_NAV = [
   { href: "/dashboard",   icon: LayoutDashboard, label: "Overview"    },
   { href: "/my-agents",   icon: Bot,             label: "My Agents"   },
   { href: "/pipelines",   icon: Layers,          label: "Pipelines"   },
+  { href: "/executions",  icon: History,         label: "Executions"  },
   { href: "/analytics",   icon: BarChart3,       label: "Analytics"   },
   { href: "/api-keys",    icon: Key,             label: "API Keys"    },
   { href: "/leaderboard", icon: Trophy,          label: "Leaderboard" },

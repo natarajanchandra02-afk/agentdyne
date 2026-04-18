@@ -5,8 +5,7 @@ import { NextRequest, NextResponse } from "next/server"
 const PROTECTED_PATHS = [
   "/dashboard", "/my-agents", "/analytics", "/api-keys",
   "/billing", "/settings", "/admin", "/seller", "/builder",
-  "/pipelines",          // pipelines is a dashboard-only feature
-  // NOTE: /leaderboard is intentionally PUBLIC — rankings are a discovery surface
+  "/pipelines", "/executions",
 ]
 
 // Routes only for unauthenticated users (redirect logged-in users away)

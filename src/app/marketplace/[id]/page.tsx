@@ -1,89 +1,53 @@
-"use client"
+/**
+ * /marketplace/[id] — Server Component wrapper
+ * Provides generateMetadata() (server-only) and exports the client page.
+ * next-on-pages: export const runtime = 'edge' required for dynamic routes.
+ */
+import type { Metadata } from "next"
+
 export const runtime = 'edge'
 
-import { useEffect, useState, useRef } from "react"
-import { useParams } from "next/navigation"
-import { createClient } from "@/lib/supabase/client"
-import { AgentDetailClient } from "./agent-detail-client"
-import { Skeleton } from "@/components/ui/skeleton"
+export async function generateMetadata(
+  { params }: { params: Promise<{ id: string }> }
+): Promise<Metadata> {
+  const { id } = await params
 
-export default function AgentDetailPage() {
-  const { id }          = useParams<{ id: string }>()
-  const [data, setData] = useState<any>(null)
-  const [notFound, setNotFound] = useState(false)
+  const base: Metadata = {
+    title:       "AI Agent — AgentDyne",
+    description: "Deploy this production-ready AI agent in one API call.",
+  }
 
-  const supabaseRef = useRef(createClient())
-  const supabase    = supabaseRef.current
+  try {
+    // Fetch via public API endpoint — works on edge without service role key
+    const res = await fetch(
+      `https://agentdyne.com/api/agents/${id}`,
+      { next: { revalidate: 3600 } }  // cache 1h
+    )
+    if (!res.ok) return base
+    const agent = await res.json()
 
-  useEffect(() => {
-    if (!id) return
-    let cancelled = false
+    if (!agent?.name) return base
 
-    async function load() {
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
+    const title = `${agent.name} — AgentDyne`
+    const desc  = agent.description ||
+      `${agent.name}: AI microagent with ${(agent.total_executions || 0).toLocaleString()} executions.`
 
-        const { data: agent, error: agentErr } = await supabase
-          .from("agents")
-          .select("*, profiles!seller_id(id, full_name, username, avatar_url, is_verified, bio, total_earned)")
-          .eq("id", id)
-          .single()
-
-        if (agentErr || !agent || agent.status !== "active") {
-          if (!cancelled) setNotFound(true)
-          return
-        }
-
-        const [{ data: reviews }, { data: subscription }] = await Promise.all([
-          supabase
-            .from("reviews")
-            .select("*, profiles!user_id(full_name, avatar_url)")
-            .eq("agent_id", id)
-            .eq("status", "approved")
-            .order("created_at", { ascending: false })
-            .limit(10),
-          user
-            ? supabase
-                .from("agent_subscriptions")
-                .select("*")
-                .eq("user_id", user.id)
-                .eq("agent_id", id)
-                .single()
-            : Promise.resolve({ data: null }),
-        ])
-
-        if (!cancelled) {
-          setData({ agent, reviews: reviews ?? [], user, userSubscription: subscription })
-        }
-      } catch {
-        if (!cancelled) setNotFound(true)
-      }
+    return {
+      title,
+      description: desc,
+      openGraph: {
+        title, description: desc,
+        url:      `https://agentdyne.com/marketplace/${id}`,
+        siteName: "AgentDyne",
+        type:     "website",
+      },
+      twitter: { card: "summary_large_image", title, description: desc },
+      alternates: { canonical: `https://agentdyne.com/marketplace/${id}` },
     }
-
-    load()
-    return () => { cancelled = true }
-  }, [id])
-
-  if (notFound) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-lg font-semibold text-zinc-900 mb-2">Agent not found</p>
-          <p className="text-sm text-zinc-500">This agent may have been removed or is no longer active.</p>
-        </div>
-      </div>
-    )
+  } catch {
+    return base
   }
-
-  if (!data) {
-    return (
-      <div className="pt-20 max-w-7xl mx-auto px-6 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-64 rounded-2xl" />)}
-        </div>
-      </div>
-    )
-  }
-
-  return <AgentDetailClient {...data} />
 }
+
+// Delegate rendering to the "use client" page component
+export { default } from "./agent-detail-page"

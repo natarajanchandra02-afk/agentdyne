@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
@@ -8,7 +8,8 @@ import { AnimatePresence, motion } from "framer-motion"
 import {
   ChevronDown, Search, Bell, Menu, X, Zap,
   LayoutDashboard, Store, DollarSign, LogOut, Settings,
-  Puzzle, Bot, Trophy, Key, BarChart3,
+  Puzzle, Bot, Trophy, Key, BarChart3, CheckCircle,
+  Clock, AlertCircle, Star, History,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -18,7 +19,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
 import { useUser } from "@/hooks/use-user"
-import { getInitials, cn } from "@/lib/utils"
+import { getInitials, cn, formatRelativeTime } from "@/lib/utils"
 import type { User } from "@supabase/supabase-js"
 
 const NAV = [
@@ -32,6 +33,7 @@ const NAV = [
 const USER_MENU = [
   { href: "/dashboard",    icon: LayoutDashboard, label: "Dashboard"     },
   { href: "/my-agents",    icon: Bot,             label: "My Agents"     },
+  { href: "/executions",   icon: History,         label: "Executions"    },
   { href: "/analytics",    icon: BarChart3,       label: "Analytics"     },
   { href: "/api-keys",     icon: Key,             label: "API Keys"      },
   { href: "/leaderboard",  icon: Trophy,          label: "Leaderboard"   },
@@ -41,10 +43,158 @@ const USER_MENU = [
   { href: "/settings",     icon: Settings,        label: "Settings"      },
 ]
 
-// ── Auth right-side area — defined OUTSIDE Navbar to keep stable component identity ──
-// CRITICAL: if defined inside Navbar, React creates a new component type on every
-// Navbar re-render (e.g. scroll), causing it to unmount/remount and losing state.
-// This was the root cause of sign-in buttons disappearing on the deployed site.
+// ─── Notification icon helper ─────────────────────────────────────────────────
+
+function NotifIcon({ type }: { type: string }) {
+  const cls = "h-3.5 w-3.5 flex-shrink-0 mt-0.5"
+  if (type === "agent_approved")  return <CheckCircle className={cn(cls, "text-green-500")} />
+  if (type === "review_posted")   return <Star        className={cn(cls, "text-yellow-500")} />
+  if (type === "payout_sent")     return <DollarSign  className={cn(cls, "text-emerald-500")} />
+  if (type === "execution_failed")return <AlertCircle className={cn(cls, "text-red-500")} />
+  if (type === "quota_warning")   return <AlertCircle className={cn(cls, "text-amber-500")} />
+  return <Clock className={cn(cls, "text-zinc-400")} />
+}
+
+// ─── Notifications Bell ───────────────────────────────────────────────────────
+
+function NotificationBell({ navigate }: { navigate: (href: string) => void }) {
+  const [open,          setOpen]          = useState(false)
+  const [notifications, setNotifications] = useState<any[]>([])
+  const [unread,        setUnread]        = useState(0)
+  const [loading,       setLoading]       = useState(false)
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  // Fetch notifications when user is logged in (once on mount)
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const res  = await fetch("/api/notifications")
+        if (!res.ok) return
+        const data = await res.json()
+        if (cancelled) return
+        const notifs = data.notifications || []
+        setNotifications(notifs)
+        setUnread(notifs.filter((n: any) => !n.is_read).length)
+      } catch { /* non-fatal */ }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [])
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    if (open) document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [open])
+
+  const toggleOpen = async () => {
+    if (!open && unread > 0) {
+      // Mark all as read immediately (optimistic)
+      setUnread(0)
+      setNotifications(prev => prev.map(n => ({ ...n, is_read: true })))
+      fetch("/api/notifications", { method: "PATCH" }).catch(() => {})
+    }
+    setOpen(o => !o)
+  }
+
+  return (
+    <div className="relative" ref={panelRef}>
+      <Button variant="ghost" size="icon"
+        className="hidden md:flex relative h-9 w-9 rounded-xl"
+        onClick={toggleOpen}
+        aria-label="Notifications">
+        <Bell className="h-4 w-4" />
+        {unread > 0 && (
+          <span className="absolute top-1.5 right-1.5 min-w-[14px] h-[14px] bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center px-0.5 ring-1 ring-white leading-none">
+            {unread > 9 ? "9+" : unread}
+          </span>
+        )}
+      </Button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: 4, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 4, scale: 0.96 }}
+            transition={{ duration: 0.15 }}
+            className="absolute right-0 top-full mt-2 w-80 bg-white border border-zinc-100 rounded-2xl shadow-xl z-50 overflow-hidden"
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-50">
+              <p className="text-sm font-semibold text-zinc-900">Notifications</p>
+              <button
+                onClick={() => navigate("/settings")}
+                className="text-xs text-zinc-400 hover:text-primary transition-colors">
+                Settings
+              </button>
+            </div>
+
+            {/* List */}
+            <div className="max-h-80 overflow-y-auto">
+              {notifications.length === 0 ? (
+                <div className="text-center py-10">
+                  <Bell className="h-6 w-6 text-zinc-200 mx-auto mb-2" />
+                  <p className="text-sm text-zinc-400">No notifications yet</p>
+                  <p className="text-xs text-zinc-300 mt-1">
+                    We'll notify you about agent activity, payouts, and more
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y divide-zinc-50">
+                  {notifications.slice(0, 12).map((n: any) => (
+                    <button
+                      key={n.id}
+                      onClick={() => { navigate(n.action_url || "/dashboard"); setOpen(false) }}
+                      className={cn(
+                        "w-full flex items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-zinc-50",
+                        !n.is_read && "bg-primary/[0.02]"
+                      )}
+                    >
+                      {!n.is_read && (
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 w-1.5 h-1.5 bg-primary rounded-full" />
+                      )}
+                      <NotifIcon type={n.type} />
+                      <div className="flex-1 min-w-0">
+                        <p className={cn("text-xs leading-relaxed", n.is_read ? "text-zinc-500" : "text-zinc-900 font-medium")}>
+                          {n.title}
+                        </p>
+                        {n.message && (
+                          <p className="text-[11px] text-zinc-400 mt-0.5 line-clamp-1">{n.message}</p>
+                        )}
+                        <p className="text-[10px] text-zinc-300 mt-1">{formatRelativeTime(n.created_at)}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            {notifications.length > 0 && (
+              <div className="border-t border-zinc-50 px-4 py-2.5">
+                <button
+                  onClick={() => { navigate("/dashboard"); setOpen(false) }}
+                  className="text-xs text-primary font-semibold hover:underline">
+                  View all activity →
+                </button>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+// ─── Auth right-side area ─────────────────────────────────────────────────────
+// Defined OUTSIDE Navbar to keep stable component identity across re-renders.
 
 interface AuthAreaProps {
   authLoading: boolean
@@ -56,18 +206,15 @@ interface AuthAreaProps {
 }
 
 function AuthArea({ authLoading, user, profile, onSignOut, signingOut, navigate }: AuthAreaProps) {
-  // Phase 1: still resolving auth state — show neutral skeleton
-  // Skeleton width matches ~"Get started" button so layout doesn't shift
   if (authLoading) {
     return (
       <div className="flex items-center gap-2">
-        <div className="h-8 w-20 rounded-xl bg-zinc-200/70 animate-pulse" />
-        <div className="h-8 w-24 rounded-xl bg-zinc-200/70 animate-pulse" />
+        <div className="h-8 w-20 rounded-xl bg-zinc-100 animate-pulse" />
+        <div className="h-8 w-24 rounded-xl bg-zinc-100 animate-pulse" />
       </div>
     )
   }
 
-  // Phase 2: logged in
   if (user) {
     return (
       <>
@@ -79,12 +226,7 @@ function AuthArea({ authLoading, user, profile, onSignOut, signingOut, navigate 
         </Button>
 
         {/* Notifications */}
-        <Button variant="ghost" size="icon"
-          className="hidden md:flex relative h-9 w-9 rounded-xl"
-          onClick={() => navigate("/dashboard")}>
-          <Bell className="h-4 w-4" />
-          <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-primary rounded-full ring-1 ring-white" />
-        </Button>
+        <NotificationBell navigate={navigate} />
 
         {/* User dropdown */}
         <DropdownMenu>
@@ -116,23 +258,19 @@ function AuthArea({ authLoading, user, profile, onSignOut, signingOut, navigate 
             <DropdownMenuSeparator className="bg-zinc-100" />
 
             {USER_MENU.map(({ href, icon: Icon, label }) => (
-              <DropdownMenuItem
-                key={href}
+              <DropdownMenuItem key={href}
                 onClick={() => navigate(href)}
-                className="rounded-xl cursor-pointer px-2 py-2 text-sm text-zinc-700 hover:text-zinc-900 focus:bg-zinc-50"
-              >
+                className="rounded-xl cursor-pointer px-2 py-2 text-sm text-zinc-700 hover:text-zinc-900 focus:bg-zinc-50">
                 <Icon className="h-4 w-4 mr-2.5 text-zinc-400" />
                 {label}
               </DropdownMenuItem>
             ))}
 
             <DropdownMenuSeparator className="bg-zinc-100" />
-
             <DropdownMenuItem
               onClick={onSignOut}
               disabled={signingOut}
-              className="rounded-xl cursor-pointer px-2 py-2 text-sm text-red-600 hover:text-red-700 focus:bg-red-50 focus:text-red-700"
-            >
+              className="rounded-xl cursor-pointer px-2 py-2 text-sm text-red-600 hover:text-red-700 focus:bg-red-50 focus:text-red-700">
               <LogOut className="h-4 w-4 mr-2.5" />
               {signingOut ? "Signing out…" : "Sign out"}
             </DropdownMenuItem>
@@ -142,23 +280,18 @@ function AuthArea({ authLoading, user, profile, onSignOut, signingOut, navigate 
     )
   }
 
-  // Phase 3: logged out — sign in + get started
+  // Logged out
   return (
     <>
       <Link href="/login" className="hidden md:block">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="rounded-xl text-sm font-medium text-zinc-700 hover:text-zinc-900 hover:bg-zinc-100"
-        >
+        <Button variant="ghost" size="sm"
+          className="rounded-xl text-sm font-medium text-zinc-700 hover:text-zinc-900 hover:bg-zinc-100">
           Sign in
         </Button>
       </Link>
       <Link href="/signup">
-        <Button
-          size="sm"
-          className="rounded-xl text-sm font-semibold bg-zinc-900 text-white hover:bg-zinc-700 shadow-sm"
-        >
+        <Button size="sm"
+          className="rounded-xl text-sm font-semibold bg-zinc-900 text-white hover:bg-zinc-700 shadow-sm">
           Get started
         </Button>
       </Link>
@@ -166,7 +299,7 @@ function AuthArea({ authLoading, user, profile, onSignOut, signingOut, navigate 
   )
 }
 
-// ── Main Navbar ────────────────────────────────────────────────────────────────
+// ─── Main Navbar ──────────────────────────────────────────────────────────────
 
 export function Navbar() {
   const [scrolled,   setScrolled]   = useState(false)
@@ -187,13 +320,8 @@ export function Navbar() {
   const signOut = async () => {
     if (signingOut) return
     setSigningOut(true)
-    try {
-      await fetch("/api/auth/signout", { method: "POST" })
-    } finally {
-      router.push("/login")
-      router.refresh()
-      setSigningOut(false)
-    }
+    try { await fetch("/api/auth/signout", { method: "POST" }) }
+    finally { router.push("/login"); router.refresh(); setSigningOut(false) }
   }
 
   const navigate = (href: string) => router.push(href)
@@ -203,18 +331,14 @@ export function Navbar() {
       "fixed top-0 inset-x-0 z-50 transition-all duration-300",
       scrolled
         ? "bg-white/90 backdrop-blur-xl border-b border-black/[0.06] shadow-sm"
-        : "bg-white/80 backdrop-blur-sm"  // always slightly white so auth buttons are visible
+        : "bg-white/80 backdrop-blur-sm"
     )}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-14">
 
           {/* Logo */}
           <Link href="/" className="flex items-center group flex-shrink-0">
-            <Image
-              src="/logo.png"
-              alt="AgentDyne"
-              width={140}
-              height={40}
+            <Image src="/logo.png" alt="AgentDyne" width={140} height={40}
               className="h-8 w-auto object-contain transition-opacity group-hover:opacity-80"
               priority
               onError={e => {
@@ -224,11 +348,7 @@ export function Navbar() {
                 if (fb) fb.style.removeProperty("display")
               }}
             />
-            {/* Fallback text — shown if logo.png is missing */}
-            <span
-              className="text-lg font-black text-zinc-900"
-              style={{ display: "none" }}
-            >
+            <span className="text-lg font-black text-zinc-900" style={{ display: "none" }}>
               AgentDyne
             </span>
           </Link>
@@ -242,9 +362,7 @@ export function Navbar() {
                   <Link key={href} href={href}>
                     <span className={cn(
                       "px-3.5 py-1.5 rounded-lg text-sm font-medium transition-all duration-150 block",
-                      active
-                        ? "bg-white text-zinc-900 shadow-sm"
-                        : "text-zinc-600 hover:text-zinc-900"
+                      active ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-600 hover:text-zinc-900"
                     )}>
                       {label}
                     </span>
@@ -264,14 +382,10 @@ export function Navbar() {
               signingOut={signingOut}
               navigate={navigate}
             />
-
-            {/* Mobile hamburger */}
-            <Button
-              variant="ghost" size="icon"
+            <Button variant="ghost" size="icon"
               className="md:hidden h-9 w-9 rounded-xl"
               onClick={() => setMobileOpen(!mobileOpen)}
-              aria-label="Toggle navigation menu"
-            >
+              aria-label="Toggle navigation menu">
               {mobileOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
             </Button>
           </div>
@@ -286,16 +400,13 @@ export function Navbar() {
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
             transition={{ duration: 0.18 }}
-            className="md:hidden border-t border-zinc-100 bg-white overflow-hidden shadow-sm"
-          >
+            className="md:hidden border-t border-zinc-100 bg-white overflow-hidden shadow-sm">
             <div className="px-4 py-4 space-y-1">
               {NAV.map(({ href, label }) => (
                 <Link key={href} href={href}>
                   <div className={cn(
                     "px-3 py-2.5 rounded-xl text-sm font-medium transition-colors",
-                    pathname === href
-                      ? "bg-primary/8 text-primary"
-                      : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-50"
+                    pathname === href ? "bg-primary/8 text-primary" : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-50"
                   )}>
                     {label}
                   </div>
@@ -320,21 +431,15 @@ export function Navbar() {
                 {authLoading ? (
                   <div className="h-9 rounded-xl bg-zinc-100 animate-pulse" />
                 ) : user ? (
-                  <Button
-                    variant="outline"
-                    onClick={signOut}
-                    disabled={signingOut}
-                    className="w-full rounded-xl text-red-600 border-red-100 hover:bg-red-50"
-                  >
+                  <Button variant="outline" onClick={signOut} disabled={signingOut}
+                    className="w-full rounded-xl text-red-600 border-red-100 hover:bg-red-50">
                     <LogOut className="h-4 w-4 mr-2" />
                     {signingOut ? "Signing out…" : "Sign out"}
                   </Button>
                 ) : (
                   <>
                     <Link href="/login">
-                      <Button variant="outline" className="w-full rounded-xl font-semibold">
-                        Sign in
-                      </Button>
+                      <Button variant="outline" className="w-full rounded-xl font-semibold">Sign in</Button>
                     </Link>
                     <Link href="/signup">
                       <Button className="w-full rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold">

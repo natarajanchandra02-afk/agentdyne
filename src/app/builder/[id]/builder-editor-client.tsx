@@ -339,7 +339,7 @@ function KnowledgeSection({ items, onChange }: { items: KnowledgeItem[]; onChang
 // Main component
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function BuilderEditorClient({ agent }: { agent: any }) {
+export function BuilderEditorClient({ agent, defaultTab = "basics" }: { agent: any; defaultTab?: string }) {
   const router   = useRouter()
   const supabase = createClient()
 
