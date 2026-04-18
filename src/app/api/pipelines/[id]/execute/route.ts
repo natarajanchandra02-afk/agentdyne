@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server"
 import { apiRateLimit } from "@/lib/rate-limit"
 import { routeCompletion } from "@/lib/model-router"
 import { runInjectionPipeline, sanitizeOutput } from "@/lib/injection-filter"
+import { retrieveRAGContext, buildRAGSystemPrompt } from "@/lib/rag-retriever"
 
 /**
  * POST /api/pipelines/[id]/execute
@@ -67,10 +68,14 @@ export async function POST(
       .eq("id", user.id)
       .single()
 
-    const quota = profile?.monthly_execution_quota ?? 100
-    const used  = profile?.executions_used_this_month ?? 0
-    const dag   = pipeline.dag as { nodes: DAGNode[]; edges: DAGEdge[] }
+    const quota     = profile?.monthly_execution_quota ?? 100
+    const used      = profile?.executions_used_this_month ?? 0
+    const dag       = pipeline.dag as { nodes: DAGNode[]; edges: DAGEdge[] }
     const nodeCount = dag.nodes.length
+
+    if (nodeCount === 0) {
+      return NextResponse.json({ error: "Pipeline has no agents configured" }, { status: 422 })
+    }
 
     // Each node in the pipeline consumes 1 execution quota unit
     if (quota !== -1 && used + nodeCount > quota) {
@@ -87,11 +92,10 @@ export async function POST(
       .eq("user_id", user.id)
       .single()
 
-    // Estimate max cost (all nodes at their per_call price)
     const agentIds = dag.nodes.map(n => n.agent_id).filter(Boolean)
     const { data: agentPrices } = await supabase
       .from("agents")
-      .select("id, name, price_per_call, pricing_model, model_name, system_prompt, max_tokens, temperature, status, free_calls_per_month")
+      .select("id, name, price_per_call, pricing_model, model_name, system_prompt, max_tokens, temperature, status, free_calls_per_month, knowledge_base_id")
       .in("id", agentIds)
 
     if (!agentPrices || agentPrices.length !== agentIds.length) {
@@ -101,18 +105,18 @@ export async function POST(
       )
     }
 
-    const agentMap = new Map(agentPrices.map(a => [a.id, a]))
+    const agentMap = new Map(agentPrices.map((a: any) => [a.id, a]))
     for (const a of agentPrices) {
-      if (a.status !== "active") {
+      if ((a as any).status !== "active") {
         return NextResponse.json(
-          { error: `Agent "${a.id}" is not active` },
+          { error: `Agent "${(a as any).name || a.id}" is not active. Activate it before running the pipeline.` },
           { status: 422 }
         )
       }
     }
 
     // ── Parse request ────────────────────────────────────────────────────────
-    const body      = await req.json()
+    const body = await req.json()
     const { input = "", variables = {} } = body
 
     // ── Create pipeline execution record ────────────────────────────────────
@@ -147,16 +151,17 @@ export async function POST(
 
     for (const node of sorted) {
       if (Date.now() > deadline) {
-        await failPipelineExec(supabase, pipelineExec!.id, "Pipeline execution timed out")
+        await failPipelineExec(
+          supabase, pipelineExec!.id, "Pipeline execution timed out",
+          nodeResults, totalCost, totalTokensIn, totalTokensOut, Date.now() - startTotal
+        )
         return NextResponse.json({ error: "Pipeline timed out", executionId: pipelineExec!.id }, { status: 408 })
       }
 
-      const agent     = agentMap.get(node.agent_id)
+      const agent = agentMap.get(node.agent_id) as any
       if (!agent) continue
 
-      // Build input for this node:
-      // 1. If node has upstream edges, use output of predecessor
-      // 2. Otherwise use the original pipeline input
+      // Build input for this node
       const upstreamEdges = dag.edges.filter(e => e.to === node.id)
       let nodeInput: unknown
 
@@ -171,13 +176,12 @@ export async function POST(
         // Merge outputs from all upstream nodes
         const upstreamOutputs = upstreamEdges
           .map(e => nodeOutputs[e.from])
-          .filter(Boolean)
+          .filter(v => v !== undefined)
 
         nodeInput = upstreamOutputs.length === 1
           ? upstreamOutputs[0]
           : upstreamOutputs
 
-        // Apply node-specific input mapping if configured
         if (node.input_mapping) {
           nodeInput = applyInputMapping(node.input_mapping, upstreamOutputs, variables)
         }
@@ -196,16 +200,27 @@ export async function POST(
           throw new Error("Input rejected by injection filter")
         }
 
-        // Prepend node-specific prompt override if set
-        const systemPrompt = node.system_prompt_override ?? agent.system_prompt ?? ""
+        // Base system prompt (node override takes priority)
+        let systemPrompt: string = node.system_prompt_override ?? agent.system_prompt ?? ""
 
-        // Route to correct LLM provider based on model_name
+        // RAG context injection if agent has a knowledge base
+        if (agent.knowledge_base_id) {
+          const ragResult = await retrieveRAGContext(
+            supabase,
+            agent.knowledge_base_id,
+            userMessage,
+            { topK: 5, threshold: 0.65 }
+          )
+          systemPrompt = buildRAGSystemPrompt(systemPrompt, ragResult)
+        }
+
+        // Route to correct LLM provider
         const { text: rawText, inputTokens, outputTokens, costUsd: nodeCost } =
           await routeCompletion({
             model:       agent.model_name || "claude-sonnet-4-20250514",
             system:      systemPrompt,
             userMessage,
-            maxTokens:   agent.max_tokens || 4096,
+            maxTokens:   agent.max_tokens  || 4096,
             temperature: agent.temperature ?? 0.7,
           })
 
@@ -213,7 +228,11 @@ export async function POST(
         const { text: safeText } = sanitizeOutput(rawText)
 
         let nodeOutput: unknown = safeText
-        try { nodeOutput = JSON.parse(safeText) } catch {}
+        // Try JSON parse for structured output
+        try {
+          const stripped = safeText.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/, "").trim()
+          nodeOutput = JSON.parse(stripped)
+        } catch { /* stay as string */ }
 
         nodeOutputs[node.id] = nodeOutput
         lastOutput            = nodeOutput
@@ -230,28 +249,26 @@ export async function POST(
           output:     nodeOutput,
           latency_ms: nodeLatency,
           cost:       nodeCost,
-          tokens: {
-            input:  inputTokens,
-            output: outputTokens,
-          },
+          tokens: { input: inputTokens, output: outputTokens },
         })
 
-        // Persist individual execution record per node
-        await supabase.from("executions").insert({
-          agent_id: node.agent_id,
-          user_id:  user.id,
-          status:   "success",
-          input:    nodeInput,
-          output:   nodeOutput,
-          tokens_input:  response.usage.input_tokens,
-          tokens_output: response.usage.output_tokens,
+        // Persist individual execution record per node (fire-and-forget)
+        supabase.from("executions").insert({
+          agent_id:      node.agent_id,
+          user_id:       user.id,
+          status:        "success",
+          input:         nodeInput,
+          output:        nodeOutput,
+          tokens_input:  inputTokens,
+          tokens_output: outputTokens,
           latency_ms:    nodeLatency,
+          cost:          nodeCost,
           cost_usd:      nodeCost,
           completed_at:  new Date().toISOString(),
-        })
+        }).then(() => {})
 
-        // Increment quota per node
-        await supabase.rpc("increment_executions_used", { user_id_param: user.id })
+        // Increment quota per node (fire-and-forget)
+        supabase.rpc("increment_executions_used", { user_id_param: user.id }).then(() => {})
 
       } catch (nodeErr: any) {
         const nodeLatency = Date.now() - nodeStart
@@ -259,7 +276,7 @@ export async function POST(
         nodeResults.push({
           node_id:    node.id,
           agent_id:   node.agent_id,
-          agent_name: agentMap.get(node.agent_id)?.name ?? node.id,
+          agent_name: (agentMap.get(node.agent_id) as any)?.name ?? node.id,
           status:     "failed",
           input:      nodeInput,
           output:     null,
@@ -268,21 +285,14 @@ export async function POST(
           error:      nodeErr.message,
         })
 
-        // Decide whether to abort or continue
         if (!node.continue_on_failure) {
-          // Fail the whole pipeline
           await failPipelineExec(
-            supabase,
-            pipelineExec!.id,
-            `Node "${node.id}" failed: ${nodeErr.message}`,
-            nodeResults,
-            totalCost,
-            totalTokensIn,
-            totalTokensOut,
-            Date.now() - startTotal
+            supabase, pipelineExec!.id,
+            `Node "${node.label || node.id}" failed: ${nodeErr.message}`,
+            nodeResults, totalCost, totalTokensIn, totalTokensOut, Date.now() - startTotal
           )
           return NextResponse.json({
-            error:          `Pipeline failed at node "${node.id}"`,
+            error:          `Pipeline failed at node "${node.label || node.id}"`,
             failed_node:    node.id,
             executionId:    pipelineExec!.id,
             node_results:   nodeResults,
@@ -300,9 +310,9 @@ export async function POST(
     // ── Deduct credits ───────────────────────────────────────────────────────
     if (totalCost > 0 && credits) {
       await supabase.rpc("deduct_credits", {
-        user_id_param:     user.id,
-        amount_param:      totalCost,
-        description_param: `Pipeline: ${pipeline.name}`,
+        user_id_param:      user.id,
+        amount_param:       totalCost,
+        description_param:  `Pipeline: ${pipeline.name}`,
         reference_id_param: pipelineExec!.id,
       })
     }
@@ -325,10 +335,10 @@ export async function POST(
       output:       lastOutput,
       node_results: nodeResults,
       summary: {
-        nodes_executed:  nodeResults.length,
-        total_latency_ms: totalLatency,
-        total_cost_usd:  totalCost.toFixed(6),
-        total_tokens:    { input: totalTokensIn, output: totalTokensOut },
+        nodes_executed:    nodeResults.length,
+        total_latency_ms:  totalLatency,
+        total_cost_usd:    totalCost.toFixed(6),
+        total_tokens:      { input: totalTokensIn, output: totalTokensOut },
       },
     })
 
@@ -341,13 +351,13 @@ export async function POST(
 // ── Types ─────────────────────────────────────────────────────────────────
 
 interface DAGNode {
-  id:                     string
-  agent_id:               string
-  label?:                 string
+  id:                      string
+  agent_id:                string
+  label?:                  string
   system_prompt_override?: string
-  input_mapping?:         Record<string, string>
-  continue_on_failure?:   boolean
-  config?:                Record<string, unknown>
+  input_mapping?:          Record<string, string>
+  continue_on_failure?:    boolean
+  config?:                 Record<string, unknown>
 }
 
 interface DAGEdge {
@@ -371,10 +381,7 @@ interface NodeResult {
 
 // ── Topological sort (Kahn's algorithm) ──────────────────────────────────
 
-function topologicalSort(
-  nodes: DAGNode[],
-  edges: DAGEdge[]
-): DAGNode[] | null {
+function topologicalSort(nodes: DAGNode[], edges: DAGEdge[]): DAGNode[] | null {
   const inDegree = new Map<string, number>()
   const adj      = new Map<string, string[]>()
 
@@ -382,25 +389,22 @@ function topologicalSort(
     inDegree.set(node.id, 0)
     adj.set(node.id, [])
   }
-
   for (const edge of edges) {
     adj.get(edge.from)?.push(edge.to)
     inDegree.set(edge.to, (inDegree.get(edge.to) ?? 0) + 1)
   }
 
-  const queue:  string[]   = []
-  const result: DAGNode[]  = []
+  const queue:  string[]  = []
+  const result: DAGNode[] = []
   const nodeMap = new Map(nodes.map(n => [n.id, n]))
 
   for (const [id, deg] of inDegree) {
     if (deg === 0) queue.push(id)
   }
-
   while (queue.length > 0) {
-    const cur = queue.shift()!
+    const cur  = queue.shift()!
     const node = nodeMap.get(cur)
     if (node) result.push(node)
-
     for (const next of adj.get(cur) ?? []) {
       const newDeg = (inDegree.get(next) ?? 0) - 1
       inDegree.set(next, newDeg)
@@ -408,9 +412,7 @@ function topologicalSort(
     }
   }
 
-  // Cycle detected
-  if (result.length !== nodes.length) return null
-  return result
+  return result.length !== nodes.length ? null : result
 }
 
 // ── Template variable interpolation ──────────────────────────────────────
@@ -420,28 +422,24 @@ function interpolate(
   variables: Record<string, string>,
   nodeOutputs: Record<string, unknown>
 ): string {
-  return template
-    .replace(/\{\{(\w+)\}\}/g, (_, key) => {
-      if (key in variables)    return String(variables[key])
-      if (key in nodeOutputs)  return JSON.stringify(nodeOutputs[key])
-      return `{{${key}}}`
-    })
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key) => {
+    if (key in variables)   return String(variables[key])
+    if (key in nodeOutputs) return JSON.stringify(nodeOutputs[key])
+    return `{{${key}}}`
+  })
 }
 
 function applyInputMapping(
-  mapping: Record<string, string>,
+  mapping:         Record<string, string>,
   upstreamOutputs: unknown[],
-  variables: Record<string, string>
+  variables:       Record<string, string>
 ): unknown {
   const result: Record<string, unknown> = {}
   for (const [targetKey, sourceExpr] of Object.entries(mapping)) {
     if (sourceExpr.startsWith("node.") && upstreamOutputs.length > 0) {
-      // e.g. "node.0.summary" → upstreamOutputs[0].summary
       const parts = sourceExpr.split(".")
       let val: any = upstreamOutputs[parseInt(parts[1] ?? "0")]
-      for (let i = 2; i < parts.length; i++) {
-        val = val?.[parts[i]!]
-      }
+      for (let i = 2; i < parts.length; i++) val = val?.[parts[i]!]
       result[targetKey] = val
     } else if (sourceExpr in variables) {
       result[targetKey] = variables[sourceExpr]
@@ -455,14 +453,14 @@ function applyInputMapping(
 // ── Persist pipeline failure ──────────────────────────────────────────────
 
 async function failPipelineExec(
-  supabase: any,
-  execId: string,
-  errorMsg: string,
+  supabase:    any,
+  execId:      string,
+  errorMsg:    string,
   nodeResults: NodeResult[] = [],
-  cost = 0,
+  cost     = 0,
   tokensIn = 0,
   tokensOut = 0,
-  latency = 0
+  latency  = 0
 ) {
   await supabase.from("pipeline_executions").update({
     status:           "failed",

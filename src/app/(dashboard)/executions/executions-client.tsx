@@ -290,14 +290,18 @@ export function ExecutionsClient({ executions: allExecs, totalExecutions, profil
                         ))}
                       </div>
 
-                      {exec.agents && (
-                        <div className="flex items-center gap-2 pt-2 border-t border-zinc-100">
-                          <Link href={`/marketplace/${exec.agents.id}`} target="_blank"
+                      <div className="flex items-center gap-3 pt-2 border-t border-zinc-100">
+                          <Link href={`/executions/${exec.id}`}
                             className="flex items-center gap-1.5 text-xs text-primary font-semibold hover:underline">
-                            <ExternalLink className="h-3 w-3" /> View agent on marketplace
+                            <ChevronRight className="h-3 w-3" /> View full trace
                           </Link>
+                          {exec.agents && (
+                            <Link href={`/marketplace/${exec.agents.id}`} target="_blank"
+                              className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-primary font-semibold hover:underline">
+                              <ExternalLink className="h-3 w-3" /> View agent
+                            </Link>
+                          )}
                         </div>
-                      )}
                     </motion.div>
                   )}
                 </motion.div>
