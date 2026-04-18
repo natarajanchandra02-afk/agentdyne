@@ -4,8 +4,8 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { apiRateLimit } from "@/lib/rate-limit"
 import { routeCompletion, routeStream } from "@/lib/model-router"
-import { checkInput, processOutput } from "@/lib/guardrails"
-import { runInjectionPipeline } from "@/lib/injection-filter"
+import { runInjectionPipeline, sanitizeOutput } from "@/lib/injection-filter"
+import { compressToTokenBudget, cheapestModelForTask } from "@/lib/context-compression"
 import { runAnthropicToolLoop } from "@/lib/mcp-tool-executor"
 import { retrieveRAGContext, buildRAGSystemPrompt } from "@/lib/rag-retriever"
 
@@ -258,10 +258,20 @@ export async function POST(
     const modelName   = (agent.model_name as string) || "claude-sonnet-4-20250514"
     const useMCPLoop  = mcpServerIds.length > 0 && modelName.startsWith("claude-")
 
-    const modelParams = {
-      model:       modelName,
-      system:      enrichedSystemPrompt,
+    // ── Context compression + cost-optimal model selection ────────────────────
+    // Trims whitespace + truncates to token budget; auto-downgrades model for
+    // small inputs (e.g. Sonnet→Haiku for <1000 token calls = ~10x cheaper).
+    const { systemPrompt: compressedSystem, userMessage: compressedUser } = compressToTokenBudget(
+      enrichedSystemPrompt,
       userMessage,
+      14_000  // safe budget: leaves ~2k tokens for output
+    )
+    const optimizedModel = cheapestModelForTask(modelName, Math.ceil(compressedUser.length / 4))
+
+    const modelParams = {
+      model:       optimizedModel,
+      system:      compressedSystem,
+      userMessage: compressedUser,
       maxTokens:   (agent.max_tokens  as number) || 4096,
       temperature: (agent.temperature as number) || 0.7,
     }

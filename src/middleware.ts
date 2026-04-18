@@ -133,12 +133,16 @@ export async function middleware(req: NextRequest) {
   if (isAuthOnly && user) {
     const rawNext = req.nextUrl.searchParams.get("next") ?? "/dashboard"
     // Validate: must be a same-site relative path (no // open-redirect, no http://)
-    const safeNext =
+    // Also exclude the builder wizard (/builder exact) — if user came from /builder
+    // while unauthenticated, sending them back to the creation wizard after login
+    // is confusing. Send to /dashboard instead so they see the welcome screen.
+    const isSafe = (
       rawNext.startsWith("/") &&
       !rawNext.startsWith("//") &&
-      !rawNext.includes("://")
-        ? rawNext
-        : "/dashboard"
+      !rawNext.includes("://") &&
+      rawNext !== "/builder"   // redirect builder→dashboard to avoid wizard confusion
+    )
+    const safeNext = isSafe ? rawNext : "/dashboard"
     const res = NextResponse.redirect(new URL(safeNext, req.url))
     applySecurityHeaders(res, isProd)
     return res
