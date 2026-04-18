@@ -1,11 +1,10 @@
 // ✅ CANONICAL PIPELINE EDITOR — served at /pipelines/[id]
 // Layout from (dashboard)/layout.tsx applies automatically (DashboardSidebar + main wrapper).
 // This file replaces the redirect stub. export const runtime = 'edge' satisfies CF Pages.
+"use client"
 
 export const runtime = 'edge'
 export const dynamic = 'force-dynamic'
-
-"use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
 import { useParams, useRouter } from "next/navigation"
