@@ -1,28 +1,52 @@
 "use client"
 export const dynamic = 'force-dynamic'
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { useUser } from "@/hooks/use-user"
 import { createClient } from "@/lib/supabase/client"
 import { AdminClient } from "./admin-client"
 import { DashboardSidebar } from "@/components/dashboard/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
+import { ShieldCheck } from "lucide-react"
 
 export default function AdminPage() {
-  const [data, setData]       = useState<any>(null)
-  const [denied, setDenied]   = useState(false)
-  const router   = useRouter()
-  const supabase = createClient()
-  const { user, profile, loading: authLoading } = useUser()
+  const [data,   setData]   = useState<any>(null)
+  const [denied, setDenied] = useState(false)
+  const [roleChecked, setRoleChecked] = useState(false)
+  const router = useRouter()
+
+  // useUser hook gives us the auth user (session). We then do a
+  // FRESH DB query for role — never trust the module-level cache
+  // because a just-promoted admin still has `role:"user"` in cache.
+  const { user, loading: authLoading } = useUser()
+
+  // Singleton supabase client for data loading
+  const supabaseRef = useRef(createClient())
+  const supabase    = supabaseRef.current
 
   useEffect(() => {
     if (authLoading) return
     if (!user) { router.push("/login?next=/admin"); return }
-    if (profile && profile.role !== "admin") { setDenied(true); return }
-    if (!profile) return  // still loading profile
 
-    async function load() {
+    // Always fetch role fresh from the DB — never from hook cache
+    // This is the fix for "access denied after setting role = 'admin'"
+    supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .single()
+      .then(({ data: profileData }) => {
+        if (profileData?.role !== "admin") {
+          setDenied(true)
+          setRoleChecked(true)
+          return
+        }
+        setRoleChecked(true)
+        loadAdminData()
+      })
+
+    async function loadAdminData() {
       const [
         { count: totalUsers },
         { count: totalAgents },
@@ -52,14 +76,14 @@ export default function AdminPage() {
           .limit(20),
       ])
 
-      const totalRevenue  = (revenue || []).reduce((s: number, t: any) => s + Number(t.amount), 0)
+      const totalRevenue   = (revenue || []).reduce((s: number, t: any) => s + Number(t.amount), 0)
       const platformEarned = totalRevenue * 0.20
 
       setData({
         stats: {
-          totalUsers:    totalUsers    || 0,
-          totalAgents:   totalAgents   || 0,
-          pendingAgents: pendingAgents || 0,
+          totalUsers:      totalUsers      || 0,
+          totalAgents:     totalAgents     || 0,
+          pendingAgents:   pendingAgents   || 0,
           totalExecutions: totalExecutions || 0,
           totalRevenue,
           platformEarned,
@@ -69,24 +93,29 @@ export default function AdminPage() {
         flaggedAttempts: flaggedAttempts || [],
       })
     }
-    load()
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, profile, authLoading])
+  }, [user?.id, authLoading])
 
+  // ── Access denied ─────────────────────────────────────────────────────────
   if (denied) {
     return (
       <div className="flex min-h-screen bg-white">
         <DashboardSidebar />
         <div className="flex-1 flex items-center justify-center">
-          <div className="text-center">
-            <p className="text-4xl mb-3">🚫</p>
-            <h1 className="text-xl font-bold text-zinc-900">Access Denied</h1>
-            <p className="text-sm text-zinc-400 mt-2">You need admin privileges to view this page.</p>
-            <p className="text-xs text-zinc-300 mt-2">
-              Run this SQL in Supabase:<br />
-              <code className="bg-zinc-50 border px-2 py-1 rounded text-xs">
-                UPDATE profiles SET role = &apos;admin&apos; WHERE email = &apos;your@email.com&apos;;
-              </code>
+          <div className="text-center max-w-md px-4">
+            <div className="w-16 h-16 rounded-2xl bg-red-50 flex items-center justify-center mx-auto mb-4">
+              <ShieldCheck className="h-8 w-8 text-red-400" />
+            </div>
+            <h1 className="text-xl font-bold text-zinc-900 mb-2">Admin Access Required</h1>
+            <p className="text-sm text-zinc-500 mb-5">
+              Your account does not have admin privileges. Run this SQL in your Supabase SQL Editor,
+              then <strong>sign out and sign back in</strong>:
+            </p>
+            <pre className="bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-3 text-xs font-mono text-zinc-700 text-left overflow-auto">
+              {`UPDATE profiles\nSET role = 'admin'\nWHERE email = '${user?.email ?? "your@email.com"}';`}
+            </pre>
+            <p className="text-xs text-zinc-400 mt-3">
+              After running the SQL, sign out and back in to refresh your session.
             </p>
           </div>
         </div>
@@ -94,7 +123,8 @@ export default function AdminPage() {
     )
   }
 
-  if (authLoading || !data) {
+  // ── Loading ───────────────────────────────────────────────────────────────
+  if (authLoading || !roleChecked || !data) {
     return (
       <div className="flex min-h-screen bg-white">
         <DashboardSidebar />

@@ -1,112 +1,86 @@
 /**
- * AgentDyne — Runtime environment validation
- *
- * Called from layout.tsx (server component) on first render.
- * Edge-runtime safe — pure string checks, no Node.js APIs.
- *
- * Design:
- *  - REQUIRED vars: missing these = broken platform → log error
- *  - OPTIONAL vars: missing these = feature degraded → log warn
- *  - Never throws — we log and return a status object so the UI can
- *    show a setup banner in development without crashing production.
+ * Environment variable validation
+ * Called once at startup from layout.tsx
+ * Never throws — logs warnings only so builds don't crash on missing vars
  */
 
-export interface EnvStatus {
-  ok:       boolean
-  missing:  string[]
-  warnings: string[]
-}
-
-type EnvSpec = {
+interface EnvVar {
   key:      string
   required: boolean
-  feature:  string
+  secret:   boolean   // true = never log the value
+  hint:     string
 }
 
-const ENV_SPECS: EnvSpec[] = [
-  // Platform core — required
-  { key: "NEXT_PUBLIC_SUPABASE_URL",      required: true,  feature: "Database" },
-  { key: "NEXT_PUBLIC_SUPABASE_ANON_KEY", required: true,  feature: "Database auth" },
-  { key: "SUPABASE_SERVICE_ROLE_KEY",     required: true,  feature: "Server-side DB" },
-  { key: "ANTHROPIC_API_KEY",             required: true,  feature: "AI execution (Claude)" },
-  { key: "NEXT_PUBLIC_APP_URL",           required: true,  feature: "OAuth redirects / metadata" },
-  // Commerce — required for paid features
-  { key: "STRIPE_SECRET_KEY",             required: false, feature: "Stripe billing" },
-  { key: "STRIPE_STARTER_PRICE_ID",       required: false, feature: "Starter plan upgrades" },
-  { key: "STRIPE_PRO_PRICE_ID",           required: false, feature: "Pro plan upgrades" },
-  { key: "STRIPE_WEBHOOK_SECRET",         required: false, feature: "Stripe webhooks" },
-  // RAG — optional
-  { key: "OPENAI_API_KEY",                required: false, feature: "RAG embeddings" },
-  // Additional AI providers — optional
-  { key: "GOOGLE_AI_API_KEY",             required: false, feature: "Gemini models" },
+const ENV_VARS: EnvVar[] = [
+  { key: "NEXT_PUBLIC_SUPABASE_URL",   required: true,  secret: false, hint: "Supabase project URL — find at supabase.com/dashboard → Settings → API" },
+  { key: "NEXT_PUBLIC_SUPABASE_ANON_KEY", required: true, secret: true, hint: "Supabase anon key — find at supabase.com/dashboard → Settings → API" },
+  { key: "SUPABASE_SERVICE_ROLE_KEY",  required: true,  secret: true,  hint: "Supabase service role key — admin operations only, keep secret" },
+  { key: "ANTHROPIC_API_KEY",          required: true,  secret: true,  hint: "Anthropic API key — console.anthropic.com" },
+  { key: "OPENAI_API_KEY",             required: false, secret: true,  hint: "OpenAI API key — required for embeddings (RAG) and GPT models" },
+  { key: "STRIPE_SECRET_KEY",          required: false, secret: true,  hint: "Stripe secret key — required for billing" },
+  { key: "STRIPE_WEBHOOK_SECRET",      required: false, secret: true,  hint: "Stripe webhook signing secret — required to verify webhook events" },
+  { key: "STRIPE_STARTER_PRICE_ID",    required: false, secret: false, hint: "Stripe price ID for Starter plan" },
+  { key: "STRIPE_PRO_PRICE_ID",        required: false, secret: false, hint: "Stripe price ID for Pro plan" },
+  { key: "NEXT_PUBLIC_APP_URL",        required: true,  secret: false, hint: "Full URL of the app, e.g. https://agentdyne.com" },
+  { key: "GOOGLE_AI_API_KEY",          required: false, secret: true,  hint: "Google AI API key — required for Gemini models" },
 ]
 
-let _checked = false
-let _status: EnvStatus | null = null
+let _validated = false
 
-export function validateEnv(): EnvStatus {
-  // Cache result — only check once per process lifetime
-  if (_checked && _status) return _status
-  _checked = true
+export function validateEnv(): void {
+  // Only run once per process lifetime
+  if (_validated) return
+  _validated = true
+
+  if (typeof window !== "undefined") return  // client-side: skip
 
   const missing:  string[] = []
-  const warnings: string[] = []
+  const optional: string[] = []
 
-  for (const spec of ENV_SPECS) {
-    const val = (typeof process !== "undefined" ? process.env[spec.key] : undefined)
-      ?? (typeof globalThis !== "undefined" ? (globalThis as any)[spec.key] : undefined)
+  for (const v of ENV_VARS) {
+    const val = process.env[v.key]
+    const isEmpty = !val || val.includes("your-") || val === "your-anon-key"
 
-    const present = typeof val === "string" && val.trim().length > 0
-
-    if (!present) {
-      if (spec.required) {
-        missing.push(`${spec.key} (${spec.feature})`)
-      } else {
-        warnings.push(`${spec.key} not set — ${spec.feature} disabled`)
-      }
+    if (isEmpty) {
+      if (v.required) missing.push(v.key)
+      else            optional.push(v.key)
     }
   }
 
   if (missing.length > 0) {
     console.error(
-      `[AgentDyne] Missing required environment variables:\n` +
-      missing.map(m => `  ✗ ${m}`).join("\n")
+      `\n❌ [AgentDyne] Missing required environment variables:\n` +
+      missing.map(k => {
+        const v = ENV_VARS.find(e => e.key === k)!
+        return `   ${k}\n   → ${v.hint}`
+      }).join("\n") +
+      `\n\nSet these in .env.local (development) or Cloudflare Pages dashboard (production).\n`
     )
   }
 
-  if (warnings.length > 0 && process.env.NODE_ENV !== "production") {
+  if (optional.length > 0) {
     console.warn(
-      `[AgentDyne] Optional environment variables not set (features degraded):\n` +
-      warnings.map(w => `  ⚠ ${w}`).join("\n")
+      `\n⚠️  [AgentDyne] Optional env vars not set (some features disabled):\n` +
+      optional.map(k => `   ${k}`).join("\n") + "\n"
     )
   }
 
-  _status = { ok: missing.length === 0, missing, warnings }
-  return _status
+  if (missing.length === 0 && optional.length === 0) {
+    console.log("✅ [AgentDyne] All environment variables configured")
+  }
 }
 
-/** Returns true if a specific env var is configured */
-export function hasEnv(key: string): boolean {
-  const val = typeof process !== "undefined" ? process.env[key] : undefined
-  return typeof val === "string" && val.trim().length > 0
+/** Runtime check — use in API routes to guard against missing vars */
+export function requireEnv(key: string): string {
+  const val = process.env[key]
+  if (!val) {
+    throw new Error(`Missing required environment variable: ${key}. See /lib/env.ts for setup instructions.`)
+  }
+  return val
 }
 
-/** Checked env vars at module load — safe to use in edge/API routes */
-export const ENV = {
-  supabaseUrl:        process.env.NEXT_PUBLIC_SUPABASE_URL      ?? "",
-  supabaseAnonKey:    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
-  serviceRoleKey:     process.env.SUPABASE_SERVICE_ROLE_KEY     ?? "",
-  anthropicApiKey:    process.env.ANTHROPIC_API_KEY             ?? "",
-  openaiApiKey:       process.env.OPENAI_API_KEY                ?? "",
-  googleAiApiKey:     process.env.GOOGLE_AI_API_KEY             ?? "",
-  stripeSecretKey:    process.env.STRIPE_SECRET_KEY             ?? "",
-  stripeStarterPrice: process.env.STRIPE_STARTER_PRICE_ID       ?? "",
-  stripeProPrice:     process.env.STRIPE_PRO_PRICE_ID           ?? "",
-  stripeWebhookSecret:process.env.STRIPE_WEBHOOK_SECRET         ?? "",
-  appUrl:             process.env.NEXT_PUBLIC_APP_URL           ?? "https://agentdyne.com",
-  nodeEnv:            process.env.NODE_ENV                      ?? "production",
-  hasRAG:             !!process.env.OPENAI_API_KEY,
-  hasStripe:          !!process.env.STRIPE_SECRET_KEY,
-  hasGemini:          !!process.env.GOOGLE_AI_API_KEY,
-  isDev:              process.env.NODE_ENV === "development",
-} as const
+/** Check if a feature is available based on env var presence */
+export function featureAvailable(key: string): boolean {
+  const val = process.env[key]
+  return !!val && !val.includes("your-")
+}

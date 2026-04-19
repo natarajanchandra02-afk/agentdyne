@@ -9,7 +9,11 @@
 --
 -- UPDATE public.profiles SET role = 'admin' WHERE email = 'your@email.com';
 
--- ── 2. execution_cost_usd column on executions (if missing) ──────────────────
+-- ── 3. is_banned column (used by admin ban/unban feature) ──────────────────
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT FALSE;
+
+-- ── 4. execution_cost_usd column on executions (if missing) ──────────────────
 -- Ensures cost tracking works correctly for the analytics and admin pages.
 ALTER TABLE public.executions
   ADD COLUMN IF NOT EXISTS cost       NUMERIC(10,6) DEFAULT 0,

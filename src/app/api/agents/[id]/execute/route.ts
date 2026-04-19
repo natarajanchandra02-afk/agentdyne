@@ -181,7 +181,7 @@ export async function POST(
     if (agent.knowledge_base_id) {
       const ragResult = await retrieveRAGContext(supabase, agent.knowledge_base_id as string, userMessage, { topK: 5, threshold: 0.65 })
       enrichedSystemPrompt = buildRAGSystemPrompt(enrichedSystemPrompt, ragResult)
-      ragUsed = ragResult.retrieved
+      ragUsed = !ragResult.skipped && ragResult.chunks.length > 0
     }
 
     // ── ThoughtGate — cognitive optimisation ─────────────────────────────────
