@@ -102,16 +102,33 @@ export async function POST(req: NextRequest) {
       if (fbErr.code !== "42P01") throw fbErr
     }
 
-    // Update agent review if rating provided
+    // Update agent review if rating provided.
+    // Status is "pending" — goes through normal moderation, not auto-approved.
+    // The feedback table (agent_feedback) is already recorded above;
+    // this just syncs to the reviews table that drives the star rating.
     if (numericRating && agentId) {
-      await supabase.from("reviews").upsert({
-        agent_id:   agentId,
-        user_id:    user.id,
-        rating:     numericRating,
-        body:       comment ? String(comment).slice(0, 2000) : null,
-        status:     "approved",
-        updated_at: new Date().toISOString(),
-      }, { onConflict: "agent_id,user_id" })
+      // Check if user already reviewed — if so update, else insert
+      const { data: existingReview } = await supabase.from("reviews")
+        .select("id")
+        .eq("agent_id", agentId)
+        .eq("user_id",  user.id)
+        .maybeSingle()
+
+      if (existingReview) {
+        await supabase.from("reviews").update({
+          rating:     numericRating,
+          body:       comment ? String(comment).slice(0, 2000) : null,
+          updated_at: new Date().toISOString(),
+        }).eq("id", existingReview.id)
+      } else {
+        await supabase.from("reviews").insert({
+          agent_id: agentId,
+          user_id:  user.id,
+          rating:   numericRating,
+          body:     comment ? String(comment).slice(0, 2000) : null,
+          status:   "pending",  // goes through moderation queue
+        })
+      }
     }
 
     // ThoughtGate: update template success rate based on feedback

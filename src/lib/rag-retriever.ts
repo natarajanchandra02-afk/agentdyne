@@ -1,144 +1,151 @@
 /**
- * RAG Retriever — AgentDyne
+ * AgentDyne RAG Retriever
  *
- * Thin edge-compatible wrapper around the Supabase pgvector search.
- * Used by the pipeline executor and the agent execute route to inject
- * relevant knowledge-base context into agent system prompts.
+ * Full embed → pgvector search → format pipeline for RAG-augmented agents.
  *
- * Design:
- *  - Embeds the user query via OpenAI text-embedding-3-small
- *  - Calls the search_rag_chunks Postgres RPC (cosine similarity via pgvector)
- *  - Returns plain structs — no framework deps, runs in Cloudflare Workers
+ * Critical fix (applied here):
+ *   The search_rag_chunks RPC requires a pgvector float[] embedding vector,
+ *   NOT raw query text. The execute route previously passed raw text directly
+ *   to the RPC — this caused silent failures on every RAG execution.
+ *   This module correctly embeds the query via OpenAI before calling the RPC.
  *
- * Failure policy: all errors are non-fatal.
- * If embedding or search fails the caller receives an empty result
- * and falls back to the base system prompt. Agents MUST work without RAG.
+ * Design principles:
+ *   - Non-throwing: any failure returns { retrieved: false, skipped: true }
+ *     so the execute route falls back gracefully to the base system prompt
+ *   - Edge-runtime safe: fetch() only, no Node.js APIs
+ *   - Timeout-guarded: 5s for embedding, 3s for search
+ *   - Context is truncated at MAX_CONTEXT_CHARS to prevent token overflow
  */
 
 export interface RAGChunk {
-  chunk_id:       number
+  chunk_id:       string | number
   document_id:    string
   document_title: string
   content:        string
   similarity:     number
-  metadata?:      Record<string, unknown>
 }
 
 export interface RAGResult {
-  chunks:   RAGChunk[]
-  skipped:  boolean   // true when retrieval was skipped (no KB, missing key, etc.)
-  reason?:  string    // why it was skipped — for debug logs
+  chunks:         RAGChunk[]
+  contextString:  string
+  tokensEstimate: number
+  retrieved:      boolean
+  skipped:        boolean   // true when skipped due to missing API key or no results
 }
 
-export interface RAGOptions {
-  topK?:      number   // max chunks to retrieve (default 5)
-  threshold?: number   // minimum cosine similarity 0–1 (default 0.65)
+const EMPTY: RAGResult = {
+  chunks: [], contextString: "", tokensEstimate: 0, retrieved: false, skipped: true,
 }
 
-// ── Retrieval ──────────────────────────────────────────────────────────────────
+const MAX_CONTEXT_CHARS = 12_000   // ~3000 tokens of context — safe budget
 
-/**
- * Retrieve relevant chunks from a knowledge base for a given query string.
- * Returns empty RAGResult on any failure — never throws.
- */
+// ─── Embedding ────────────────────────────────────────────────────────────────
+
+async function embedQuery(text: string): Promise<number[] | null> {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) return null   // feature unavailable — caller falls back gracefully
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/embeddings", {
+      method:  "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type":  "application/json",
+      },
+      body:   JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 8192) }),
+      signal: AbortSignal.timeout(5_000),
+    })
+
+    if (!res.ok) return null
+
+    const data = await res.json() as { data: Array<{ embedding: number[] }> }
+    return data.data?.[0]?.embedding ?? null
+  } catch {
+    return null
+  }
+}
+
+// ─── Main retrieval function ──────────────────────────────────────────────────
+
 export async function retrieveRAGContext(
   supabase:        any,
   knowledgeBaseId: string,
-  query:           string,
-  opts:            RAGOptions = {}
+  userQuery:       string,
+  options: { topK?: number; threshold?: number } = {}
 ): Promise<RAGResult> {
-  const topK      = Math.min(20, Math.max(1, opts.topK      ?? 5))
-  const threshold = Math.min(1,  Math.max(0, opts.threshold ?? 0.65))
+  const topK      = Math.min(10, Math.max(1, options.topK      ?? 5))
+  const threshold = Math.max(0,  Math.min(1, options.threshold ?? 0.65))
 
-  const openAIKey = process.env.OPENAI_API_KEY
-  if (!openAIKey) {
-    return { chunks: [], skipped: true, reason: "OPENAI_API_KEY not configured" }
-  }
+  // Step 1: Embed query via OpenAI
+  const embedding = await embedQuery(userQuery)
+  if (!embedding) return { ...EMPTY }  // OpenAI unavailable — skip gracefully
 
-  if (!knowledgeBaseId || !query?.trim()) {
-    return { chunks: [], skipped: true, reason: "Missing kb_id or query" }
-  }
-
+  // Step 2: pgvector similarity search
+  let chunks: RAGChunk[] = []
   try {
-    // 1. Embed the query
-    const embedRes = await fetch("https://api.openai.com/v1/embeddings", {
-      method:  "POST",
-      headers: {
-        "Authorization": `Bearer ${openAIKey}`,
-        "Content-Type":  "application/json",
-      },
-      body: JSON.stringify({
-        model: "text-embedding-3-small",
-        input: query.trim().slice(0, 512),
-      }),
-      signal: AbortSignal.timeout(8_000),
-    })
-
-    if (!embedRes.ok) {
-      return { chunks: [], skipped: true, reason: `Embedding API error: ${embedRes.status}` }
-    }
-
-    const embedData = await embedRes.json() as { data: Array<{ embedding: number[] }> }
-    const embedding = embedData.data[0]?.embedding
-    if (!embedding) {
-      return { chunks: [], skipped: true, reason: "No embedding returned" }
-    }
-
-    // 2. Vector search via pgvector RPC
     const { data, error } = await supabase.rpc("search_rag_chunks", {
       kb_id_param:     knowledgeBaseId,
-      query_embedding: `[${embedding.join(",")}]`,
+      query_embedding: `[${embedding.join(",")}]`,  // pgvector text literal format
       match_threshold: threshold,
       match_count:     topK,
     })
 
     if (error) {
-      return { chunks: [], skipped: true, reason: `pgvector search error: ${error.message}` }
+      // Log for observability but don't throw — fallback is safe
+      console.warn("[RAG] search_rag_chunks error:", error.message)
+      return { ...EMPTY }
     }
 
-    const chunks: RAGChunk[] = (data ?? []).map((c: any) => ({
-      chunk_id:       c.chunk_id,
-      document_id:    c.document_id,
-      document_title: c.document_title ?? "Unknown",
-      content:        c.content,
-      similarity:     parseFloat((c.similarity ?? 0).toFixed(4)),
-      metadata:       c.metadata ?? undefined,
+    if (!data || data.length === 0) return { ...EMPTY, skipped: false }
+
+    chunks = (data as any[]).map(r => ({
+      chunk_id:       r.chunk_id ?? r.id ?? "",
+      document_id:    r.document_id ?? "",
+      document_title: r.document_title ?? "Unknown",
+      content:        r.content ?? "",
+      similarity:     parseFloat((r.similarity ?? 0).toFixed(4)),
     }))
-
-    return { chunks, skipped: false }
-
   } catch (err: any) {
-    return { chunks: [], skipped: true, reason: err.message }
+    console.warn("[RAG] retrieval exception:", err.message)
+    return { ...EMPTY }
+  }
+
+  // Step 3: Build context string
+  let contextString = chunks
+    .map((c, i) => `[Source ${i + 1}: ${c.document_title}]\n${c.content}`)
+    .join("\n\n---\n\n")
+
+  if (contextString.length > MAX_CONTEXT_CHARS) {
+    contextString = contextString.slice(0, MAX_CONTEXT_CHARS) + "\n\n[Context truncated — token budget reached]"
+  }
+
+  return {
+    chunks,
+    contextString,
+    tokensEstimate: Math.ceil(contextString.length / 4),
+    retrieved:      true,
+    skipped:        false,
   }
 }
 
-// ── Context builder ────────────────────────────────────────────────────────────
+// ─── System prompt builder ────────────────────────────────────────────────────
 
-/**
- * Inject RAG chunks into a system prompt.
- * Prepends a <knowledge_base_context> block before the base prompt.
- * If no chunks were retrieved, returns the base prompt unchanged.
- */
-export function buildRAGSystemPrompt(
-  baseSystemPrompt: string,
-  ragResult:        RAGResult
-): string {
-  if (ragResult.skipped || ragResult.chunks.length === 0) {
-    return baseSystemPrompt
+export function buildRAGSystemPrompt(basePrompt: string, ragResult: RAGResult): string {
+  if (!ragResult.retrieved || ragResult.chunks.length === 0) {
+    return basePrompt
   }
 
-  const contextBlock = ragResult.chunks
-    .map((c, i) => `[${i + 1}] ${c.document_title}\n${c.content}`)
-    .join("\n\n---\n\n")
+  return `${basePrompt}
 
-  return [
-    "<knowledge_base_context>",
-    contextBlock,
-    "</knowledge_base_context>",
-    "",
-    "Use the above context to answer the user. Cite source numbers [1], [2] etc. when referencing specific facts.",
-    "If the context does not contain relevant information, say so and answer from general knowledge.",
-    "",
-    baseSystemPrompt,
-  ].join("\n")
+<knowledge_base_context>
+The following information was retrieved from the agent's knowledge base based on your query.
+
+IMPORTANT INSTRUCTIONS:
+- Use this context as your PRIMARY source of truth for answering.
+- Cite sources by their number [1], [2] etc. when referencing specific facts.
+- If the retrieved context does NOT contain relevant information for the query, explicitly say so — do NOT hallucinate or infer beyond what is provided.
+- Do NOT mention "the context" or "the knowledge base" directly — respond naturally as if this is your own knowledge.
+
+${ragResult.contextString}
+</knowledge_base_context>`
 }

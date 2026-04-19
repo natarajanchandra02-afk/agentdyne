@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { apiRateLimit } from "@/lib/rate-limit"
 import { routeCompletion, routeStream } from "@/lib/model-router"
-import { checkInput, processOutput } from "@/lib/guardrails"         // ← was missing
+import { checkInput, processOutput } from "@/lib/guardrails"
 import { runInjectionPipeline } from "@/lib/injection-filter"
 import { compressToTokenBudget, cheapestModelForTask } from "@/lib/context-compression"
 import { runAnthropicToolLoop } from "@/lib/mcp-tool-executor"
@@ -35,7 +35,7 @@ export async function POST(
 
     const supabase = await createClient()
 
-    // ── Auth ─────────────────────────────────────────────────────────────────
+    // ── Auth ──────────────────────────────────────────────────────────────────
     let userId: string | undefined
     const { data: { user } } = await supabase.auth.getUser()
     userId = user?.id
@@ -52,12 +52,16 @@ export async function POST(
         const keyHash = await hashApiKey(rawKey)
         const { data: keyRow } = await supabase
           .from("api_keys")
-          .select("user_id, is_active")
+          .select("user_id, is_active, expires_at")
           .eq("key_hash", keyHash)
           .single()
 
         if (!keyRow?.is_active)
           return NextResponse.json({ error: "Invalid or inactive API key" }, { status: 401 })
+
+        // Enforce key expiry
+        if (keyRow.expires_at && new Date(keyRow.expires_at) < new Date())
+          return NextResponse.json({ error: "API key has expired" }, { status: 401 })
 
         userId = keyRow.user_id
         supabase.from("api_keys")
@@ -82,14 +86,17 @@ export async function POST(
       return NextResponse.json({ error: "Agent not found or not active" }, { status: 404 })
 
     if (!agent.system_prompt || (agent.system_prompt as string).trim().length < 10)
-      return NextResponse.json({ error: "Agent is not configured correctly — missing system prompt." }, { status: 422 })
+      return NextResponse.json({ error: "Agent is not configured — missing system prompt" }, { status: 422 })
 
-    // ── Quota ─────────────────────────────────────────────────────────────────
+    // ── Quota + ban check ─────────────────────────────────────────────────────
     const { data: profile } = await supabase
       .from("profiles")
-      .select("executions_used_this_month, monthly_execution_quota, subscription_plan")
+      .select("executions_used_this_month, monthly_execution_quota, subscription_plan, is_banned")
       .eq("id", userId)
       .single()
+
+    if (profile?.is_banned)
+      return NextResponse.json({ error: "Your account has been suspended." }, { status: 403 })
 
     const quota = profile?.monthly_execution_quota ?? 100
     const used  = profile?.executions_used_this_month ?? 0
@@ -112,7 +119,7 @@ export async function POST(
       }
     }
 
-    // ── Credits ───────────────────────────────────────────────────────────────
+    // ── Credits check ─────────────────────────────────────────────────────────
     const pricePerCall  = parseFloat(String(agent.price_per_call ?? 0))
     let creditsRequired = 0
 
@@ -168,13 +175,17 @@ export async function POST(
     }
 
     // ── Create execution record ───────────────────────────────────────────────
+    // executions.input is jsonb NOT NULL — always store as a JSON object
+    const inputJson: Record<string, unknown> =
+      typeof input === "string" ? { text: input } : (input as Record<string, unknown> ?? {})
+
     const { data: execution } = await supabase
       .from("executions")
-      .insert({ agent_id: agentId, user_id: userId, status: "running", input })
+      .insert({ agent_id: agentId, user_id: userId, status: "running", input: inputJson })
       .select("id")
       .single()
 
-    // ── RAG ───────────────────────────────────────────────────────────────────
+    // ── RAG context retrieval ─────────────────────────────────────────────────
     let enrichedSystemPrompt = agent.system_prompt as string
     let ragUsed = false
 
@@ -184,23 +195,21 @@ export async function POST(
       ragUsed = !ragResult.skipped && ragResult.chunks.length > 0
     }
 
-    // ── ThoughtGate — cognitive optimisation ─────────────────────────────────
+    // ── ThoughtGate — cognitive optimisation ──────────────────────────────────
     const tgResult = thoughtGate.process({
       query:            userMessage,
       configuredTokens: (agent.max_tokens as number) || 4096,
     })
-
-    // Inject thought framework into system prompt (non-invasive addendum)
     if (tgResult.systemAddendum) {
       enrichedSystemPrompt = enrichedSystemPrompt + tgResult.systemAddendum
     }
 
-    // ── MCP tool-use loop ─────────────────────────────────────────────────────
+    // ── MCP tool-use loop decision ────────────────────────────────────────────
     const mcpServerIds: string[] = Array.isArray(agent.mcp_server_ids) ? agent.mcp_server_ids : []
     const modelName   = (agent.model_name as string) || "claude-sonnet-4-20250514"
     const useMCPLoop  = mcpServerIds.length > 0 && modelName.startsWith("claude-")
 
-    // ── Context compression + model cost-optimisation ────────────────────────
+    // ── Context compression ───────────────────────────────────────────────────
     const { systemPrompt: compressedSystem, userMessage: compressedUser } = compressToTokenBudget(
       enrichedSystemPrompt, userMessage, 14_000
     )
@@ -210,7 +219,7 @@ export async function POST(
       model:       optimizedModel,
       system:      compressedSystem,
       userMessage: compressedUser,
-      maxTokens:   tgResult.tokenBudget,   // ThoughtGate-optimised token budget
+      maxTokens:   tgResult.tokenBudget,
       temperature: (agent.temperature as number) || 0.7,
     }
 
@@ -239,37 +248,68 @@ export async function POST(
             outputTok = outputTokens
             const latencyMs = Date.now() - startMs
             const { safe: safeText } = processOutput(fullText, (agent as any).output_schema)
+            const outputJson: Record<string, unknown> = { text: safeText }
             send({ type: "done", executionId: execution?.id, latencyMs, cost: costUsd })
             controller.enqueue(encoder.encode("data: [DONE]\n\n"))
             controller.close()
 
             await Promise.all([
-              supabase.from("executions").update({ status: "success", output: safeText, tokens_input: inputTok, tokens_output: outputTok, latency_ms: latencyMs, cost: costUsd, cost_usd: costUsd, completed_at: new Date().toISOString() }).eq("id", execution?.id ?? ""),
+              supabase.from("executions").update({
+                status: "success", output: outputJson,
+                tokens_input: inputTok, tokens_output: outputTok,
+                latency_ms: latencyMs, cost: costUsd, cost_usd: costUsd,
+                completed_at: new Date().toISOString(),
+              }).eq("id", execution?.id ?? ""),
               supabase.rpc("increment_executions_used", { user_id_param: userId }),
-              supabase.from("execution_traces").insert({ execution_id: execution?.id, agent_id: agentId, user_id: userId, model: modelName, system_prompt: enrichedSystemPrompt, user_message: userMessage, assistant_reply: safeText, ttft_ms: ttfts[0] ?? null, total_ms: latencyMs, tokens_input: inputTok, tokens_output: outputTok, cost_usd: costUsd, status: "success", temperature: modelParams.temperature }),
+              supabase.from("execution_traces").insert({
+                execution_id: execution?.id, agent_id: agentId, user_id: userId,
+                model: modelName, system_prompt: enrichedSystemPrompt,
+                user_message: userMessage, assistant_reply: safeText,
+                ttft_ms: ttfts[0] ?? null, total_ms: latencyMs,
+                tokens_input: inputTok, tokens_output: outputTok,
+                cost_usd: costUsd, status: "success", temperature: modelParams.temperature,
+              }),
             ])
 
             if (creditsRequired > 0) {
-              await supabase.rpc("deduct_credits", { user_id_param: userId, amount_param: creditsRequired, description_param: `Agent: ${agent.name}`, reference_id_param: execution?.id ?? null })
+              await supabase.rpc("deduct_credits", {
+                user_id_param:      userId,
+                amount_param:       creditsRequired,
+                description_param:  `Agent: ${agent.name}`,
+                reference_id_param: execution?.id ?? null,
+              })
             }
           } catch (err: any) {
             send({ type: "error", error: "Execution failed" })
             controller.close()
             if (execution?.id) {
-              await supabase.from("executions").update({ status: "failed", error_message: err.message, completed_at: new Date().toISOString() }).eq("id", execution.id)
+              await supabase.from("executions").update({
+                status: "failed", error_message: err.message,
+                completed_at: new Date().toISOString(),
+              }).eq("id", execution.id)
             }
           }
         },
       })
-      return new Response(stream, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive" } })
+      return new Response(stream, {
+        headers: {
+          "Content-Type":  "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection":    "keep-alive",
+        },
+      })
     }
 
     // ── Synchronous path ──────────────────────────────────────────────────────
     let rawText = "", inputTok = 0, outputTok = 0, costUsd = 0, toolCalls = 0
 
     if (useMCPLoop) {
-      const r = await runAnthropicToolLoop({ model: modelName, system: enrichedSystemPrompt, userMessage, maxTokens: modelParams.maxTokens, temperature: modelParams.temperature, mcpServerIds })
-      rawText = r.text; inputTok = r.inputTokens; outputTok = r.outputTokens; costUsd = r.costUsd; toolCalls = r.toolCallCount
+      const r = await runAnthropicToolLoop({
+        model: modelName, system: enrichedSystemPrompt, userMessage,
+        maxTokens: modelParams.maxTokens, temperature: modelParams.temperature, mcpServerIds,
+      })
+      rawText = r.text; inputTok = r.inputTokens; outputTok = r.outputTokens
+      costUsd = r.costUsd; toolCalls = r.toolCallCount
     } else {
       const r = await routeCompletion(modelParams)
       rawText = r.text; inputTok = r.inputTokens; outputTok = r.outputTokens; costUsd = r.costUsd
@@ -277,28 +317,57 @@ export async function POST(
 
     const latencyMs = Date.now() - startMs
     const { safe: safeText, scrub, parsed: parsedOut } = processOutput(rawText, (agent as any).output_schema)
+
+    // executions.output is jsonb — always store as a JSON object, never a bare string
+    const outputStorable: Record<string, unknown> = parsedOut.isJSON
+      ? (typeof parsedOut.parsed === "object" && parsedOut.parsed !== null
+          ? parsedOut.parsed as Record<string, unknown>
+          : { result: parsedOut.parsed })
+      : { text: safeText }
+
     const output = parsedOut.isJSON ? parsedOut.parsed : safeText
 
     await Promise.all([
-      supabase.from("executions").update({ status: "success", output, tokens_input: inputTok, tokens_output: outputTok, latency_ms: latencyMs, cost: costUsd, cost_usd: costUsd, completed_at: new Date().toISOString() }).eq("id", execution?.id ?? ""),
+      supabase.from("executions").update({
+        status: "success", output: outputStorable,
+        tokens_input: inputTok, tokens_output: outputTok,
+        latency_ms: latencyMs, cost: costUsd, cost_usd: costUsd,
+        completed_at: new Date().toISOString(),
+      }).eq("id", execution?.id ?? ""),
       supabase.rpc("increment_executions_used", { user_id_param: userId }),
-      supabase.from("execution_traces").insert({ execution_id: execution?.id, agent_id: agentId, user_id: userId, model: modelName, system_prompt: enrichedSystemPrompt, user_message: userMessage, assistant_reply: safeText, total_ms: latencyMs, tokens_input: inputTok, tokens_output: outputTok, cost_usd: costUsd, status: scrub.flagged ? "flagged" : "success", error_message: scrub.flagged ? scrub.redacted?.join(",") : null, temperature: modelParams.temperature, tool_calls: toolCalls > 0 ? toolCalls : undefined }),
+      supabase.from("execution_traces").insert({
+        execution_id: execution?.id, agent_id: agentId, user_id: userId,
+        model: modelName, system_prompt: enrichedSystemPrompt,
+        user_message: userMessage, assistant_reply: safeText,
+        total_ms: latencyMs, tokens_input: inputTok, tokens_output: outputTok,
+        cost_usd: costUsd,
+        status:        scrub.flagged ? "flagged" : "success",
+        error_message: scrub.flagged ? scrub.redacted?.join(",") : null,
+        temperature:   modelParams.temperature,
+        // tool_calls is jsonb[] in DB — wrap count as array element
+        tool_calls:    toolCalls > 0 ? [{ count: toolCalls }] : [],
+      }),
     ])
 
     if (creditsRequired > 0) {
-      await supabase.rpc("deduct_credits", { user_id_param: userId, amount_param: creditsRequired, description_param: `Agent: ${agent.name}`, reference_id_param: execution?.id ?? null })
+      await supabase.rpc("deduct_credits", {
+        user_id_param:      userId,
+        amount_param:       creditsRequired,
+        description_param:  `Agent: ${agent.name}`,
+        reference_id_param: execution?.id ?? null,
+      })
     }
 
     return NextResponse.json({
       executionId: execution?.id,
       output,
       latencyMs,
-      tokens:           { input: inputTok, output: outputTok },
-      cost:             costUsd,
-      toolCalls:        toolCalls > 0 ? toolCalls : undefined,
-      ragUsed:          ragUsed || undefined,
-      flagged:          scrub.flagged || undefined,
-      thoughtgate:      tgResult.wasOptimised ? {
+      tokens:      { input: inputTok, output: outputTok },
+      cost:        costUsd,
+      toolCalls:   toolCalls > 0    ? toolCalls : undefined,
+      ragUsed:     ragUsed          ? true       : undefined,
+      flagged:     scrub.flagged    ? true       : undefined,
+      thoughtgate: tgResult.wasOptimised ? {
         intent:       tgResult.intent.type,
         depth:        tgResult.intent.depth,
         templateId:   tgResult.templateId,

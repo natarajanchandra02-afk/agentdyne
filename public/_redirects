@@ -1,0 +1,14 @@
+# Cloudflare Pages _redirects
+# Reference: https://developers.cloudflare.com/pages/configuration/redirects/
+
+# Redirect naked domain to www (or vice versa — pick one)
+# https://agentdyne.com/* https://www.agentdyne.com/:splat 301
+
+# Legacy URL redirects (add as needed)
+# /old-path /new-path 301
+
+# API v1 alias (in case some old docs reference /v1 directly)
+/v1/* /api/:splat 200
+
+# SPA fallback for Next.js (handled automatically by Cloudflare Pages for Next.js apps)
+# /* /index.html 200

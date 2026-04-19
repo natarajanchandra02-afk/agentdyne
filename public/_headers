@@ -1,0 +1,44 @@
+# Cloudflare Pages _headers file
+# Applied at the CDN edge BEFORE the Next.js server processes the request.
+# These headers complement the CSP/security headers set in middleware.ts.
+# Reference: https://developers.cloudflare.com/pages/configuration/headers/
+
+# ─── Global security headers ──────────────────────────────────────────────────
+/*
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  X-XSS-Protection: 1; mode=block
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(self)
+
+# ─── HSTS (HTTPS enforcement) ─────────────────────────────────────────────────
+# Only add HSTS after confirming your domain is HTTPS-only.
+# max-age=63072000 = 2 years. preload requires HSTS Preload List submission.
+https://agentdyne.com/*
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+
+# ─── API routes: CORS ─────────────────────────────────────────────────────────
+/api/*
+  Access-Control-Allow-Origin: *
+  Access-Control-Allow-Methods: GET, POST, PATCH, DELETE, OPTIONS
+  Access-Control-Allow-Headers: Content-Type, Authorization, X-API-Key, X-Request-ID
+  Access-Control-Expose-Headers: X-Request-ID, X-RateLimit-Limit, X-RateLimit-Remaining
+  Access-Control-Max-Age: 86400
+
+# ─── Static assets: long-lived cache ─────────────────────────────────────────
+/_next/static/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/sdk/*
+  Cache-Control: public, max-age=86400, s-maxage=86400
+
+# ─── HTML pages: no cache (always fresh) ─────────────────────────────────────
+/*.html
+  Cache-Control: no-store, must-revalidate
+
+# ─── Robots / sitemap ────────────────────────────────────────────────────────
+/robots.txt
+  Cache-Control: public, max-age=3600
+
+/sitemap.xml
+  Cache-Control: public, max-age=3600
