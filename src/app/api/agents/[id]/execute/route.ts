@@ -1,28 +1,46 @@
-export const runtime = 'edge'
+export const runtime = "edge"
+
+/**
+ * POST /api/agents/[id]/execute
+ *
+ * Full execution pipeline with anti-abuse hardening:
+ *   1. Bot detection + request fingerprinting
+ *   2. Plan-aware per-user rate limiting (minute / hour / day)
+ *   3. Behavioral anomaly detection
+ *   4. Cost estimation + credit pre-check
+ *   5. Execution guardrails (token cap, model allowlist, input truncation)
+ *   6. Concurrent execution guard
+ *   7. AI execution (stream or sync)
+ *   8. Credit deduction + quota increment
+ *   9. Stuck-execution safety: DB record always created before AI call
+ */
 
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { apiRateLimit } from "@/lib/rate-limit"
+import { runPreflightChecks } from "@/lib/anti-abuse"
 import { routeCompletion, routeStream } from "@/lib/model-router"
 import { checkInput, processOutput } from "@/lib/guardrails"
 import { runInjectionPipeline } from "@/lib/injection-filter"
-import { compressToTokenBudget, cheapestModelForTask } from "@/lib/context-compression"
+import { compressToTokenBudget } from "@/lib/context-compression"
 import { runAnthropicToolLoop } from "@/lib/mcp-tool-executor"
 import { retrieveRAGContext, buildRAGSystemPrompt } from "@/lib/rag-retriever"
 import { thoughtGate } from "@/lib/thoughtgate"
+import type { PlanName } from "@/lib/anti-abuse"
+
+const UUID_RE        = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const MAX_INPUT_BYTES = 32_000
 
 async function hashApiKey(key: string): Promise<string> {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key))
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("")
 }
 
-const MAX_INPUT_BYTES = 32_000
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // ── IP-level rate limit (first line of defence, stateless) ──────────────
   const limited = await apiRateLimit(req)
   if (limited) return limited
 
@@ -35,7 +53,7 @@ export async function POST(
 
     const supabase = await createClient()
 
-    // ── Auth ──────────────────────────────────────────────────────────────────
+    // ── Auth ─────────────────────────────────────────────────────────────
     let userId: string | undefined
     const { data: { user } } = await supabase.auth.getUser()
     userId = user?.id
@@ -59,7 +77,6 @@ export async function POST(
         if (!keyRow?.is_active)
           return NextResponse.json({ error: "Invalid or inactive API key" }, { status: 401 })
 
-        // Enforce key expiry
         if (keyRow.expires_at && new Date(keyRow.expires_at) < new Date())
           return NextResponse.json({ error: "API key has expired" }, { status: 401 })
 
@@ -74,7 +91,7 @@ export async function POST(
     if (!userId)
       return NextResponse.json({ error: "Authentication required" }, { status: 401 })
 
-    // ── Load agent ────────────────────────────────────────────────────────────
+    // ── Load agent ────────────────────────────────────────────────────────
     const { data: agent } = await supabase
       .from("agents")
       .select("id, name, model_name, system_prompt, max_tokens, temperature, pricing_model, price_per_call, free_calls_per_month, status, knowledge_base_id, mcp_server_ids, output_schema, timeout_seconds")
@@ -86,9 +103,9 @@ export async function POST(
       return NextResponse.json({ error: "Agent not found or not active" }, { status: 404 })
 
     if (!agent.system_prompt || (agent.system_prompt as string).trim().length < 10)
-      return NextResponse.json({ error: "Agent is not configured — missing system prompt" }, { status: 422 })
+      return NextResponse.json({ error: "Agent is misconfigured (missing system prompt)" }, { status: 422 })
 
-    // ── Quota + ban check ─────────────────────────────────────────────────────
+    // ── Load user profile ─────────────────────────────────────────────────
     const { data: profile } = await supabase
       .from("profiles")
       .select("executions_used_this_month, monthly_execution_quota, subscription_plan, is_banned")
@@ -96,15 +113,109 @@ export async function POST(
       .single()
 
     if (profile?.is_banned)
-      return NextResponse.json({ error: "Your account has been suspended." }, { status: 403 })
+      return NextResponse.json({ error: "Your account has been suspended. Contact support." }, { status: 403 })
 
+    // ── Monthly quota ─────────────────────────────────────────────────────
     const quota = profile?.monthly_execution_quota ?? 100
     const used  = profile?.executions_used_this_month ?? 0
-
     if (quota !== -1 && used >= quota)
-      return NextResponse.json({ error: "Monthly quota exceeded. Upgrade your plan.", code: "QUOTA_EXCEEDED" }, { status: 429 })
+      return NextResponse.json({
+        error: "Monthly quota exceeded. Upgrade your plan.",
+        code:  "QUOTA_EXCEEDED",
+      }, { status: 429 })
 
-    // ── Subscription gate ─────────────────────────────────────────────────────
+    // ── Parse + validate body ─────────────────────────────────────────────
+    let body: { input?: unknown; stream?: boolean }
+    try { body = await req.json() }
+    catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }) }
+
+    const { input, stream: wantsStream } = body
+    if (input === undefined || input === null)
+      return NextResponse.json({ error: "input is required" }, { status: 400 })
+
+    const userMessage = typeof input === "string" ? input : JSON.stringify(input)
+    if (new TextEncoder().encode(userMessage).length > MAX_INPUT_BYTES)
+      return NextResponse.json({ error: `Input too large. Max ${MAX_INPUT_BYTES / 1000}KB.` }, { status: 413 })
+
+    // ── Content guardrails (injection + PII + content policy) ────────────
+    const guardrailResult = checkInput(userMessage)
+    const { filterResult, score, shouldLog } = runInjectionPipeline(userMessage, "user")
+
+    if (!guardrailResult.allowed || !filterResult.allowed) {
+      supabase.from("injection_attempts").insert({
+        user_id: userId, agent_id: agentId,
+        input:   userMessage.slice(0, 500),
+        pattern: !guardrailResult.allowed
+          ? (guardrailResult.blocked_by ?? "content_policy")
+          : (filterResult as any).pattern,
+        action: "blocked",
+        score,
+      }).then(() => {})
+      return NextResponse.json({ error: "Input rejected.", code: "GUARDRAIL_BLOCKED" }, { status: 400 })
+    }
+
+    if (shouldLog || guardrailResult.flagged) {
+      supabase.from("injection_attempts").insert({
+        user_id: userId, agent_id: agentId,
+        input:   userMessage.slice(0, 500),
+        pattern: `flagged_score_${score}`,
+        action:  "flagged",
+        score,
+      }).then(() => {})
+    }
+
+    // ── Load credit balance ───────────────────────────────────────────────
+    const { data: credits } = await supabase
+      .from("credits")
+      .select("balance_usd")
+      .eq("user_id", userId)
+      .single()
+
+    const creditBalance = credits?.balance_usd ?? 0
+
+    // ── Anti-abuse PRE-FLIGHT (all 5 layers) ──────────────────────────────
+    const plan = (profile?.subscription_plan ?? "free") as PlanName
+
+    const preflight = await runPreflightChecks(supabase, {
+      userId,
+      agentId,
+      plan,
+      inputText:       userMessage,
+      systemPrompt:    agent.system_prompt as string,
+      requestedModel:  agent.model_name as string,
+      requestedTokens: agent.max_tokens as number,
+      creditBalance,
+      requestHeaders: {
+        userAgent:     req.headers.get("user-agent"),
+        accept:        req.headers.get("accept"),
+        origin:        req.headers.get("origin"),
+        referer:       req.headers.get("referer"),
+        cfThreatScore: req.headers.get("cf-threat-score")
+          ? Number(req.headers.get("cf-threat-score"))
+          : null,
+      },
+    })
+
+    if (!preflight.allowed) {
+      const res = NextResponse.json(
+        { error: preflight.message, code: preflight.code },
+        { status: preflight.httpStatus }
+      )
+      if (preflight.retryAfter) {
+        res.headers.set("Retry-After", String(preflight.retryAfter))
+      }
+      return res
+    }
+
+    // Apply guardrail overrides (model downgrade, token clamp, input truncation)
+    const guardrails     = preflight.guardrails!
+    const resolvedModel  = guardrails.modelAllowed
+      ? (agent.model_name as string)
+      : (guardrails.fallbackModel ?? "claude-haiku-4-5-20251001")
+    const resolvedTokens = guardrails.clampedTokens
+    const resolvedInput  = guardrails.clampedInput
+
+    // ── Subscription gate ─────────────────────────────────────────────────
     if (agent.pricing_model === "subscription") {
       const freeLeft = ((agent.free_calls_per_month as number) ?? 0) - used
       if (freeLeft <= 0) {
@@ -119,63 +230,21 @@ export async function POST(
       }
     }
 
-    // ── Credits check ─────────────────────────────────────────────────────────
+    // ── Credits check for paid agents ─────────────────────────────────────
     const pricePerCall  = parseFloat(String(agent.price_per_call ?? 0))
     let creditsRequired = 0
-
     if ((agent.pricing_model === "per_call" || agent.pricing_model === "freemium") && pricePerCall > 0) {
       creditsRequired = pricePerCall
-      const { data: credits } = await supabase
-        .from("credits").select("balance_usd").eq("user_id", userId).single()
-      const balance = credits?.balance_usd ?? 0
-      if (balance < creditsRequired)
-        return NextResponse.json({ error: "Insufficient credits.", code: "INSUFFICIENT_CREDITS", balance, required: creditsRequired }, { status: 402 })
+      if (creditBalance < creditsRequired)
+        return NextResponse.json({
+          error:    "Insufficient credits.",
+          code:     "INSUFFICIENT_CREDITS",
+          balance:  creditBalance,
+          required: creditsRequired,
+        }, { status: 402 })
     }
 
-    // ── Parse body ────────────────────────────────────────────────────────────
-    const contentLength = req.headers.get("content-length")
-    if (contentLength && parseInt(contentLength) > MAX_INPUT_BYTES)
-      return NextResponse.json({ error: `Input too large. Max ${MAX_INPUT_BYTES / 1000}KB.` }, { status: 413 })
-
-    let body: { input?: unknown; stream?: boolean }
-    try { body = await req.json() }
-    catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }) }
-
-    const { input, stream: wantsStream } = body
-    if (input === undefined || input === null)
-      return NextResponse.json({ error: "input is required" }, { status: 400 })
-
-    const userMessage = typeof input === "string" ? input : JSON.stringify(input)
-    if (new TextEncoder().encode(userMessage).length > MAX_INPUT_BYTES)
-      return NextResponse.json({ error: `Input too large. Max ${MAX_INPUT_BYTES / 1000}KB.` }, { status: 413 })
-
-    // ── Guardrails ────────────────────────────────────────────────────────────
-    const guardrailResult = checkInput(userMessage)
-    const { filterResult, score, shouldLog } = runInjectionPipeline(userMessage, "user")
-
-    if (!guardrailResult.allowed || !filterResult.allowed) {
-      supabase.from("injection_attempts").insert({
-        user_id: userId, agent_id: agentId,
-        input:   userMessage.slice(0, 500),
-        pattern: !guardrailResult.allowed ? (guardrailResult.blocked_by ?? "content_policy") : (filterResult as any).pattern,
-        action:  "blocked",
-        score,
-      }).then(() => {})
-      return NextResponse.json({ error: "Input rejected. Please revise your request.", code: "GUARDRAIL_BLOCKED" }, { status: 400 })
-    }
-
-    if (shouldLog || guardrailResult.flagged) {
-      supabase.from("injection_attempts").insert({
-        user_id: userId, agent_id: agentId,
-        input:   userMessage.slice(0, 500),
-        pattern: guardrailResult.pii_found?.length > 0 ? `pii:${guardrailResult.pii_found.join(",")}` : `score_${score}`,
-        action:  "flagged",
-        score,
-      }).then(() => {})
-    }
-
-    // ── Create execution record ───────────────────────────────────────────────
-    // executions.input is jsonb NOT NULL — always store as a JSON object
+    // ── Create execution record (BEFORE AI call) ──────────────────────────
     const inputJson: Record<string, unknown> =
       typeof input === "string" ? { text: input } : (input as Record<string, unknown> ?? {})
 
@@ -185,70 +254,56 @@ export async function POST(
       .select("id")
       .single()
 
-    // ── RAG context retrieval ─────────────────────────────────────────────────
-    let enrichedSystemPrompt = agent.system_prompt as string
+    // ── RAG context ───────────────────────────────────────────────────────
+    let enrichedSystem = agent.system_prompt as string
     let ragUsed = false
 
     if (agent.knowledge_base_id) {
-      const ragResult = await retrieveRAGContext(supabase, agent.knowledge_base_id as string, userMessage, { topK: 5, threshold: 0.65 })
-      enrichedSystemPrompt = buildRAGSystemPrompt(enrichedSystemPrompt, ragResult)
+      const ragResult = await retrieveRAGContext(supabase, agent.knowledge_base_id as string, resolvedInput, { topK: 5, threshold: 0.65 })
+      enrichedSystem = buildRAGSystemPrompt(enrichedSystem, ragResult)
       ragUsed = !ragResult.skipped && ragResult.chunks.length > 0
     }
 
-    // ── ThoughtGate — cognitive optimisation ──────────────────────────────────
-    const tgResult = thoughtGate.process({
-      query:            userMessage,
-      configuredTokens: (agent.max_tokens as number) || 4096,
-    })
-    if (tgResult.systemAddendum) {
-      enrichedSystemPrompt = enrichedSystemPrompt + tgResult.systemAddendum
-    }
+    // ── ThoughtGate ───────────────────────────────────────────────────────
+    const tgResult = thoughtGate.process({ query: resolvedInput, configuredTokens: resolvedTokens })
+    if (tgResult.systemAddendum) enrichedSystem += tgResult.systemAddendum
 
-    // ── MCP tool-use loop decision ────────────────────────────────────────────
-    const mcpServerIds: string[] = Array.isArray(agent.mcp_server_ids) ? agent.mcp_server_ids : []
-    const modelName   = (agent.model_name as string) || "claude-sonnet-4-20250514"
-    const useMCPLoop  = mcpServerIds.length > 0 && modelName.startsWith("claude-")
-
-    // ── Context compression ───────────────────────────────────────────────────
-    const { systemPrompt: compressedSystem, userMessage: compressedUser } = compressToTokenBudget(
-      enrichedSystemPrompt, userMessage, 14_000
-    )
-    const optimizedModel = cheapestModelForTask(modelName, Math.ceil(compressedUser.length / 4))
+    // ── Context compression ───────────────────────────────────────────────
+    const { systemPrompt: compressedSystem, userMessage: compressedUser } =
+      compressToTokenBudget(enrichedSystem, resolvedInput, 14_000)
 
     const modelParams = {
-      model:       optimizedModel,
+      model:       resolvedModel,
       system:      compressedSystem,
       userMessage: compressedUser,
       maxTokens:   tgResult.tokenBudget,
       temperature: (agent.temperature as number) || 0.7,
     }
 
-    // ── Streaming path ────────────────────────────────────────────────────────
+    const mcpServerIds: string[] = Array.isArray(agent.mcp_server_ids) ? agent.mcp_server_ids : []
+    const useMCPLoop = mcpServerIds.length > 0 && resolvedModel.startsWith("claude-")
+
+    // ── STREAMING PATH ────────────────────────────────────────────────────
     if (wantsStream && !useMCPLoop) {
       const encoder = new TextEncoder()
-      const stream  = new ReadableStream({
+      const stream = new ReadableStream({
         async start(controller) {
           const send = (data: object) =>
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
 
-          let fullText = ""
-          let inputTok = 0, outputTok = 0
-          const ttfts: number[] = []
+          let fullText = "", inputTok = 0, outputTok = 0
 
           try {
             const { inputTokens, outputTokens, costUsd } = await routeStream(
               modelParams,
-              (chunk) => {
-                if (ttfts.length === 0) ttfts.push(Date.now() - startMs)
-                send({ type: "delta", delta: chunk })
-                fullText += chunk
-              }
+              (chunk) => { send({ type: "delta", delta: chunk }); fullText += chunk }
             )
             inputTok  = inputTokens
             outputTok = outputTokens
-            const latencyMs = Date.now() - startMs
+            const latencyMs  = Date.now() - startMs
             const { safe: safeText } = processOutput(fullText, (agent as any).output_schema)
             const outputJson: Record<string, unknown> = { text: safeText }
+
             send({ type: "done", executionId: execution?.id, latencyMs, cost: costUsd })
             controller.enqueue(encoder.encode("data: [DONE]\n\n"))
             controller.close()
@@ -261,23 +316,15 @@ export async function POST(
                 completed_at: new Date().toISOString(),
               }).eq("id", execution?.id ?? ""),
               supabase.rpc("increment_executions_used", { user_id_param: userId }),
-              supabase.from("execution_traces").insert({
-                execution_id: execution?.id, agent_id: agentId, user_id: userId,
-                model: modelName, system_prompt: enrichedSystemPrompt,
-                user_message: userMessage, assistant_reply: safeText,
-                ttft_ms: ttfts[0] ?? null, total_ms: latencyMs,
-                tokens_input: inputTok, tokens_output: outputTok,
-                cost_usd: costUsd, status: "success", temperature: modelParams.temperature,
-              }),
             ])
 
             if (creditsRequired > 0) {
-              await supabase.rpc("deduct_credits", {
+              supabase.rpc("deduct_credits", {
                 user_id_param:      userId,
                 amount_param:       creditsRequired,
                 description_param:  `Agent: ${agent.name}`,
                 reference_id_param: execution?.id ?? null,
-              })
+              }).then(() => {})
             }
           } catch (err: any) {
             send({ type: "error", error: "Execution failed" })
@@ -291,6 +338,7 @@ export async function POST(
           }
         },
       })
+
       return new Response(stream, {
         headers: {
           "Content-Type":  "text/event-stream",
@@ -300,12 +348,12 @@ export async function POST(
       })
     }
 
-    // ── Synchronous path ──────────────────────────────────────────────────────
+    // ── SYNC PATH ─────────────────────────────────────────────────────────
     let rawText = "", inputTok = 0, outputTok = 0, costUsd = 0, toolCalls = 0
 
     if (useMCPLoop) {
       const r = await runAnthropicToolLoop({
-        model: modelName, system: enrichedSystemPrompt, userMessage,
+        model: resolvedModel, system: enrichedSystem, userMessage: resolvedInput,
         maxTokens: modelParams.maxTokens, temperature: modelParams.temperature, mcpServerIds,
       })
       rawText = r.text; inputTok = r.inputTokens; outputTok = r.outputTokens
@@ -318,7 +366,6 @@ export async function POST(
     const latencyMs = Date.now() - startMs
     const { safe: safeText, scrub, parsed: parsedOut } = processOutput(rawText, (agent as any).output_schema)
 
-    // executions.output is jsonb — always store as a JSON object, never a bare string
     const outputStorable: Record<string, unknown> = parsedOut.isJSON
       ? (typeof parsedOut.parsed === "object" && parsedOut.parsed !== null
           ? parsedOut.parsed as Record<string, unknown>
@@ -337,15 +384,12 @@ export async function POST(
       supabase.rpc("increment_executions_used", { user_id_param: userId }),
       supabase.from("execution_traces").insert({
         execution_id: execution?.id, agent_id: agentId, user_id: userId,
-        model: modelName, system_prompt: enrichedSystemPrompt,
+        model: resolvedModel, system_prompt: enrichedSystem,
         user_message: userMessage, assistant_reply: safeText,
         total_ms: latencyMs, tokens_input: inputTok, tokens_output: outputTok,
-        cost_usd: costUsd,
-        status:        scrub.flagged ? "flagged" : "success",
+        cost_usd: costUsd, status: scrub.flagged ? "flagged" : "success",
         error_message: scrub.flagged ? scrub.redacted?.join(",") : null,
-        temperature:   modelParams.temperature,
-        // tool_calls is jsonb[] in DB — wrap count as array element
-        tool_calls:    toolCalls > 0 ? [{ count: toolCalls }] : [],
+        temperature: modelParams.temperature,
       }),
     ])
 
@@ -359,20 +403,16 @@ export async function POST(
     }
 
     return NextResponse.json({
-      executionId: execution?.id,
+      executionId:  execution?.id,
       output,
       latencyMs,
-      tokens:      { input: inputTok, output: outputTok },
-      cost:        costUsd,
-      toolCalls:   toolCalls > 0    ? toolCalls : undefined,
-      ragUsed:     ragUsed          ? true       : undefined,
-      flagged:     scrub.flagged    ? true       : undefined,
-      thoughtgate: tgResult.wasOptimised ? {
-        intent:       tgResult.intent.type,
-        depth:        tgResult.intent.depth,
-        templateId:   tgResult.templateId,
-        tokenSavings: `${tgResult.savingsEstimate}%`,
-      } : undefined,
+      tokens:       { input: inputTok, output: outputTok },
+      cost:         costUsd,
+      model:        resolvedModel,
+      modelChanged: resolvedModel !== agent.model_name,
+      toolCalls:    toolCalls > 0   ? toolCalls : undefined,
+      ragUsed:      ragUsed         ? true      : undefined,
+      flagged:      scrub.flagged   ? true      : undefined,
     })
 
   } catch (err: any) {

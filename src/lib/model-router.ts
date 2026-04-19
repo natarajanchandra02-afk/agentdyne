@@ -1,23 +1,17 @@
 /**
  * AgentDyne Multi-Provider Model Router
  *
- * Dispatches LLM calls to the correct provider using native fetch.
- * NO external npm packages beyond @anthropic-ai/sdk (already in package.json).
+ * Platform holds ONE set of API keys. Users never need their own.
+ * This is the standard marketplace model — platform pays LLM providers,
+ * charges users via credits/subscriptions, keeps the spread.
  *
- * Supported providers:
- *   claude-*   → Anthropic (via @anthropic-ai/sdk)
- *   gpt-*      → OpenAI (via fetch to api.openai.com — OpenAI-compatible REST)
- *   gemini-*   → Google Gemini (via fetch to generativelanguage.googleapis.com)
- *   vllm/*     → Self-hosted vLLM (fetch to VLLM_BASE_URL — OpenAI-compatible)
+ * Required env vars (set in Cloudflare Pages → Environment Variables):
+ *   ANTHROPIC_API_KEY   — for all claude-* agents (most common)
+ *   OPENAI_API_KEY      — for gpt-* agents AND RAG embeddings
+ *   GOOGLE_AI_API_KEY   — for gemini-* agents
  *
- * Design:
- *   - All providers return the same LLMResult interface
- *   - Stream path calls onChunk for each text delta
- *   - Unknown models fall back to Anthropic (safe default)
- *   - Zero Node.js runtime deps — works in Cloudflare Workers
- *
- * Cost tracking:
- *   Update COST_PER_1K_TOKENS when providers change pricing.
+ * You do NOT need all three at launch. Start with ANTHROPIC_API_KEY only.
+ * Agents using unconfigured providers will get a clear 503 error, not a crash.
  */
 
 export interface LLMCallParams {
@@ -37,47 +31,79 @@ export interface LLMResult {
 
 export type StreamChunkHandler = (chunk: string) => void
 
-// ── Per-provider cost (USD per 1K tokens) — update as pricing changes ─────────
+// ── Cost tracking (USD per 1K tokens, April 2026) ─────────────────────────────
+
 const COST_PER_1K: Record<string, { input: number; output: number }> = {
-  // Anthropic (April 2026)
   "claude-opus-4-6":           { input: 0.015,    output: 0.075    },
   "claude-sonnet-4-20250514":  { input: 0.003,    output: 0.015    },
   "claude-haiku-4-5-20251001": { input: 0.00025,  output: 0.00125  },
-  // OpenAI (April 2026)
   "gpt-4o":                    { input: 0.005,    output: 0.015    },
   "gpt-4o-mini":               { input: 0.00015,  output: 0.0006   },
-  // Google (April 2026)
   "gemini-1.5-pro":            { input: 0.00125,  output: 0.005    },
   "gemini-1.5-flash":          { input: 0.000075, output: 0.0003   },
-  // Safe default for unknown models
   _default:                    { input: 0.003,    output: 0.015    },
 }
 
 function estimateCost(model: string, inputTokens: number, outputTokens: number): number {
-  const rates = COST_PER_1K[model] ?? COST_PER_1K["_default"]!
-  return (inputTokens  / 1000) * rates.input
-       + (outputTokens / 1000) * rates.output
+  const r = COST_PER_1K[model] ?? COST_PER_1K["_default"]!
+  return (inputTokens / 1000) * r.input + (outputTokens / 1000) * r.output
 }
 
 // ── Provider detection ────────────────────────────────────────────────────────
 
-type Provider = "anthropic" | "openai" | "google" | "vllm"
+export type Provider = "anthropic" | "openai" | "google" | "vllm"
 
-function detectProvider(model: string): Provider {
+export function detectProvider(model: string): Provider {
   if (model.startsWith("claude-"))  return "anthropic"
   if (model.startsWith("gpt-"))     return "openai"
   if (model.startsWith("gemini-"))  return "google"
   if (model.startsWith("vllm/"))    return "vllm"
-  return "anthropic"  // safe fallback
+  return "anthropic"
 }
 
-// ── ANTHROPIC (via SDK — already in package.json) ────────────────────────────
+// ── API key validation ────────────────────────────────────────────────────────
+
+const PROVIDER_ENV: Record<Provider, string> = {
+  anthropic: "ANTHROPIC_API_KEY",
+  openai:    "OPENAI_API_KEY",
+  google:    "GOOGLE_AI_API_KEY",
+  vllm:      "VLLM_BASE_URL",
+}
+
+/**
+ * validateProviderKey — throws a clear, actionable error if the env var
+ * for the required provider is not set. Called before every LLM call so
+ * the execute route gets a useful error code instead of a generic 500.
+ */
+function validateProviderKey(provider: Provider): void {
+  const envVar = PROVIDER_ENV[provider]
+  const value  = process.env[envVar]
+  if (!value || value.trim().length === 0) {
+    const providerName = {
+      anthropic: "Anthropic (Claude)",
+      openai:    "OpenAI (GPT)",
+      google:    "Google (Gemini)",
+      vllm:      "vLLM (self-hosted)",
+    }[provider]
+    throw Object.assign(
+      new Error(
+        `${providerName} API key is not configured. ` +
+        `Set ${envVar} in Cloudflare Pages → Settings → Environment Variables. ` +
+        `This agent uses a ${providerName} model and cannot run without it.`
+      ),
+      { code: "PROVIDER_NOT_CONFIGURED", envVar, provider }
+    )
+  }
+}
+
+// ── Anthropic ────────────────────────────────────────────────────────────────
 
 async function callAnthropic(p: LLMCallParams): Promise<LLMResult> {
+  validateProviderKey("anthropic")
   const { default: Anthropic } = await import("@anthropic-ai/sdk")
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-  const resp   = await client.messages.create({
+  const resp = await client.messages.create({
     model:       p.model,
     max_tokens:  p.maxTokens,
     system:      p.system,
@@ -95,10 +121,11 @@ async function streamAnthropic(
   p: LLMCallParams,
   onChunk: StreamChunkHandler
 ): Promise<{ inputTokens: number; outputTokens: number; costUsd: number }> {
+  validateProviderKey("anthropic")
   const { default: Anthropic } = await import("@anthropic-ai/sdk")
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-  let inputTokens = 0; let outputTokens = 0
+  let inputTokens = 0, outputTokens = 0
 
   const stream = client.messages.stream({
     model:       p.model,
@@ -119,23 +146,20 @@ async function streamAnthropic(
   return { inputTokens, outputTokens, costUsd: estimateCost(p.model, inputTokens, outputTokens) }
 }
 
-// ── OPENAI / vLLM (via fetch — OpenAI-compatible REST, no npm package) ────────
-// Using fetch directly avoids adding the `openai` package as a dependency.
-// vLLM exposes the same /v1/chat/completions endpoint, so both share this code.
+// ── OpenAI / vLLM ─────────────────────────────────────────────────────────────
 
-function getOpenAIEndpoint(model: string): { baseUrl: string; apiKey: string; modelName: string } {
+function getOpenAIConfig(model: string): { baseUrl: string; apiKey: string; modelName: string } {
   if (model.startsWith("vllm/")) {
-    const base = process.env.VLLM_BASE_URL
-    if (!base) throw new Error("VLLM_BASE_URL is not set. Add it to your environment variables.")
+    validateProviderKey("vllm")
+    const base = process.env.VLLM_BASE_URL!
     return { baseUrl: base.replace(/\/$/, ""), apiKey: "EMPTY", modelName: model.slice(5) }
   }
-  const key = process.env.OPENAI_API_KEY
-  if (!key) throw new Error("OPENAI_API_KEY is not set. Add it to your environment variables.")
-  return { baseUrl: "https://api.openai.com", apiKey: key, modelName: model }
+  validateProviderKey("openai")
+  return { baseUrl: "https://api.openai.com", apiKey: process.env.OPENAI_API_KEY!, modelName: model }
 }
 
 async function callOpenAI(p: LLMCallParams): Promise<LLMResult> {
-  const { baseUrl, apiKey, modelName } = getOpenAIEndpoint(p.model)
+  const { baseUrl, apiKey, modelName } = getOpenAIConfig(p.model)
 
   const resp = await fetch(`${baseUrl}/v1/chat/completions`, {
     method:  "POST",
@@ -145,15 +169,16 @@ async function callOpenAI(p: LLMCallParams): Promise<LLMResult> {
       max_tokens:  p.maxTokens,
       temperature: p.temperature,
       messages: [
-        { role: "system", content: p.system      },
-        { role: "user",   content: p.userMessage  },
+        { role: "system", content: p.system     },
+        { role: "user",   content: p.userMessage },
       ],
     }),
   })
 
   if (!resp.ok) {
     const err = await resp.text()
-    throw new Error(`OpenAI API error ${resp.status}: ${err.slice(0, 200)}`)
+    // Surface the actual API error — not a generic message
+    throw new Error(`OpenAI API error ${resp.status}: ${err.slice(0, 300)}`)
   }
 
   const data         = await resp.json() as any
@@ -167,7 +192,7 @@ async function streamOpenAI(
   p: LLMCallParams,
   onChunk: StreamChunkHandler
 ): Promise<{ inputTokens: number; outputTokens: number; costUsd: number }> {
-  const { baseUrl, apiKey, modelName } = getOpenAIEndpoint(p.model)
+  const { baseUrl, apiKey, modelName } = getOpenAIConfig(p.model)
 
   const resp = await fetch(`${baseUrl}/v1/chat/completions`, {
     method:  "POST",
@@ -186,68 +211,59 @@ async function streamOpenAI(
 
   if (!resp.ok) {
     const err = await resp.text()
-    throw new Error(`OpenAI API error ${resp.status}: ${err.slice(0, 200)}`)
+    throw new Error(`OpenAI API error ${resp.status}: ${err.slice(0, 300)}`)
   }
 
   const reader  = resp.body?.getReader()
   const decoder = new TextDecoder()
-  let inputTokens = 0; let outputTokens = 0
+  let inputTokens = 0, outputTokens = 0
 
   if (!reader) throw new Error("OpenAI stream: no response body")
 
-  // Correctly exit loop on stream end
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
-
     const text = decoder.decode(value, { stream: true })
     for (const line of text.split("\n")) {
       const trimmed = line.trim()
-      if (!trimmed.startsWith("data:"))    continue
+      if (!trimmed.startsWith("data:")) continue
       const payload = trimmed.slice(5).trim()
-      if (payload === "[DONE]")            break
-
+      if (payload === "[DONE]") break
       try {
-        const json = JSON.parse(payload) as any
+        const json  = JSON.parse(payload) as any
         const delta = json.choices?.[0]?.delta?.content
         if (delta) onChunk(delta)
-        // Some providers include usage in the stream final chunk
         if (json.usage) {
           inputTokens  = json.usage.prompt_tokens     ?? inputTokens
           outputTokens = json.usage.completion_tokens ?? outputTokens
         }
-      } catch {
-        // Malformed chunk — skip silently
-      }
+      } catch { /* malformed chunk — skip */ }
     }
   }
 
   return { inputTokens, outputTokens, costUsd: estimateCost(p.model, inputTokens, outputTokens) }
 }
 
-// ── GOOGLE GEMINI (via fetch — edge-native REST) ───────────────────────────────
+// ── Google Gemini ──────────────────────────────────────────────────────────────
 
 async function callGoogle(p: LLMCallParams): Promise<LLMResult> {
-  const key = process.env.GOOGLE_AI_API_KEY
-  if (!key) throw new Error("GOOGLE_AI_API_KEY is not set. Add it to your environment variables.")
-
-  // Model name in Gemini API includes the full identifier
-  const modelId  = p.model  // e.g. "gemini-1.5-pro"
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${key}`
+  validateProviderKey("google")
+  const key      = process.env.GOOGLE_AI_API_KEY!
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${p.model}:generateContent?key=${key}`
 
   const resp = await fetch(endpoint, {
     method:  "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+    body:    JSON.stringify({
       system_instruction: { parts: [{ text: p.system }] },
-      contents: [{ role: "user", parts: [{ text: p.userMessage }] }],
-      generationConfig: { maxOutputTokens: p.maxTokens, temperature: p.temperature },
+      contents:           [{ role: "user", parts: [{ text: p.userMessage }] }],
+      generationConfig:   { maxOutputTokens: p.maxTokens, temperature: p.temperature },
     }),
   })
 
   if (!resp.ok) {
     const err = await resp.text()
-    throw new Error(`Gemini API error ${resp.status}: ${err.slice(0, 200)}`)
+    throw new Error(`Gemini API error ${resp.status}: ${err.slice(0, 300)}`)
   }
 
   const data         = await resp.json() as any
@@ -261,46 +277,40 @@ async function streamGoogle(
   p: LLMCallParams,
   onChunk: StreamChunkHandler
 ): Promise<{ inputTokens: number; outputTokens: number; costUsd: number }> {
-  const key = process.env.GOOGLE_AI_API_KEY
-  if (!key) throw new Error("GOOGLE_AI_API_KEY is not set. Add it to your environment variables.")
-
-  const modelId  = p.model
-  // alt=sse returns Server-Sent Events (line-by-line JSON)
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:streamGenerateContent?key=${key}&alt=sse`
+  validateProviderKey("google")
+  const key      = process.env.GOOGLE_AI_API_KEY!
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${p.model}:streamGenerateContent?key=${key}&alt=sse`
 
   const resp = await fetch(endpoint, {
     method:  "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+    body:    JSON.stringify({
       system_instruction: { parts: [{ text: p.system }] },
-      contents: [{ role: "user", parts: [{ text: p.userMessage }] }],
-      generationConfig: { maxOutputTokens: p.maxTokens, temperature: p.temperature },
+      contents:           [{ role: "user", parts: [{ text: p.userMessage }] }],
+      generationConfig:   { maxOutputTokens: p.maxTokens, temperature: p.temperature },
     }),
   })
 
   if (!resp.ok) {
     const err = await resp.text()
-    throw new Error(`Gemini stream error ${resp.status}: ${err.slice(0, 200)}`)
+    throw new Error(`Gemini stream error ${resp.status}: ${err.slice(0, 300)}`)
   }
 
   const reader  = resp.body?.getReader()
   const decoder = new TextDecoder()
-  let inputTokens = 0; let outputTokens = 0
+  let inputTokens = 0, outputTokens = 0
 
   if (!reader) throw new Error("Gemini stream: no response body")
 
-  // FIX: use while(true) + break on done — NOT while(reader) which is always truthy
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
-
     const text = decoder.decode(value, { stream: true })
     for (const line of text.split("\n")) {
       const trimmed = line.trim()
       if (!trimmed.startsWith("data:")) continue
       const payload = trimmed.slice(5).trim()
       if (!payload || payload === "[DONE]") continue
-
       try {
         const json  = JSON.parse(payload) as any
         const chunk = json.candidates?.[0]?.content?.parts?.[0]?.text
@@ -309,9 +319,7 @@ async function streamGoogle(
           inputTokens  = json.usageMetadata.promptTokenCount     ?? inputTokens
           outputTokens = json.usageMetadata.candidatesTokenCount ?? outputTokens
         }
-      } catch {
-        // Malformed SSE chunk — skip
-      }
+      } catch { /* malformed SSE chunk */ }
     }
   }
 
@@ -320,26 +328,17 @@ async function streamGoogle(
 
 // ── Public interface ──────────────────────────────────────────────────────────
 
-/**
- * routeCompletion — single blocking LLM call.
- * Dispatches to the correct provider based on model_name prefix.
- */
 export async function routeCompletion(p: LLMCallParams): Promise<LLMResult> {
   const provider = detectProvider(p.model)
   switch (provider) {
     case "anthropic": return callAnthropic(p)
     case "openai":    return callOpenAI(p)
-    case "vllm":      return callOpenAI(p)    // vLLM is OpenAI-compatible
+    case "vllm":      return callOpenAI(p)
     case "google":    return callGoogle(p)
-    default:          return callAnthropic(p) // safe fallback
+    default:          return callAnthropic(p)
   }
 }
 
-/**
- * routeStream — streaming LLM call.
- * Calls onChunk for each text delta as it arrives.
- * Returns total token counts + estimated cost when stream ends.
- */
 export async function routeStream(
   p: LLMCallParams,
   onChunk: StreamChunkHandler
@@ -355,22 +354,66 @@ export async function routeStream(
 }
 
 /**
- * checkModelSupport — verify a model is supported and its env var is set.
- * Use this in builder validation to give sellers a clear error.
+ * checkModelSupport — call this in the agent builder before allowing publish.
+ * Returns the missing env var name so you can show a clear error in the UI.
  */
 export function checkModelSupport(model: string): {
-  supported:      boolean
-  provider:       string
-  missingEnvVar?: string
+  supported:       boolean
+  provider:        string
+  providerLabel:   string
+  missingEnvVar?:  string
+  setupGuide:      string
 } {
   const provider = detectProvider(model)
-  const envMap: Record<Provider, { envVar: string; label: string }> = {
-    anthropic: { envVar: "ANTHROPIC_API_KEY", label: "Anthropic" },
-    openai:    { envVar: "OPENAI_API_KEY",    label: "OpenAI"    },
-    vllm:      { envVar: "VLLM_BASE_URL",     label: "vLLM"      },
-    google:    { envVar: "GOOGLE_AI_API_KEY", label: "Google"    },
+  const envVar   = PROVIDER_ENV[provider]
+  const val      = process.env[envVar]
+  const missing  = !val || val.trim().length === 0 ? envVar : undefined
+
+  const LABELS: Record<Provider, string> = {
+    anthropic: "Anthropic (Claude)",
+    openai:    "OpenAI (GPT)",
+    google:    "Google (Gemini)",
+    vllm:      "Self-hosted vLLM",
   }
-  const info    = envMap[provider]
-  const missing = process.env[info.envVar] ? undefined : info.envVar
-  return { supported: !missing, provider: info.label, missingEnvVar: missing }
+
+  const GUIDES: Record<Provider, string> = {
+    anthropic: "console.anthropic.com → API Keys",
+    openai:    "platform.openai.com → API Keys",
+    google:    "aistudio.google.com → API Keys",
+    vllm:      "Set VLLM_BASE_URL to your cluster endpoint",
+  }
+
+  return {
+    supported:     !missing,
+    provider,
+    providerLabel: LABELS[provider],
+    missingEnvVar: missing,
+    setupGuide:    GUIDES[provider],
+  }
+}
+
+/**
+ * getSupportedModels — return only the models whose provider key is configured.
+ * Use this in the builder to show only available models, not all theoretical ones.
+ */
+export function getSupportedModels(): string[] {
+  const all = [
+    // Anthropic
+    { model: "claude-sonnet-4-20250514",  provider: "anthropic" as Provider },
+    { model: "claude-haiku-4-5-20251001", provider: "anthropic" as Provider },
+    { model: "claude-opus-4-6",           provider: "anthropic" as Provider },
+    // OpenAI
+    { model: "gpt-4o",     provider: "openai" as Provider },
+    { model: "gpt-4o-mini",provider: "openai" as Provider },
+    // Google
+    { model: "gemini-1.5-pro",   provider: "google" as Provider },
+    { model: "gemini-1.5-flash", provider: "google" as Provider },
+  ]
+
+  return all
+    .filter(({ provider }) => {
+      const key = process.env[PROVIDER_ENV[provider]]
+      return !!key && key.trim().length > 0
+    })
+    .map(({ model }) => model)
 }
