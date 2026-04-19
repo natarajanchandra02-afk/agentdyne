@@ -1,19 +1,20 @@
 "use client"
 export const dynamic = 'force-dynamic'
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, Suspense } from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import {
-  Plus, Layers, Play, Globe, Lock, Clock, Tag,
+  Plus, Layers, Play, Globe, Lock, Clock,
   MoreHorizontal, Trash2, Copy, AlertCircle, Loader2,
-  ChevronRight, ArrowRight, Zap,
+  ChevronRight, ArrowRight, Zap, Bot,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn, formatDate, formatNumber } from "@/lib/utils"
 import toast from "react-hot-toast"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+
 interface Pipeline {
   id:              string
   name:            string
@@ -29,58 +30,64 @@ interface Pipeline {
   status?:         "idle" | "running" | "success" | "failed"
 }
 
+// ── Status pill ───────────────────────────────────────────────────────────────
+
 function StatusPill({ status }: { status?: Pipeline["status"] }) {
   const map = {
-    idle:    { label: "Idle",    color: "bg-zinc-100   text-zinc-500"  },
-    running: { label: "Running", color: "bg-blue-50    text-blue-600"  },
-    success: { label: "Success", color: "bg-green-50   text-green-600" },
-    failed:  { label: "Failed",  color: "bg-red-50     text-red-600"   },
+    idle:    { label: "Idle",    color: "bg-zinc-100 text-zinc-500"  },
+    running: { label: "Running", color: "bg-blue-50  text-blue-600"  },
+    success: { label: "Success", color: "bg-green-50 text-green-600" },
+    failed:  { label: "Failed",  color: "bg-red-50   text-red-600"   },
   }
   const { label, color } = map[status ?? "idle"]
   return <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded-full", color)}>{label}</span>
 }
 
-// ── New pipeline modal ─────────────────────────────────────────────────────────
+// ── New pipeline modal ────────────────────────────────────────────────────────
+
+interface NewPipelineModalProps {
+  open: boolean
+  onClose: () => void
+  onCreated: (p: Pipeline) => void
+  prefilledAgentId?:   string
+  prefilledAgentName?: string
+}
+
 function NewPipelineModal({
-  open, onClose, onCreated,
-}: { open: boolean; onClose: () => void; onCreated: (p: Pipeline) => void }) {
+  open, onClose, onCreated, prefilledAgentId, prefilledAgentName,
+}: NewPipelineModalProps) {
   const router = useRouter()
-  const [name,     setName]     = useState("")
+  const [name,     setName]     = useState(prefilledAgentName ? `${prefilledAgentName} Pipeline` : "")
   const [desc,     setDesc]     = useState("")
   const [isPublic, setIsPublic] = useState(false)
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState("")
 
+  useEffect(() => {
+    if (prefilledAgentName && !name) setName(`${prefilledAgentName} Pipeline`)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefilledAgentName])
+
   const reset = () => { setName(""); setDesc(""); setIsPublic(false); setError("") }
 
   const submit = async () => {
     if (!name.trim()) { setError("Name is required"); return }
-    setLoading(true)
-    setError("")
+    setLoading(true); setError("")
     try {
-      const res = await fetch("/api/pipelines", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({
-          name:        name.trim(),
-          description: desc.trim() || null,
-          is_public:   isPublic,
-          dag:         { nodes: [], edges: [] },
-        }),
+      const initialNodes = prefilledAgentId
+        ? [{ id: `node_${Date.now()}`, agent_id: prefilledAgentId, label: prefilledAgentName ?? "Step 1", continue_on_failure: false }]
+        : []
+      const res  = await fetch("/api/pipelines", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body:   JSON.stringify({ name: name.trim(), description: desc.trim() || null, is_public: isPublic, dag: { nodes: initialNodes, edges: [] } }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? "Failed to create pipeline")
-      toast.success("Pipeline created! Add agents to build your workflow.")
-      onCreated(data)
-      reset()
-      onClose()
-      // Redirect to the pipeline editor so user can immediately add agents
+      toast.success(prefilledAgentId ? `Pipeline created with "${prefilledAgentName}" as the first step!` : "Pipeline created!")
+      onCreated(data); reset(); onClose()
       router.push(`/pipelines/${data.id}`)
-    } catch (err: any) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
+    } catch (err: any) { setError(err.message) }
+    finally { setLoading(false) }
   }
 
   if (!open) return null
@@ -92,53 +99,57 @@ function NewPipelineModal({
       <div className="relative bg-white rounded-2xl shadow-2xl border border-zinc-100 w-full max-w-md p-6 z-10">
         <h2 className="text-lg font-bold text-zinc-900 mb-1">New Pipeline</h2>
         <p className="text-sm text-zinc-400 mb-5">
-          Name your pipeline — you'll add agents and build the workflow on the next screen.
+          {prefilledAgentId
+            ? `"${prefilledAgentName}" will be added as the first step.`
+            : "Name your pipeline — you'll add agents on the next screen."}
         </p>
-
+        {prefilledAgentId && (
+          <div className="flex items-center gap-3 bg-primary/[0.04] border border-primary/20 rounded-xl px-3 py-2.5 mb-4">
+            <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+              <Bot className="h-3.5 w-3.5 text-primary" />
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-zinc-900">{prefilledAgentName}</p>
+              <p className="text-[11px] text-zinc-400">Step 1 — pre-added from Marketplace</p>
+            </div>
+          </div>
+        )}
         <div className="space-y-4">
           <div>
             <label className="text-xs font-semibold text-zinc-600 uppercase tracking-wider block mb-1.5">
-              Name <span className="text-red-400">*</span>
+              Pipeline Name <span className="text-red-400">*</span>
             </label>
             <input type="text" maxLength={100} value={name}
               onChange={e => setName(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && submit()}
               placeholder="e.g. Research → Summarise → Email"
               className="w-full h-10 px-3 rounded-xl border border-zinc-200 text-sm focus:outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-100 transition-all" />
           </div>
-
           <div>
-            <label className="text-xs font-semibold text-zinc-600 uppercase tracking-wider block mb-1.5">
-              Description
-            </label>
+            <label className="text-xs font-semibold text-zinc-600 uppercase tracking-wider block mb-1.5">Description</label>
             <textarea rows={3} maxLength={500} value={desc}
               onChange={e => setDesc(e.target.value)}
               placeholder="What does this pipeline do?"
               className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm resize-none focus:outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-100 transition-all" />
           </div>
-
           <label className="flex items-center gap-3 cursor-pointer select-none">
             <div onClick={() => setIsPublic(v => !v)}
-              className={cn("w-9 h-5 rounded-full transition-colors relative flex-shrink-0",
-                isPublic ? "bg-primary" : "bg-zinc-200")}>
-              <span className={cn("absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform",
-                isPublic ? "translate-x-4" : "translate-x-0.5")} />
+              className={cn("w-9 h-5 rounded-full transition-colors relative flex-shrink-0", isPublic ? "bg-primary" : "bg-zinc-200")}>
+              <span className={cn("absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform", isPublic ? "translate-x-4" : "translate-x-0.5")} />
             </div>
             <div>
               <p className="text-sm font-medium text-zinc-900">Public pipeline</p>
               <p className="text-xs text-zinc-400">Other users can discover and clone this pipeline</p>
             </div>
           </label>
-
           {error && (
             <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2">
               <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" /> {error}
             </div>
           )}
         </div>
-
         <div className="flex items-center gap-2 mt-6">
-          <Button variant="outline"
-            onClick={() => { if (!loading) { reset(); onClose() } }}
+          <Button variant="outline" onClick={() => { if (!loading) { reset(); onClose() } }}
             className="flex-1 rounded-xl border-zinc-200" disabled={loading}>
             Cancel
           </Button>
@@ -153,9 +164,8 @@ function NewPipelineModal({
 }
 
 // ── Pipeline card ─────────────────────────────────────────────────────────────
-function PipelineCard({
-  pipeline, onDelete,
-}: { pipeline: Pipeline; onDelete: (id: string) => void }) {
+
+function PipelineCard({ pipeline, onDelete }: { pipeline: Pipeline; onDelete: (id: string) => void }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const nodeCount = pipeline.dag?.nodes?.length ?? 0
@@ -166,34 +176,25 @@ function PipelineCard({
     try {
       const res = await fetch(`/api/pipelines/${pipeline.id}`, { method: "DELETE" })
       if (!res.ok) { const d = await res.json(); throw new Error(d.error ?? "Delete failed") }
-      toast.success("Pipeline deleted")
-      onDelete(pipeline.id)
-    } catch (err: any) {
-      toast.error(err.message)
-    } finally { setDeleting(false) }
+      toast.success("Pipeline deleted"); onDelete(pipeline.id)
+    } catch (err: any) { toast.error(err.message) }
+    finally { setDeleting(false) }
   }
 
   const handleClone = async () => {
     try {
       const res = await fetch("/api/pipelines", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: `${pipeline.name} (copy)`,
-          description: pipeline.description,
-          is_public: false,
-          dag: pipeline.dag,
-        }),
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body:   JSON.stringify({ name: `${pipeline.name} (copy)`, description: pipeline.description, is_public: false, dag: pipeline.dag }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? "Clone failed")
-      toast.success("Pipeline cloned!")
-      window.location.reload()
+      toast.success("Pipeline cloned!"); window.location.reload()
     } catch (err: any) { toast.error(err.message) }
   }
 
   return (
-    <div className="bg-white border border-zinc-100 rounded-2xl p-5 hover:border-zinc-200 hover:shadow-sm transition-all relative group">
+    <div className="bg-white border border-zinc-100 rounded-2xl p-5 hover:border-zinc-200 hover:shadow-sm transition-all">
       <div className="flex items-start gap-4">
         <div className="w-10 h-10 rounded-xl bg-primary/8 flex items-center justify-center flex-shrink-0">
           <Layers className="h-5 w-5 text-primary" />
@@ -202,29 +203,16 @@ function PipelineCard({
           <div className="flex items-center gap-2 flex-wrap mb-0.5">
             <h3 className="font-semibold text-zinc-900 text-sm truncate">{pipeline.name}</h3>
             <StatusPill status={pipeline.status} />
-            {pipeline.is_public
-              ? <Globe className="h-3.5 w-3.5 text-zinc-400" />
-              : <Lock  className="h-3.5 w-3.5 text-zinc-400" />}
+            {pipeline.is_public ? <Globe className="h-3.5 w-3.5 text-zinc-400" /> : <Lock className="h-3.5 w-3.5 text-zinc-400" />}
           </div>
-          {pipeline.description && (
-            <p className="text-xs text-zinc-500 truncate mb-2">{pipeline.description}</p>
-          )}
+          {pipeline.description && <p className="text-xs text-zinc-500 truncate mb-2">{pipeline.description}</p>}
           <div className="flex items-center gap-4 text-[11px] text-zinc-400">
-            <span className="flex items-center gap-1">
-              <Zap className="h-3 w-3" /> {nodeCount} {nodeCount === 1 ? "agent" : "agents"}
-            </span>
-            {pipeline.run_count != null && (
-              <span className="flex items-center gap-1">
-                <Play className="h-3 w-3" /> {formatNumber(pipeline.run_count)} runs
-              </span>
-            )}
-            <span className="flex items-center gap-1">
-              <Clock className="h-3 w-3" /> {pipeline.timeout_seconds}s timeout
-            </span>
+            <span className="flex items-center gap-1"><Zap className="h-3 w-3" /> {nodeCount} {nodeCount === 1 ? "agent" : "agents"}</span>
+            {pipeline.run_count != null && <span className="flex items-center gap-1"><Play className="h-3 w-3" /> {formatNumber(pipeline.run_count)} runs</span>}
+            <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {pipeline.timeout_seconds}s timeout</span>
             <span className="ml-auto flex-shrink-0">Updated {formatDate(pipeline.updated_at)}</span>
           </div>
         </div>
-
         <div className="flex items-center gap-1 flex-shrink-0">
           <div className="relative">
             <button onClick={() => setMenuOpen(o => !o)}
@@ -248,8 +236,6 @@ function PipelineCard({
               </>
             )}
           </div>
-
-          {/* Edit → goes to the pipeline editor */}
           <Link href={`/pipelines/${pipeline.id}`}>
             <button className="flex items-center gap-1 text-xs font-semibold text-primary hover:gap-2 transition-all px-2 py-1.5 rounded-lg hover:bg-primary/8">
               Edit <ArrowRight className="h-3 w-3" />
@@ -257,8 +243,6 @@ function PipelineCard({
           </Link>
         </div>
       </div>
-
-      {/* Node chips */}
       {nodeCount > 0 && (
         <div className="flex items-center gap-1.5 mt-4 pt-4 border-t border-zinc-50 overflow-x-auto scrollbar-hide">
           {pipeline.dag.nodes.map((node, i) => (
@@ -275,17 +259,27 @@ function PipelineCard({
   )
 }
 
-// ── Page ───────────────────────────────────────────────────────────────────────
-export default function PipelinesPage() {
+// ── Inner page — must be wrapped in Suspense because it calls useSearchParams() ──
+
+function PipelinesPageInner() {
+  const router       = useRouter()
+  const searchParams = useSearchParams()   // ← requires Suspense boundary
+
+  const addAgentId   = searchParams.get("add_agent") ?? undefined
+  const addAgentName = searchParams.get("agent_name")
+    ? decodeURIComponent(searchParams.get("agent_name")!)
+    : undefined
+
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
   const [loading,   setLoading]   = useState(true)
   const [error,     setError]     = useState("")
   const [showModal, setShowModal] = useState(false)
   const [tab,       setTab]       = useState<"mine" | "public">("mine")
 
+  useEffect(() => { if (addAgentId) setShowModal(true) }, [addAgentId])
+
   const load = useCallback(async (visibility: "mine" | "public") => {
-    setLoading(true)
-    setError("")
+    setLoading(true); setError("")
     try {
       const params = new URLSearchParams({ limit: "50" })
       if (visibility === "public") params.set("public", "true")
@@ -293,24 +287,28 @@ export default function PipelinesPage() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? "Failed to load pipelines")
       setPipelines(data.data ?? [])
-    } catch (err: any) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
+    } catch (err: any) { setError(err.message) }
+    finally { setLoading(false) }
   }, [])
 
   useEffect(() => { load(tab) }, [tab, load])
 
   const handleCreated = (p: Pipeline) => setPipelines(prev => [p, ...prev])
-  const handleDelete  = (id: string) => setPipelines(prev => prev.filter(p => p.id !== id))
+  const handleDelete  = (id: string)  => setPipelines(prev => prev.filter(p => p.id !== id))
+
+  const handleClose = () => {
+    setShowModal(false)
+    if (addAgentId) router.replace("/pipelines", { scroll: false })
+  }
 
   return (
     <>
       <NewPipelineModal
         open={showModal}
-        onClose={() => setShowModal(false)}
+        onClose={handleClose}
         onCreated={handleCreated}
+        prefilledAgentId={addAgentId}
+        prefilledAgentName={addAgentName}
       />
 
       <div className="space-y-6">
@@ -375,7 +373,6 @@ export default function PipelinesPage() {
           </div>
         )}
 
-        {/* How pipelines work */}
         <div className="bg-zinc-50 border border-zinc-100 rounded-2xl px-5 py-5 space-y-4">
           <div className="flex items-start gap-3">
             <div className="w-8 h-8 rounded-xl bg-primary/8 flex items-center justify-center flex-shrink-0 mt-0.5">
@@ -384,35 +381,64 @@ export default function PipelinesPage() {
             <div>
               <p className="text-sm font-semibold text-zinc-900 mb-1">How to build a multi-agent workflow</p>
               <ol className="space-y-2 text-xs text-zinc-600 list-none">
-                <li className="flex items-start gap-2">
-                  <span className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">1</span>
-                  <span><strong>Create individual agents</strong> in Builder Studio — one agent per task (e.g. Researcher, Summariser, Email Drafter).</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">2</span>
-                  <span><strong>Submit agents for review.</strong> Only <em>active</em> (approved) agents can be added to pipelines. Admins approve via the Admin Panel.</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">3</span>
-                  <span><strong>Create a pipeline</strong> → click Edit → add agents in sequence using the agent picker.</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">4</span>
-                  <span><strong>Test or run via API:</strong> <code className="font-mono bg-zinc-100 px-1 py-0.5 rounded text-[11px]">POST /api/pipelines/:id/execute</code></span>
-                </li>
+                {[
+                  { n: "1", text: <>Browse the <Link href="/marketplace" className="text-primary hover:underline">Marketplace</Link>, find an agent you need, and click <strong>"Use in Pipeline"</strong> to start a pipeline with it pre-added.</> },
+                  { n: "2", text: <><strong>Or create agents</strong> yourself in Builder Studio — one per task (Researcher, Summariser, Email Drafter).</> },
+                  { n: "3", text: <><strong>Add agents in order</strong> in the pipeline editor. Each step's output becomes the next step's input.</> },
+                  { n: "4", text: <><strong>Execute via API:</strong> <code className="font-mono bg-zinc-100 px-1 py-0.5 rounded text-[11px]">POST /api/pipelines/:id/execute</code></> },
+                ].map(s => (
+                  <li key={s.n} className="flex items-start gap-2">
+                    <span className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">
+                      {s.n}
+                    </span>
+                    <span>{s.text}</span>
+                  </li>
+                ))}
               </ol>
             </div>
           </div>
           <div className="border-t border-zinc-200 pt-4 flex items-center gap-4 text-xs">
-            <Link href="/builder" className="text-primary hover:underline font-semibold flex items-center gap-1">
-              <ArrowRight className="h-3 w-3" /> Create agents first
+            <Link href="/marketplace" className="text-primary hover:underline font-semibold flex items-center gap-1">
+              <ArrowRight className="h-3 w-3" /> Browse Marketplace
             </Link>
-            <Link href="/admin" className="text-primary hover:underline font-semibold flex items-center gap-1">
-              <ArrowRight className="h-3 w-3" /> Approve agents (admin)
+            <Link href="/builder" className="text-primary hover:underline font-semibold flex items-center gap-1">
+              <ArrowRight className="h-3 w-3" /> Build an agent
             </Link>
           </div>
         </div>
       </div>
     </>
+  )
+}
+
+// ── Fallback skeleton shown while searchParams resolves ───────────────────────
+
+function PipelinesSkeleton() {
+  return (
+    <div className="space-y-6">
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-2">
+          <div className="h-7 w-32 bg-zinc-100 rounded-xl animate-pulse" />
+          <div className="h-4 w-64 bg-zinc-50 rounded-full animate-pulse" />
+        </div>
+        <div className="h-9 w-32 bg-zinc-100 rounded-xl animate-pulse flex-shrink-0" />
+      </div>
+      <div className="h-9 w-44 bg-zinc-50 border border-zinc-100 rounded-xl animate-pulse" />
+      <div className="space-y-3">
+        {[...Array(3)].map((_, i) => (
+          <div key={i} className="h-24 bg-zinc-50 border border-zinc-100 rounded-2xl animate-pulse" />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Default export — Suspense boundary wrapping useSearchParams() consumer ────
+
+export default function PipelinesPage() {
+  return (
+    <Suspense fallback={<PipelinesSkeleton />}>
+      <PipelinesPageInner />
+    </Suspense>
   )
 }

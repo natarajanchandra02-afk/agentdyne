@@ -6,7 +6,7 @@ import Link from "next/link"
 import { motion } from "framer-motion"
 import {
   Star, Zap, CheckCircle, Play, Code2, BookOpen, MessageSquare,
-  Tag, Globe, Clock, TrendingUp, ArrowLeft, Copy, Check, Loader2,
+  Tag, Globe, Clock, TrendingUp, ArrowLeft, Copy, Check, Loader2, Layers,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -22,7 +22,6 @@ interface Props {
   agent: any; reviews: any[]; user: any; userSubscription: any
 }
 
-/** Grade badge — consistent with leaderboard */
 function GradeBadge({ score }: { score?: number }) {
   if (!score || score <= 0) return null
   const grade = score >= 90 ? "S" : score >= 80 ? "A" : score >= 70 ? "B" : score >= 60 ? "C" : "D"
@@ -56,7 +55,6 @@ export function AgentDetailClient({ agent, reviews, user, userSubscription }: Pr
     try {
       let parsedInput: unknown
       try { parsedInput = JSON.parse(testInput) } catch { parsedInput = testInput }
-
       const res  = await fetch(`/api/agents/${agent.id}/execute`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
@@ -76,9 +74,17 @@ export function AgentDetailClient({ agent, reviews, user, userSubscription }: Pr
     } finally { setTesting(false) }
   }
 
+  // Add this agent to a pipeline: redirect to /pipelines?add_agent=<id>
+  // The pipelines page reads that param and opens the "New Pipeline" modal
+  // pre-filled with this agent as the first node.
+  const handleAddToPipeline = () => {
+    if (!user) { router.push("/login"); return }
+    router.push(`/pipelines?add_agent=${agent.id}&agent_name=${encodeURIComponent(agent.name)}`)
+  }
+
   const copySnippet = () => {
     const snippet = [
-      `const res = await fetch("https://api.agentdyne.com/v1/agents/${agent.id}/execute", {`,
+      `const res = await fetch("https://agentdyne.com/api/agents/${agent.id}/execute", {`,
       `  method: "POST",`,
       `  headers: {`,
       `    "Authorization": "Bearer YOUR_API_KEY",`,
@@ -107,7 +113,7 @@ export function AgentDetailClient({ agent, reviews, user, userSubscription }: Pr
           </Link>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* Main column */}
+            {/* ── Main column ─────────────────────────────────────────── */}
             <div className="lg:col-span-2 space-y-6">
               <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
                 <div className="flex items-start gap-4">
@@ -169,17 +175,16 @@ export function AgentDetailClient({ agent, reviews, user, userSubscription }: Pr
                   </TabsTrigger>
                   <TabsTrigger value="reviews"
                     className="rounded-lg text-sm data-[state=active]:bg-white data-[state=active]:shadow-sm gap-1.5">
-                    <MessageSquare className="h-3.5 w-3.5" /> Reviews ({formatNumber(agent.total_reviews)})
+                    <MessageSquare className="h-3.5 w-3.5" />
+                    Reviews ({formatNumber(agent.total_reviews)})
                   </TabsTrigger>
                 </TabsList>
 
-                {/* Playground */}
+                {/* ── Playground ────────────────────────────────────── */}
                 <TabsContent value="playground" className="mt-4 space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <label className="text-xs font-semibold text-zinc-600 uppercase tracking-wider">
-                        Input
-                      </label>
+                      <label className="text-xs font-semibold text-zinc-600 uppercase tracking-wider">Input</label>
                       <Textarea
                         value={testInput}
                         onChange={e => setTestInput(e.target.value)}
@@ -188,9 +193,7 @@ export function AgentDetailClient({ agent, reviews, user, userSubscription }: Pr
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-xs font-semibold text-zinc-600 uppercase tracking-wider">
-                        Output
-                      </label>
+                      <label className="text-xs font-semibold text-zinc-600 uppercase tracking-wider">Output</label>
                       <div className={cn(
                         "h-48 rounded-xl border border-zinc-100 bg-zinc-50 p-3 font-mono text-xs overflow-auto whitespace-pre-wrap text-zinc-500",
                         testing && "animate-pulse"
@@ -199,12 +202,9 @@ export function AgentDetailClient({ agent, reviews, user, userSubscription }: Pr
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <Button
-                      onClick={handleTest}
-                      disabled={testing}
-                      className="rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 gap-2 font-semibold"
-                    >
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <Button onClick={handleTest} disabled={testing}
+                      className="rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 gap-2 font-semibold">
                       {testing
                         ? <Loader2 className="h-4 w-4 animate-spin" />
                         : <Play className="h-4 w-4" />}
@@ -218,12 +218,10 @@ export function AgentDetailClient({ agent, reviews, user, userSubscription }: Pr
                   </div>
                 </TabsContent>
 
-                {/* Docs — plain text, NO dangerouslySetInnerHTML (XSS prevention) */}
+                {/* ── Docs ──────────────────────────────────────────── */}
                 <TabsContent value="docs" className="mt-4">
                   <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-5 text-sm text-zinc-600 leading-relaxed min-h-32">
                     {agent.documentation ? (
-                      // Render as pre-formatted plain text — never inject HTML
-                      // Sellers must use Markdown-style plain text in documentation field
                       <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-zinc-600">
                         {agent.documentation}
                       </pre>
@@ -233,24 +231,22 @@ export function AgentDetailClient({ agent, reviews, user, userSubscription }: Pr
                   </div>
                 </TabsContent>
 
-                {/* API */}
+                {/* ── API ───────────────────────────────────────────── */}
                 <TabsContent value="api" className="mt-4 space-y-4">
                   <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-4">
                     <div className="flex items-center justify-between mb-3">
                       <span className="text-xs font-semibold text-zinc-600 uppercase tracking-wider">
                         TypeScript / JavaScript
                       </span>
-                      <button
-                        onClick={copySnippet}
-                        className="flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors"
-                      >
+                      <button onClick={copySnippet}
+                        className="flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
                         {copied
                           ? <><Check className="h-3.5 w-3.5 text-green-500" /> Copied!</>
                           : <><Copy className="h-3.5 w-3.5" /> Copy</>}
                       </button>
                     </div>
                     <pre className="text-xs font-mono text-zinc-500 overflow-auto leading-relaxed">{
-                      `const res = await fetch("https://api.agentdyne.com/v1/agents/${agent.id}/execute", {\n` +
+                      `const res = await fetch("https://agentdyne.com/api/agents/${agent.id}/execute", {\n` +
                       `  method: "POST",\n` +
                       `  headers: {\n` +
                       `    "Authorization": "Bearer YOUR_API_KEY",\n` +
@@ -262,12 +258,9 @@ export function AgentDetailClient({ agent, reviews, user, userSubscription }: Pr
                     }</pre>
                   </div>
 
-                  {/* Capability tags — useful for machine discovery */}
                   {agent.capability_tags?.length > 0 && (
                     <div className="bg-white border border-zinc-100 rounded-2xl p-4">
-                      <p className="text-xs font-semibold text-zinc-600 uppercase tracking-wider mb-2">
-                        Capability Tags
-                      </p>
+                      <p className="text-xs font-semibold text-zinc-600 uppercase tracking-wider mb-2">Capability Tags</p>
                       <div className="flex flex-wrap gap-1.5">
                         {agent.capability_tags.map((tag: string) => (
                           <span key={tag}
@@ -278,9 +271,24 @@ export function AgentDetailClient({ agent, reviews, user, userSubscription }: Pr
                       </div>
                     </div>
                   )}
+
+                  {/* Pipeline integration hint */}
+                  <div className="bg-primary/[0.03] border border-primary/20 rounded-2xl p-4">
+                    <p className="text-xs font-semibold text-zinc-700 mb-1 flex items-center gap-1.5">
+                      <Layers className="h-3.5 w-3.5 text-primary" /> Use in a multi-agent pipeline
+                    </p>
+                    <p className="text-xs text-zinc-500 mb-3">
+                      Chain this agent with others to build automated workflows. Output of each agent
+                      becomes the input to the next.
+                    </p>
+                    <button onClick={handleAddToPipeline}
+                      className="text-xs font-semibold text-primary hover:underline flex items-center gap-1">
+                      Add to Pipeline →
+                    </button>
+                  </div>
                 </TabsContent>
 
-                {/* Reviews */}
+                {/* ── Reviews ───────────────────────────────────────── */}
                 <TabsContent value="reviews" className="mt-4 space-y-3">
                   {reviews.length === 0 ? (
                     <div className="text-center py-10 text-zinc-400 text-sm">
@@ -301,21 +309,15 @@ export function AgentDetailClient({ agent, reviews, user, userSubscription }: Pr
                               <span className="text-sm font-semibold text-zinc-900">
                                 {r.profiles?.full_name || "Anonymous"}
                               </span>
-                              <span className="text-xs text-zinc-400 flex-shrink-0">
-                                {formatDate(r.created_at)}
-                              </span>
+                              <span className="text-xs text-zinc-400 flex-shrink-0">{formatDate(r.created_at)}</span>
                             </div>
                             <div className="flex gap-0.5 mb-2">
                               {[...Array(Math.min(5, Math.max(1, r.rating)))].map((_, i) => (
                                 <Star key={i} className="h-3 w-3 fill-yellow-400 text-yellow-400" />
                               ))}
                             </div>
-                            {r.title && (
-                              <p className="text-sm font-medium text-zinc-900 mb-1">{r.title}</p>
-                            )}
-                            {r.body && (
-                              <p className="text-sm text-zinc-500 leading-relaxed">{r.body}</p>
-                            )}
+                            {r.title && <p className="text-sm font-medium text-zinc-900 mb-1">{r.title}</p>}
+                            {r.body  && <p className="text-sm text-zinc-500 leading-relaxed">{r.body}</p>}
                           </div>
                         </div>
                       </div>
@@ -325,13 +327,11 @@ export function AgentDetailClient({ agent, reviews, user, userSubscription }: Pr
               </Tabs>
             </div>
 
-            {/* Sidebar */}
+            {/* ── Sidebar ─────────────────────────────────────────────── */}
             <div className="space-y-4">
               {/* Pricing / CTA card */}
-              <div
-                className="bg-white border border-zinc-100 rounded-2xl p-5 sticky top-20"
-                style={{ boxShadow: "0 4px 20px rgba(0,0,0,0.06)" }}
-              >
+              <div className="bg-white border border-zinc-100 rounded-2xl p-5 sticky top-20"
+                style={{ boxShadow: "0 4px 20px rgba(0,0,0,0.06)" }}>
                 <div className="text-center mb-5">
                   {agent.pricing_model === "free" && (
                     <><div className="text-3xl font-black text-zinc-900">Free</div>
@@ -357,13 +357,21 @@ export function AgentDetailClient({ agent, reviews, user, userSubscription }: Pr
                   )}
                 </div>
 
+                {/* Primary CTA */}
                 <Button
-                  className="w-full rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold"
-                  onClick={() => user ? handleTest() : router.push("/signup")}
-                >
+                  className="w-full rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold mb-2"
+                  onClick={() => user ? handleTest() : router.push("/signup")}>
                   {user
                     ? <><Play className="h-4 w-4 mr-2" /> Try it now</>
                     : "Sign up to use"}
+                </Button>
+
+                {/* Secondary CTA — Use in Pipeline */}
+                <Button
+                  variant="outline"
+                  className="w-full rounded-xl border-zinc-200 font-semibold text-zinc-700 gap-2"
+                  onClick={handleAddToPipeline}>
+                  <Layers className="h-4 w-4" /> Use in Pipeline
                 </Button>
 
                 {agent.free_calls_per_month > 0 && (
@@ -375,9 +383,10 @@ export function AgentDetailClient({ agent, reviews, user, userSubscription }: Pr
                 <div className="mt-5 space-y-2.5 pt-4 border-t border-zinc-50">
                   {([
                     { icon: Globe,      label: "Model",        value: agent.model_name?.replace("claude-", "Claude ") ?? "—" },
-                    { icon: Clock,      label: "Avg latency",  value: `~${agent.average_latency_ms}ms` },
-                    { icon: TrendingUp, label: "Success rate", value: agent.total_executions > 0
-                        ? `${Math.round((agent.successful_executions / agent.total_executions) * 100)}%`
+                    { icon: Clock,      label: "Avg latency",  value: `~${agent.average_latency_ms || 0}ms` },
+                    { icon: TrendingUp, label: "Success rate",
+                      value: (agent.total_executions ?? 0) > 0
+                        ? `${Math.round(((agent.successful_executions ?? 0) / (agent.total_executions ?? 1)) * 100)}%`
                         : "—" },
                     { icon: Tag,        label: "Version",      value: agent.version ?? "1.0.0" },
                   ] as const).map(item => (

@@ -22,11 +22,13 @@ import { useUser } from "@/hooks/use-user"
 import { getInitials, cn, formatRelativeTime } from "@/lib/utils"
 import type { User } from "@supabase/supabase-js"
 
+// Blog added to public nav — appears between Docs and Pricing
 const NAV = [
   { href: "/marketplace",  label: "Marketplace" },
   { href: "/integrations", label: "Integrations" },
   { href: "/builder",      label: "Build" },
   { href: "/docs",         label: "Docs" },
+  { href: "/blog",         label: "Blog" },
   { href: "/pricing",      label: "Pricing" },
 ]
 
@@ -61,10 +63,8 @@ function NotificationBell({ navigate }: { navigate: (href: string) => void }) {
   const [open,          setOpen]          = useState(false)
   const [notifications, setNotifications] = useState<any[]>([])
   const [unread,        setUnread]        = useState(0)
-  const [loading,       setLoading]       = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
 
-  // Fetch notifications when user is logged in (once on mount)
   useEffect(() => {
     let cancelled = false
     const load = async () => {
@@ -82,12 +82,9 @@ function NotificationBell({ navigate }: { navigate: (href: string) => void }) {
     return () => { cancelled = true }
   }, [])
 
-  // Close on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) setOpen(false)
     }
     if (open) document.addEventListener("mousedown", handler)
     return () => document.removeEventListener("mousedown", handler)
@@ -95,7 +92,6 @@ function NotificationBell({ navigate }: { navigate: (href: string) => void }) {
 
   const toggleOpen = async () => {
     if (!open && unread > 0) {
-      // Mark all as read immediately (optimistic)
       setUnread(0)
       setNotifications(prev => prev.map(n => ({ ...n, is_read: true })))
       fetch("/api/notifications", { method: "PATCH" }).catch(() => {})
@@ -124,19 +120,14 @@ function NotificationBell({ navigate }: { navigate: (href: string) => void }) {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 4, scale: 0.96 }}
             transition={{ duration: 0.15 }}
-            className="absolute right-0 top-full mt-2 w-80 bg-white border border-zinc-100 rounded-2xl shadow-xl z-50 overflow-hidden"
-          >
-            {/* Header */}
+            className="absolute right-0 top-full mt-2 w-80 bg-white border border-zinc-100 rounded-2xl shadow-xl z-50 overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-50">
               <p className="text-sm font-semibold text-zinc-900">Notifications</p>
-              <button
-                onClick={() => navigate("/settings")}
+              <button onClick={() => navigate("/settings")}
                 className="text-xs text-zinc-400 hover:text-primary transition-colors">
                 Settings
               </button>
             </div>
-
-            {/* List */}
             <div className="max-h-80 overflow-y-auto">
               {notifications.length === 0 ? (
                 <div className="text-center py-10">
@@ -149,20 +140,16 @@ function NotificationBell({ navigate }: { navigate: (href: string) => void }) {
               ) : (
                 <div className="divide-y divide-zinc-50">
                   {notifications.slice(0, 12).map((n: any) => (
-                    <button
-                      key={n.id}
+                    <button key={n.id}
                       onClick={() => { navigate(n.action_url || "/dashboard"); setOpen(false) }}
                       className={cn(
                         "w-full flex items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-zinc-50",
                         !n.is_read && "bg-primary/[0.02]"
-                      )}
-                    >
-                      {!n.is_read && (
-                        <span className="absolute left-4 top-1/2 -translate-y-1/2 w-1.5 h-1.5 bg-primary rounded-full" />
-                      )}
+                      )}>
                       <NotifIcon type={n.type} />
                       <div className="flex-1 min-w-0">
-                        <p className={cn("text-xs leading-relaxed", n.is_read ? "text-zinc-500" : "text-zinc-900 font-medium")}>
+                        <p className={cn("text-xs leading-relaxed",
+                          n.is_read ? "text-zinc-500" : "text-zinc-900 font-medium")}>
                           {n.title}
                         </p>
                         {n.message && (
@@ -175,12 +162,9 @@ function NotificationBell({ navigate }: { navigate: (href: string) => void }) {
                 </div>
               )}
             </div>
-
-            {/* Footer */}
             {notifications.length > 0 && (
               <div className="border-t border-zinc-50 px-4 py-2.5">
-                <button
-                  onClick={() => { navigate("/dashboard"); setOpen(false) }}
+                <button onClick={() => { navigate("/dashboard"); setOpen(false) }}
                   className="text-xs text-primary font-semibold hover:underline">
                   View all activity →
                 </button>
@@ -193,16 +177,11 @@ function NotificationBell({ navigate }: { navigate: (href: string) => void }) {
   )
 }
 
-// ─── Auth right-side area ─────────────────────────────────────────────────────
-// Defined OUTSIDE Navbar to keep stable component identity across re-renders.
+// ─── Auth area ────────────────────────────────────────────────────────────────
 
 interface AuthAreaProps {
-  authLoading: boolean
-  user: User | null
-  profile: any
-  onSignOut: () => void
-  signingOut: boolean
-  navigate: (href: string) => void
+  authLoading: boolean; user: User | null; profile: any
+  onSignOut: () => void; signingOut: boolean; navigate: (href: string) => void
 }
 
 function AuthArea({ authLoading, user, profile, onSignOut, signingOut, navigate }: AuthAreaProps) {
@@ -218,17 +197,12 @@ function AuthArea({ authLoading, user, profile, onSignOut, signingOut, navigate 
   if (user) {
     return (
       <>
-        {/* Search */}
         <Button variant="ghost" size="icon"
           className="hidden md:flex h-9 w-9 rounded-xl"
           onClick={() => navigate("/marketplace")}>
           <Search className="h-4 w-4" />
         </Button>
-
-        {/* Notifications */}
         <NotificationBell navigate={navigate} />
-
-        {/* User dropdown */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="h-9 gap-2 rounded-xl px-2 focus-visible:ring-0">
@@ -244,7 +218,6 @@ function AuthArea({ authLoading, user, profile, onSignOut, signingOut, navigate 
               <ChevronDown className="h-3.5 w-3.5 hidden md:block text-zinc-400" />
             </Button>
           </DropdownMenuTrigger>
-
           <DropdownMenuContent align="end" className="w-56 rounded-2xl shadow-xl border-zinc-100 p-1.5" sideOffset={8}>
             <DropdownMenuLabel className="px-2 py-2">
               <p className="font-semibold text-zinc-900 truncate">{profile?.full_name || "User"}</p>
@@ -256,20 +229,15 @@ function AuthArea({ authLoading, user, profile, onSignOut, signingOut, navigate 
               )}
             </DropdownMenuLabel>
             <DropdownMenuSeparator className="bg-zinc-100" />
-
             {USER_MENU.map(({ href, icon: Icon, label }) => (
-              <DropdownMenuItem key={href}
-                onClick={() => navigate(href)}
+              <DropdownMenuItem key={href} onClick={() => navigate(href)}
                 className="rounded-xl cursor-pointer px-2 py-2 text-sm text-zinc-700 hover:text-zinc-900 focus:bg-zinc-50">
                 <Icon className="h-4 w-4 mr-2.5 text-zinc-400" />
                 {label}
               </DropdownMenuItem>
             ))}
-
             <DropdownMenuSeparator className="bg-zinc-100" />
-            <DropdownMenuItem
-              onClick={onSignOut}
-              disabled={signingOut}
+            <DropdownMenuItem onClick={onSignOut} disabled={signingOut}
               className="rounded-xl cursor-pointer px-2 py-2 text-sm text-red-600 hover:text-red-700 focus:bg-red-50 focus:text-red-700">
               <LogOut className="h-4 w-4 mr-2.5" />
               {signingOut ? "Signing out…" : "Sign out"}
@@ -280,7 +248,6 @@ function AuthArea({ authLoading, user, profile, onSignOut, signingOut, navigate 
     )
   }
 
-  // Logged out
   return (
     <>
       <Link href="/login" className="hidden md:block">
@@ -375,12 +342,8 @@ export function Navbar() {
           {/* Right side */}
           <div className="flex items-center gap-2">
             <AuthArea
-              authLoading={authLoading}
-              user={user}
-              profile={profile}
-              onSignOut={signOut}
-              signingOut={signingOut}
-              navigate={navigate}
+              authLoading={authLoading} user={user} profile={profile}
+              onSignOut={signOut} signingOut={signingOut} navigate={navigate}
             />
             <Button variant="ghost" size="icon"
               className="md:hidden h-9 w-9 rounded-xl"

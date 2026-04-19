@@ -1,214 +1,153 @@
 export const runtime = 'edge'
 
-/**
- * /api/admin/agents
- *
- * PATCH  — Approve / reject / suspend / restore an agent
- * GET    — List agents by status for the admin review queue
- *
- * CRITICAL: Uses createAdminClient() (service role key) for ALL database
- * mutations and privileged reads. The anon-key client (createClient) is
- * subject to RLS, and the agents UPDATE policy only allows sellers to
- * update their own agents. Using the anon key here would silently fail
- * (RLS blocks the update with no error returned by PostgREST).
- *
- * Auth flow:
- *   1. Verify session via createClient() (anon key — safe for auth.getUser())
- *   2. Load role via createAdminClient() (bypasses RLS)
- *   3. All DB writes via createAdminClient()
- */
-
 import { NextRequest, NextResponse } from "next/server"
-import { createClient, createAdminClient } from "@/lib/supabase/server"
-import { buildRBAC, requirePermission } from "@/lib/rbac"
-import { apiRateLimit } from "@/lib/rate-limit"
+import { createClient } from "@/lib/supabase/server"
+import { getRBAC } from "@/lib/rbac"
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
-const ACTION_MAP = {
-  approve: { status: "active",    permission: "approve_agent" as const, log: "agent.approved" },
-  reject:  { status: "draft",     permission: "reject_agent"  as const, log: "agent.rejected" },
-  suspend: { status: "suspended", permission: "suspend_agent" as const, log: "agent.suspended" },
-  restore: { status: "active",    permission: "approve_agent" as const, log: "agent.restored" },
-} as const
+async function requireAdmin(supabase: any, userId: string) {
+  const rbac = await getRBAC(supabase, userId)
+  return rbac.isAdmin
+}
 
-// ── PATCH /api/admin/agents ───────────────────────────────────────────────────
-
-export async function PATCH(req: NextRequest) {
-  const limited = await apiRateLimit(req)
-  if (limited) return limited
-
+/**
+ * GET /api/admin/agents
+ * Returns agents for admin review — filtered by status.
+ *
+ * Query params:
+ *   status   all | pending_review | active | suspended | draft
+ *   limit    max 200
+ *   q        search by name
+ */
+export async function GET(req: NextRequest) {
   try {
-    // Step 1: verify session (anon client — safe)
-    const anonClient  = await createClient()
-    const { data: { user } } = await anonClient.auth.getUser()
-    if (!user) return NextResponse.json({ error: "Authentication required" }, { status: 401 })
-
-    // Step 2: load role via admin client (bypasses RLS, always accurate)
-    const adminDb = await createAdminClient()
-    const { data: profileRow } = await adminDb
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .single()
-
-    const rbac = buildRBAC(user.id, profileRow?.role)
-    if (!rbac.isAdmin) {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if (!await requireAdmin(supabase, user.id))
       return NextResponse.json({ error: "Admin access required" }, { status: 403 })
-    }
 
-    // Parse + validate request body
-    let body: Record<string, unknown>
-    try { body = await req.json() }
-    catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }) }
+    const { searchParams } = new URL(req.url)
+    const status = searchParams.get("status") || "all"
+    const limit  = Math.min(200, parseInt(searchParams.get("limit") ?? "50"))
+    const q      = searchParams.get("q")
 
-    const { agent_id, action, reason } = body as Record<string, unknown>
-
-    if (typeof agent_id !== "string" || !UUID_RE.test(agent_id)) {
-      return NextResponse.json({ error: "Valid agent_id (UUID) is required" }, { status: 400 })
-    }
-    if (typeof action !== "string" || !(action in ACTION_MAP)) {
-      return NextResponse.json(
-        { error: "action must be one of: approve | reject | suspend | restore" },
-        { status: 400 }
-      )
-    }
-
-    const mapped    = ACTION_MAP[action as keyof typeof ACTION_MAP]
-    const deny      = requirePermission(rbac, mapped.permission)
-    if (deny) return NextResponse.json({ error: deny.error }, { status: deny.status })
-
-    const reasonStr = typeof reason === "string" ? reason.trim() : ""
-    if ((action === "reject" || action === "suspend") && !reasonStr) {
-      return NextResponse.json(
-        { error: `reason is required for action "${action}"` },
-        { status: 400 }
-      )
-    }
-
-    // Step 3: load agent via admin client (reads all statuses, bypasses RLS)
-    const { data: agent, error: fetchErr } = await adminDb
+    let query = supabase
       .from("agents")
-      .select("id, name, status, seller_id")
-      .eq("id", agent_id)
-      .single()
+      .select(
+        `id, name, slug, description, category, status, pricing_model, price_per_call,
+         subscription_price_monthly, model_name, temperature, max_tokens,
+         tags, capability_tags, created_at, updated_at, is_featured, is_verified,
+         profiles!seller_id(id, full_name, email, is_verified)`,
+        { count: "exact" }
+      )
+      .order("created_at", { ascending: false })
+      .limit(limit)
 
-    if (fetchErr || !agent) {
-      return NextResponse.json({ error: "Agent not found" }, { status: 404 })
-    }
+    if (status && status !== "all") query = query.eq("status", status) as typeof query
+    if (q) query = query.ilike("name", `%${q}%`) as typeof query
 
-    // Step 4: apply status change via admin client (bypasses seller-only UPDATE policy)
-    const { error: updateErr } = await adminDb
+    const { data, count, error } = await query
+    if (error) throw error
+
+    return NextResponse.json({ agents: data ?? [], total: count ?? 0 })
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 })
+  }
+}
+
+/**
+ * PATCH /api/admin/agents
+ * Approve / reject / suspend an agent and notify the seller.
+ *
+ * Body:
+ *   agent_id   UUID
+ *   action     "approve" | "reject" | "suspend"
+ *   reason?    string (required for reject)
+ *   message?   string (optional message for approve)
+ */
+export async function PATCH(req: NextRequest) {
+  try {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if (!await requireAdmin(supabase, user.id))
+      return NextResponse.json({ error: "Admin access required" }, { status: 403 })
+
+    const body = await req.json()
+    const { agent_id, action, reason, message } = body
+
+    if (!agent_id || !UUID_RE.test(agent_id))
+      return NextResponse.json({ error: "Valid agent_id required" }, { status: 400 })
+
+    if (!["approve", "reject", "suspend"].includes(action))
+      return NextResponse.json({ error: "action must be approve, reject, or suspend" }, { status: 400 })
+
+    if (action === "reject" && (!reason || String(reason).trim().length < 10))
+      return NextResponse.json({ error: "reason is required for rejection (min 10 chars)" }, { status: 400 })
+
+    // Map action → status
+    const newStatus = action === "approve" ? "active" : action === "reject" ? "rejected" : "suspended"
+
+    const { error: updateErr } = await supabase
       .from("agents")
-      .update({ status: mapped.status, updated_at: new Date().toISOString() })
+      .update({ status: newStatus, updated_at: new Date().toISOString() })
       .eq("id", agent_id)
 
     if (updateErr) throw updateErr
 
-    // Step 5: audit log (fire-and-forget)
-    adminDb.from("audit_logs").insert({
-      user_id:     user.id,
-      actor_type:  "user",
-      actor_id:    user.id,
-      action:      mapped.log,
-      resource:    "agents",
-      resource_id: agent_id,
-      payload: {
-        reason:          reasonStr || null,
-        previous_status: agent.status,
-        new_status:      mapped.status,
-        agent_name:      agent.name,
-      },
-    }).then()
-
-    // Step 6: notify seller
-    const notifTitle = {
-      approve: `"${agent.name}" is now live!`,
-      reject:  `"${agent.name}" needs changes`,
-      suspend: `"${agent.name}" has been suspended`,
-      restore: `"${agent.name}" has been restored`,
-    }[action as string] ?? `"${agent.name}" status updated`
-
-    const notifBody = action === "approve"
-      ? "Your agent is now active on the AgentDyne marketplace."
-      : action === "restore"
-        ? "Your agent has been restored and is live again."
-        : `Your agent was ${action === "reject" ? "rejected" : "suspended"}. Reason: ${reasonStr || "See admin feedback"}`
-
-    adminDb.from("notifications").insert({
-      user_id:  agent.seller_id,
-      type:     (action === "approve" || action === "restore") ? "agent_approved" : "agent_rejected",
-      title:    notifTitle,
-      body:     notifBody,
-      metadata: { agent_id, action, reason: reasonStr || null },
-    }).then()
-
-    return NextResponse.json({ ok: true, agent_id, action, new_status: mapped.status })
-
-  } catch (err: any) {
-    console.error("PATCH /api/admin/agents:", err)
-    return NextResponse.json({ error: err.message ?? "Internal server error" }, { status: 500 })
-  }
-}
-
-// ── GET /api/admin/agents ─────────────────────────────────────────────────────
-
-export async function GET(req: NextRequest) {
-  const limited = await apiRateLimit(req)
-  if (limited) return limited
-
-  try {
-    // Verify session
-    const anonClient = await createClient()
-    const { data: { user } } = await anonClient.auth.getUser()
-    if (!user) return NextResponse.json({ error: "Authentication required" }, { status: 401 })
-
-    // Role check via admin client (bypasses RLS)
-    const adminDb = await createAdminClient()
-    const { data: profileRow } = await adminDb
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
+    // Fetch agent to notify seller
+    const { data: agent } = await supabase
+      .from("agents")
+      .select("name, seller_id")
+      .eq("id", agent_id)
       .single()
 
-    const rbac = buildRBAC(user.id, profileRow?.role)
-    if (!rbac.isAdmin) {
-      return NextResponse.json({ error: "Admin access required" }, { status: 403 })
+    if (agent?.seller_id) {
+      const notifMap = {
+        approve: {
+          title: "Agent approved! 🎉",
+          body:  `"${agent.name}" is now live on the marketplace.${message ? " " + message : ""}`,
+          type:  "agent_approved",
+          url:   `/marketplace/${agent_id}`,
+        },
+        reject: {
+          title: "Agent submission needs revision",
+          body:  `"${agent.name}" was not approved. Reason: ${String(reason).slice(0, 300)}`,
+          type:  "agent_rejected",
+          url:   `/builder/${agent_id}`,
+        },
+        suspend: {
+          title: "Agent suspended",
+          body:  `"${agent.name}" has been suspended. ${reason ? "Reason: " + String(reason).slice(0, 200) : "Contact support for details."}`,
+          type:  "agent_rejected",
+          url:   `/builder/${agent_id}`,
+        },
+      }
+      const notif = notifMap[action as keyof typeof notifMap]
+      await supabase.from("notifications").insert({
+        user_id:    agent.seller_id,
+        title:      notif.title,
+        body:       notif.body,
+        type:       notif.type,
+        action_url: notif.url,
+      })
     }
 
-    const { searchParams } = new URL(req.url)
-    const status = searchParams.get("status") ?? "pending_review"
-    const limit  = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") ?? "50")))
+    // Audit log
+    await supabase.from("audit_logs").insert({
+      user_id:     user.id,
+      actor_type:  "admin",
+      actor_id:    user.id,
+      action:      `admin_${action}_agent`,
+      resource:    "agents",
+      resource_id: agent_id,
+      payload:     { reason, message },
+    })
 
-    const VALID_STATUSES = new Set(["pending_review", "active", "suspended", "draft", "all"])
-    if (!VALID_STATUSES.has(status)) {
-      return NextResponse.json({ error: "Invalid status filter" }, { status: 400 })
-    }
-
-    // Build query via admin client — bypasses all RLS on agents
-    let query = adminDb
-      .from("agents")
-      .select(
-        "id, name, description, category, status, " +
-        "pricing_model, price_per_call, subscription_price_monthly, " +
-        "model_name, temperature, max_tokens, " +
-        "tags, capability_tags, created_at, updated_at, " +
-        "profiles!seller_id(id, full_name, email, is_verified)"
-      )
-      .order("created_at", { ascending: true })
-      .limit(limit)
-
-    if (status !== "all") {
-      query = query.eq("status", status)
-    }
-
-    const { data: agents, error } = await query
-    if (error) throw error
-
-    return NextResponse.json({ agents: agents ?? [], status, count: agents?.length ?? 0 })
-
+    return NextResponse.json({ ok: true, agent_id, new_status: newStatus })
   } catch (err: any) {
-    console.error("GET /api/admin/agents:", err)
-    return NextResponse.json({ error: err.message ?? "Internal server error" }, { status: 500 })
+    return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
