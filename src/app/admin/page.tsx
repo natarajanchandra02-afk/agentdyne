@@ -4,14 +4,11 @@ export const dynamic = "force-dynamic"
 /**
  * Admin page — data loading strategy
  *
- * Previously fetched all data via createClient() (anon key) which is subject
- * to RLS. Result: pendingReviews = [], agent counts = 0 (RLS blocked non-active
- * agents), user data filtered, transaction totals empty.
- *
- * Fix: All privileged reads go through /api/admin/* server routes which use
- * createAdminClient() (service role key) that bypasses RLS entirely.
- *
- * Auth check still uses Supabase client so it's validated server-side.
+ * All privileged reads go through /api/admin/* server routes which use
+ * createAdminClient() (service role key). This bypasses RLS entirely so
+ * we see agents from ALL sellers — including pending_review submissions
+ * from other users. The anon Supabase client here is used ONLY to
+ * validate the session JWT and do the role check.
  */
 
 import { useEffect, useState, useRef } from "react"
@@ -21,17 +18,17 @@ import { createClient } from "@/lib/supabase/client"
 import { AdminClient } from "./admin-client"
 import { DashboardSidebar } from "@/components/dashboard/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ShieldCheck } from "lucide-react"
+import { ShieldCheck, RefreshCw } from "lucide-react"
 
 export default function AdminPage() {
   const [data,        setData]        = useState<any>(null)
   const [denied,      setDenied]      = useState(false)
-  const [roleChecked, setRoleChecked] = useState(false)
   const [loadErr,     setLoadErr]     = useState<string | null>(null)
+  const [roleChecked, setRoleChecked] = useState(false)
+
   const router = useRouter()
   const { user, loading: authLoading } = useUser()
 
-  // Singleton anon client — only used for session check
   const supabaseRef = useRef(createClient())
   const supabase    = supabaseRef.current
 
@@ -39,14 +36,15 @@ export default function AdminPage() {
     if (authLoading) return
     if (!user) { router.push("/login?next=/admin"); return }
 
-    // Verify admin role via direct DB read — never trust client cache
+    // Always query role fresh — never trust the hook's module-level cache
+    // (fixes "access denied" after running UPDATE profiles SET role='admin')
     supabase
       .from("profiles")
       .select("role")
       .eq("id", user.id)
       .single()
-      .then(({ data: profileData, error }) => {
-        if (error || profileData?.role !== "admin") {
+      .then(({ data: p, error }) => {
+        if (error || p?.role !== "admin") {
           setDenied(true)
           setRoleChecked(true)
           return
@@ -57,46 +55,44 @@ export default function AdminPage() {
 
     async function loadAdminData() {
       try {
-        /**
-         * All fetches go through authenticated API routes that use
-         * createAdminClient() (service role) on the server — they read
-         * everything regardless of RLS, giving accurate counts.
-         */
-        const [
-          statsRes,
-          pendingRes,
-          allAgentsRes,
-          usersRes,
-          flaggedRes,
-        ] = await Promise.all([
+        // All requests use service-role on the server → RLS bypassed
+        const [statsRes, pendingRes, allAgentsRes, usersRes, secRes] = await Promise.all([
           fetch("/api/admin/stats"),
           fetch("/api/admin/agents?status=pending_review&limit=100"),
-          fetch("/api/admin/agents?status=all&limit=50"),
-          fetch("/api/admin/users?limit=50"),
+          fetch("/api/admin/agents?status=all&limit=100"),
+          fetch("/api/admin/users?limit=100"),
           fetch("/api/admin/security?limit=50"),
         ])
 
-        // Validate all responses
-        if (!statsRes.ok)     throw new Error(`Stats: ${(await statsRes.json()).error}`)
-        if (!pendingRes.ok)   throw new Error(`Pending: ${(await pendingRes.json()).error}`)
-        if (!allAgentsRes.ok) throw new Error(`Agents: ${(await allAgentsRes.json()).error}`)
-        if (!usersRes.ok)     throw new Error(`Users: ${(await usersRes.json()).error}`)
-        if (!flaggedRes.ok)   throw new Error(`Security: ${(await flaggedRes.json()).error}`)
+        const check = async (r: Response, label: string) => {
+          if (!r.ok) {
+            const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }))
+            throw new Error(`${label}: ${body.error ?? r.statusText}`)
+          }
+          return r.json()
+        }
 
-        const [stats, pending, allAgents, users, flagged] = await Promise.all([
-          statsRes.json(),
-          pendingRes.json(),
-          allAgentsRes.json(),
-          usersRes.json(),
-          flaggedRes.json(),
+        const [stats, pending, allAgents, users, sec] = await Promise.all([
+          check(statsRes,     "Stats"),
+          check(pendingRes,   "Pending agents"),
+          check(allAgentsRes, "All agents"),
+          check(usersRes,     "Users"),
+          check(secRes,       "Security"),
         ])
 
         setData({
-          stats:          stats,
-          pendingReviews: pending.agents   ?? [],
-          recentAgents:   allAgents.agents ?? [],
-          recentUsers:    users.users      ?? [],
-          flaggedAttempts: flagged.attempts ?? [],
+          stats: {
+            totalUsers:      stats.totalUsers      ?? 0,
+            totalAgents:     stats.totalAgents     ?? 0,
+            pendingAgents:   stats.pendingAgents   ?? 0,
+            totalExecutions: stats.totalExecutions ?? 0,
+            totalRevenue:    stats.totalRevenue    ?? 0,
+            platformEarned:  stats.platformEarned  ?? 0,
+          },
+          pendingReviews:  pending.agents   ?? [],
+          recentAgents:    allAgents.agents ?? [],
+          recentUsers:     users.users      ?? [],
+          flaggedAttempts: sec.attempts     ?? [],
         })
       } catch (err: any) {
         console.error("Admin data load failed:", err)
@@ -137,13 +133,13 @@ export default function AdminPage() {
         <DashboardSidebar />
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center max-w-md px-6">
-            <p className="text-sm text-red-500 font-medium mb-2">Failed to load admin data</p>
-            <p className="text-xs text-zinc-400 font-mono">{loadErr}</p>
+            <p className="text-sm font-semibold text-zinc-900 mb-1">Failed to load admin data</p>
+            <p className="text-xs text-zinc-400 font-mono break-all mb-4">{loadErr}</p>
             <button
               onClick={() => { setLoadErr(null); setData(null); window.location.reload() }}
-              className="mt-4 text-xs font-semibold text-primary underline"
+              className="flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline mx-auto"
             >
-              Retry
+              <RefreshCw className="h-3.5 w-3.5" /> Retry
             </button>
           </div>
         </div>
