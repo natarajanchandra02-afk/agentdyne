@@ -10,23 +10,16 @@ import { retrieveRAGContext, buildRAGSystemPrompt } from "@/lib/rag-retriever"
 /**
  * POST /api/pipelines/[id]/execute
  *
- * Parallel DAG Execution Engine — production hardened:
+ * Production-grade parallel DAG Execution Engine.
  *
- * Security:
- * ✅ Auth (session or API key)
- * ✅ Banned-user check
- * ✅ Quota enforcement (per-node)
- * ✅ Injection filter on pipeline input
- * ✅ Per-node input sanitisation
- * ✅ Credits deduction after success
- * ✅ Timeout enforcement per pipeline
- * ✅ Cycle detection via topological sort
- *
- * Performance:
- * ✅ Nodes in same topological level run in parallel (Promise.all)
- * ✅ RAG context injected per-node when knowledge_base_id set
- * ✅ Per-node output stored as jsonb (never bare string)
- * ✅ Partial failure recovery via continue_on_failure flag
+ * Features:
+ * ✅ Per-node retry policy (max_retries, retry_delay_ms, retry_on_errors)
+ * ✅ Per-node fallback agent (fallback_agent_id)
+ * ✅ Shared pipeline state (__state key flows through all nodes)
+ * ✅ Pipeline version snapshot (pinning after each successful run)
+ * ✅ Schema strict mode — fails pipeline on schema mismatch when enabled
+ * ✅ Node-level timing + retry count in results
+ * ✅ Agent pipeline usage tracking (powers "used in X pipelines" badge)
  */
 export async function POST(
   req: NextRequest,
@@ -45,7 +38,7 @@ export async function POST(
 
     const supabase = await createClient()
 
-    // ── Auth ────────────────────────────────────────────────────────────────
+    // ── Auth ──────────────────────────────────────────────────────────────────
     let userId: string | undefined
     const { data: { user } } = await supabase.auth.getUser()
     userId = user?.id
@@ -59,265 +52,293 @@ export async function POST(
         const hash = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("")
         const { data: keyRow } = await supabase
           .from("api_keys").select("user_id, is_active, expires_at").eq("key_hash", hash).single()
-        if (keyRow?.is_active && !(keyRow.expires_at && new Date(keyRow.expires_at) < new Date())) {
+        if (keyRow?.is_active && !(keyRow.expires_at && new Date(keyRow.expires_at) < new Date()))
           userId = keyRow.user_id
-        }
       }
     }
-
     if (!userId) return NextResponse.json({ error: "Authentication required" }, { status: 401 })
 
-    // ── Profile: ban check + quota ───────────────────────────────────────────
+    // ── Profile ───────────────────────────────────────────────────────────────
     const { data: profile } = await supabase
       .from("profiles")
       .select("executions_used_this_month, monthly_execution_quota, subscription_plan, is_banned")
-      .eq("id", userId)
-      .single()
+      .eq("id", userId).single()
 
     if (profile?.is_banned)
       return NextResponse.json({ error: "Your account has been suspended." }, { status: 403 })
 
-    // ── Load pipeline ────────────────────────────────────────────────────────
+    // ── Load pipeline ─────────────────────────────────────────────────────────
     const { data: pipeline } = await supabase
       .from("pipelines").select("*").eq("id", pipelineId).single()
 
-    if (!pipeline) return NextResponse.json({ error: "Pipeline not found" }, { status: 404 })
-    if (pipeline.is_active === false) return NextResponse.json({ error: "Pipeline is inactive" }, { status: 404 })
+    if (!pipeline)
+      return NextResponse.json({ error: "Pipeline not found" }, { status: 404 })
+    if (!pipeline.is_active)
+      return NextResponse.json({ error: "Pipeline is inactive" }, { status: 404 })
     if (!pipeline.is_public && pipeline.owner_id !== userId)
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
-    const dag: { nodes: DAGNode[]; edges: DAGEdge[] } = pipeline.dag ?? { nodes: [], edges: [] }
-    const nodeCount = dag.nodes.length
+    const dag = pipeline.dag as {
+      nodes:             DAGNode[]
+      edges:             DAGEdge[]
+      strict_schema_mode?: boolean
+    }
+    const strictSchemaMode = dag.strict_schema_mode ?? false
+    const nodeCount        = dag.nodes.length
 
     if (nodeCount === 0)
-      return NextResponse.json({ error: "Pipeline has no agents configured" }, { status: 422 })
+      return NextResponse.json({ error: "Pipeline has no agents" }, { status: 422 })
     if (nodeCount > 50)
       return NextResponse.json({ error: "Pipeline exceeds 50 node limit" }, { status: 400 })
 
-    // ── Quota check (nodes × 1 execution each) ───────────────────────────────
+    // ── Quota ─────────────────────────────────────────────────────────────────
     const quota = profile?.monthly_execution_quota ?? 100
     const used  = profile?.executions_used_this_month ?? 0
-
     if (quota !== -1 && used + nodeCount > quota)
       return NextResponse.json({
         error: `Pipeline needs ${nodeCount} quota units but only ${Math.max(0, quota - used)} remaining`,
-        code:  "QUOTA_EXCEEDED",
+        code: "QUOTA_EXCEEDED",
       }, { status: 429 })
 
-    // ── Load credits ─────────────────────────────────────────────────────────
     const { data: credits } = await supabase
       .from("credits").select("balance_usd").eq("user_id", userId).single()
 
-    // ── Validate all agents ──────────────────────────────────────────────────
-    const agentIds = [...new Set(dag.nodes.map(n => n.agent_id).filter(Boolean))]
+    // ── Load agents (include input_schema / output_schema for strict mode) ────
+    const allAgentIds = [
+      ...new Set([
+        ...dag.nodes.map(n => n.agent_id),
+        ...dag.nodes.map(n => n.fallback_agent_id).filter(Boolean) as string[],
+      ].filter(Boolean))
+    ]
+
     const { data: agentRows } = await supabase
       .from("agents")
-      .select("id, name, price_per_call, pricing_model, model_name, system_prompt, max_tokens, temperature, status, free_calls_per_month, knowledge_base_id")
-      .in("id", agentIds)
+      .select("id, name, price_per_call, pricing_model, model_name, system_prompt, max_tokens, temperature, status, free_calls_per_month, knowledge_base_id, security_config, input_schema, output_schema")
+      .in("id", allAgentIds)
 
-    if (!agentRows || agentRows.length !== agentIds.length) {
-      const foundIds = new Set(agentRows?.map((a: any) => a.id))
-      const missing  = agentIds.filter(id => !foundIds.has(id))
-      return NextResponse.json({ error: `Agents not found: ${missing.join(", ")}` }, { status: 422 })
+    const agentMap = new Map<string, any>((agentRows ?? []).map((a: any) => [a.id, a]))
+
+    for (const node of dag.nodes) {
+      const a = agentMap.get(node.agent_id)
+      if (!a) return NextResponse.json({ error: `Agent "${node.agent_id}" not found` }, { status: 422 })
+      if (a.status !== "active") return NextResponse.json({ error: `Agent "${a.name}" is not active` }, { status: 422 })
     }
 
-    const agentMap = new Map<string, any>(agentRows.map((a: any) => [a.id, a]))
-    for (const a of agentRows) {
-      if ((a as any).status !== "active")
-        return NextResponse.json({ error: `Agent "${(a as any).name}" is not active` }, { status: 422 })
-    }
-
-    // ── Parse body ───────────────────────────────────────────────────────────
-    let body: { input?: unknown; variables?: Record<string, string> }
+    // ── Parse body ────────────────────────────────────────────────────────────
+    let body: { input?: unknown; variables?: Record<string, string>; state?: Record<string, unknown> }
     try { body = await req.json() }
     catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }) }
 
-    const { input = "", variables = {} } = body
-
-    // Validate variables object
-    if (typeof variables !== "object" || Array.isArray(variables))
-      return NextResponse.json({ error: "variables must be a JSON object" }, { status: 400 })
-
+    const { input = "", variables = {}, state: initialState = {} } = body
     const inputStr = typeof input === "string" ? input : JSON.stringify(input)
 
-    // ── Injection filter on pipeline input ────────────────────────────────────
     const { filterResult } = runInjectionPipeline(inputStr, "user")
     if (!filterResult.allowed) {
       supabase.from("injection_attempts").insert({
         user_id: userId, agent_id: null,
-        input:   inputStr.slice(0, 500),
-        pattern: (filterResult as any).pattern,
-        action:  "blocked",
+        input: inputStr.slice(0, 500), pattern: (filterResult as any).pattern, action: "blocked",
       }).then(() => {})
       return NextResponse.json({ error: "Input rejected by security filter", code: "INJECTION_BLOCKED" }, { status: 400 })
     }
 
-    // ── Create pipeline execution record ─────────────────────────────────────
+    // ── Create execution record ───────────────────────────────────────────────
     const { data: pipelineExec } = await supabase
       .from("pipeline_executions")
-      .insert({
-        pipeline_id: pipelineId,
-        user_id:     userId,
-        status:      "running",
-        input:       { value: inputStr, variables },
-      })
-      .select("id")
-      .single()
+      .insert({ pipeline_id: pipelineId, user_id: userId, status: "running", input: { value: inputStr, variables } })
+      .select("id").single()
 
     if (!pipelineExec?.id)
       return NextResponse.json({ error: "Failed to create execution record" }, { status: 500 })
 
-    // ── Topological level grouping ────────────────────────────────────────────
+    // ── Topological sort ──────────────────────────────────────────────────────
     const { levels, cycle } = topologicalLevels(dag.nodes, dag.edges)
     if (cycle) {
       await failPipelineExec(supabase, pipelineExec.id, "Pipeline DAG has a cycle")
-      return NextResponse.json({ error: "Pipeline DAG contains a cycle — cannot execute" }, { status: 422 })
+      return NextResponse.json({ error: "Pipeline DAG contains a cycle" }, { status: 422 })
     }
 
-    // ── Execute levels ────────────────────────────────────────────────────────
-    const nodeOutputs: Record<string, unknown> = {}
-    const nodeResults: NodeResult[] = []
-    let totalCost      = 0
-    let totalTokensIn  = 0
-    let totalTokensOut = 0
+    // ── Execute ───────────────────────────────────────────────────────────────
+    const nodeOutputs:   Record<string, unknown> = {}
+    const nodeResults:   NodeResult[]            = []
+    const pipelineState: Record<string, unknown> = { ...initialState }
+    let totalCost = 0, totalTokensIn = 0, totalTokensOut = 0
     let lastOutput: unknown = inputStr
 
-    const timeoutMs = Math.min((pipeline.timeout_seconds ?? 300) * 1000, 600_000) // max 10 min
+    const timeoutMs = Math.min((pipeline.timeout_seconds ?? 300) * 1000, 600_000)
     const deadline  = Date.now() + timeoutMs
 
     for (const level of levels) {
+      // Timeout guard
       if (Date.now() > deadline) {
         await failPipelineExec(supabase, pipelineExec.id, "Pipeline timed out",
           nodeResults, totalCost, totalTokensIn, totalTokensOut, Date.now() - startTotal)
         return NextResponse.json({ error: "Pipeline execution timed out", executionId: pipelineExec.id }, { status: 408 })
       }
 
-      // ── Per-execution cost kill switch ────────────────────────────────────
+      // Credit kill switch
       const creditBalance = Number(credits?.balance_usd ?? 0)
       if (totalCost > 0 && totalCost >= creditBalance * 0.95) {
-        // Abort before spending more than user has remaining
         await failPipelineExec(supabase, pipelineExec.id,
-          `Cost kill switch: spent ${totalCost.toFixed(6)} of ${creditBalance.toFixed(6)} balance`,
+          `Cost kill switch: $${totalCost.toFixed(6)} / $${creditBalance.toFixed(6)}`,
           nodeResults, totalCost, totalTokensIn, totalTokensOut, Date.now() - startTotal)
         return NextResponse.json({
-          error: "Pipeline aborted: would exceed credit balance. Partial results returned.",
-          code:  "COST_KILL_SWITCH",
-          executionId:   pipelineExec.id,
-          node_results:  nodeResults,
-          partial_output: lastOutput,
-          cost_so_far:   totalCost.toFixed(6),
+          error: "Pipeline aborted: would exceed credit balance.", code: "COST_KILL_SWITCH",
+          executionId: pipelineExec.id, node_results: nodeResults,
+          partial_output: lastOutput, cost_so_far: totalCost.toFixed(6),
         }, { status: 402 })
       }
 
-      // ── Evaluate branch conditions for each node in this level ──────────
+      // Filter branch nodes by condition evaluation
       const nodesToRun = level.filter(node => {
         if (node.node_type !== "branch" || !node.condition) return true
-        // Check the condition against the LAST output that fed into this node
-        const upstreamEdge   = dag.edges.find(e => e.to === node.id)
-        const upstreamOutput = upstreamEdge ? nodeOutputs[upstreamEdge.from] : lastOutput
-        const shouldRun      = evaluateCondition(node.condition, upstreamOutput)
+        const upEdge   = dag.edges.find(e => e.to === node.id)
+        const upOutput = upEdge ? nodeOutputs[upEdge.from] : lastOutput
+        const shouldRun = evaluateCondition(node.condition, upOutput, pipelineState)
         if (!shouldRun) {
-          // Record as skipped
-          nodeResults.push({
-            node_id:    node.id,
-            agent_id:   node.agent_id,
+          nodeResults.push({ node_id: node.id, agent_id: node.agent_id,
             agent_name: agentMap.get(node.agent_id)?.name ?? node.label ?? node.id,
-            status:     "skipped",
-            input:      null,
-            output:     null,
-            latency_ms: 0,
-            cost:       0,
-          })
-          // Propagate the upstream output through the skipped node
-          nodeOutputs[node.id] = upstreamOutput
+            status: "skipped", input: null, output: null, latency_ms: 0, cost: 0, retry_count: 0 })
+          nodeOutputs[node.id] = upOutput
         }
         return shouldRun
       })
 
-      // Run all passing nodes in this level concurrently
+      // ── Schema strict mode check (before executing the level) ────────────
+      if (strictSchemaMode) {
+        for (const node of nodesToRun) {
+          const agent = agentMap.get(node.agent_id)
+          if (!agent?.input_schema) continue
+
+          const upEdges = dag.edges.filter(e => e.to === node.id)
+          if (upEdges.length === 0) continue  // root node — skip (schema checked against pipeline input would be overly strict)
+
+          // Determine what upstream output looks like
+          const upstreamOutput = upEdges.length === 1
+            ? nodeOutputs[upEdges[0]!.from]
+            : upEdges.map(e => nodeOutputs[e.from])
+
+          const required = (agent.input_schema as any).required ?? []
+          if (required.length === 0) continue
+
+          const upObj = typeof upstreamOutput === "object" && upstreamOutput !== null
+            ? upstreamOutput as Record<string, unknown>
+            : null
+
+          if (upObj) {
+            const missing = required.filter((k: string) => !(k in upObj))
+            if (missing.length > 0) {
+              const errMsg = `Schema strict mode: agent "${agent.name}" requires fields [${missing.join(", ")}] but upstream output does not provide them`
+              await failPipelineExec(supabase, pipelineExec.id, errMsg,
+                nodeResults, totalCost, totalTokensIn, totalTokensOut, Date.now() - startTotal)
+              return NextResponse.json({
+                error: errMsg,
+                code: "SCHEMA_MISMATCH",
+                executionId: pipelineExec.id,
+                node_id: node.id,
+                missing_fields: missing,
+              }, { status: 422 })
+            }
+          }
+        }
+      }
+
+      // Run level concurrently
       const levelResults = await Promise.all(
         nodesToRun.map(node =>
-          executeNode(node, dag.edges, agentMap, nodeOutputs, input, variables, userId!, supabase)
+          executeNodeWithRetry(node, dag.edges, agentMap, nodeOutputs, input, variables,
+            pipelineState, userId!, supabase)
         )
       )
 
       let levelFailed = false
       for (const result of levelResults) {
         nodeResults.push(result)
-
         if (result.status === "success") {
-          // Apply output_field extraction before storing
-          const node = dag.nodes.find(n => n.id === result.node_id)
-          const extractedOutput = extractOutputField(result.output, node?.output_field)
-          nodeOutputs[result.node_id] = extractedOutput
+          const node     = dag.nodes.find(n => n.id === result.node_id)
+          const extracted = extractOutputField(result.output, node?.output_field)
+          nodeOutputs[result.node_id] = extracted
+
+          if (typeof result.output === "object" && result.output !== null && "__state" in (result.output as any)) {
+            Object.assign(pipelineState, (result.output as any).__state)
+          }
 
           totalCost      += result.cost
           totalTokensIn  += result.tokens?.input  ?? 0
           totalTokensOut += result.tokens?.output ?? 0
-          if (extractedOutput !== null && extractedOutput !== undefined) {
-            lastOutput = extractedOutput
-          }
-        } else {
+          if (extracted !== null && extracted !== undefined) lastOutput = extracted
+        } else if (result.status === "failed") {
           const node = dag.nodes.find(n => n.id === result.node_id)
-          if (!node?.continue_on_failure) {
-            levelFailed = true
-          } else {
-            nodeOutputs[result.node_id] = null
-          }
+          if (!node?.continue_on_failure) levelFailed = true
+          else                            nodeOutputs[result.node_id] = null
         }
       }
 
       if (levelFailed) {
         const failedResult = levelResults.find(r => r.status === "failed")
-        await failPipelineExec(
-          supabase, pipelineExec.id,
-          `Node "${failedResult?.agent_name}" (${failedResult?.node_id}) failed: ${failedResult?.error}`,
-          nodeResults, totalCost, totalTokensIn, totalTokensOut, Date.now() - startTotal
-        )
+        await failPipelineExec(supabase, pipelineExec.id,
+          `Node "${failedResult?.agent_name}" failed: ${failedResult?.error}`,
+          nodeResults, totalCost, totalTokensIn, totalTokensOut, Date.now() - startTotal)
         return NextResponse.json({
-          error:         `Pipeline failed at node "${failedResult?.node_id}"`,
-          executionId:   pipelineExec.id,
-          failed_node:   failedResult?.node_id,
-          node_results:  nodeResults,
+          error: `Pipeline failed at node "${failedResult?.node_id}"`,
+          executionId: pipelineExec.id,
+          failed_node: failedResult?.node_id,
+          node_results: nodeResults,
         }, { status: 500 })
       }
     }
 
     const totalLatency = Date.now() - startTotal
 
-    // ── Deduct credits ────────────────────────────────────────────────────────
     if (totalCost > 0) {
       await supabase.rpc("deduct_credits", {
-        user_id_param:      userId,
-        amount_param:       totalCost,
-        description_param:  `Pipeline: ${pipeline.name}`,
-        reference_id_param: pipelineExec.id,
+        user_id_param: userId, amount_param: totalCost,
+        description_param: `Pipeline: ${pipeline.name}`, reference_id_param: pipelineExec.id,
       })
     }
 
-    // ── Finalise ──────────────────────────────────────────────────────────────
+    const outputObj = typeof lastOutput === "object" ? lastOutput : { text: String(lastOutput) }
+
     await supabase.from("pipeline_executions").update({
-      status:           "success",
-      output:           typeof lastOutput === "object" ? lastOutput : { text: String(lastOutput) },
-      node_results:     nodeResults,
-      total_latency_ms: totalLatency,
-      total_cost:       totalCost,
-      total_tokens_in:  totalTokensIn,
-      total_tokens_out: totalTokensOut,
-      completed_at:     new Date().toISOString(),
+      status: "success", output: outputObj, node_results: nodeResults,
+      total_latency_ms: totalLatency, total_cost: totalCost,
+      total_tokens_in: totalTokensIn, total_tokens_out: totalTokensOut,
+      completed_at: new Date().toISOString(),
     }).eq("id", pipelineExec.id)
+
+    // ── Post-run fire-and-forget ──────────────────────────────────────────────
+    Promise.allSettled([
+      // Version snapshot
+      supabase.from("pipeline_versions").upsert({
+        pipeline_id: pipelineId,
+        version:     pipeline.version ?? "1.0.0",
+        dag_snapshot: pipeline.dag,
+        node_count:  nodeCount,
+        snapshot_at: new Date().toISOString(),
+      }, { onConflict: "pipeline_id,version" }),
+
+      // Track which agents are used in this pipeline
+      ...dag.nodes.map(node =>
+        supabase.from("agent_pipeline_usage").upsert({
+          agent_id: node.agent_id, pipeline_id: pipelineId, user_id: userId,
+        }, { onConflict: "agent_id,pipeline_id" })
+      ),
+    ]).catch(() => {})
 
     return NextResponse.json({
       executionId:  pipelineExec.id,
       status:       "success",
       output:       lastOutput,
+      state:        pipelineState,
       node_results: nodeResults,
       summary: {
         nodes_executed:   nodeResults.filter(r => r.status === "success").length,
+        nodes_skipped:    nodeResults.filter(r => r.status === "skipped").length,
         nodes_failed:     nodeResults.filter(r => r.status === "failed").length,
+        total_retries:    nodeResults.reduce((s, r) => s + (r.retry_count ?? 0), 0),
         total_latency_ms: totalLatency,
         total_cost_usd:   totalCost.toFixed(6),
         total_tokens:     { input: totalTokensIn, output: totalTokensOut },
+        strict_schema:    strictSchemaMode,
       },
     })
 
@@ -337,311 +358,264 @@ interface DAGNode {
   system_prompt_override?: string
   input_mapping?:          Record<string, string>
   continue_on_failure?:    boolean
-  parallel_group?:         string
   condition?:              string
-  sub_pipeline_id?:        string
   output_field?:           string
+  max_retries?:            number
+  retry_delay_ms?:         number
+  retry_on_errors?:        string[]
+  fallback_agent_id?:      string
 }
 
-interface DAGEdge {
-  from:       string
-  to:         string
-  condition?: string
-}
+interface DAGEdge { from: string; to: string; condition?: string }
 
 interface NodeResult {
-  node_id:    string
-  agent_id:   string
-  agent_name: string
-  status:     "success" | "failed" | "skipped"
-  input:      unknown
-  output:     unknown
-  latency_ms: number
-  cost:       number
-  tokens?:    { input: number; output: number }
-  error?:     string
+  node_id:       string
+  agent_id:      string
+  agent_name:    string
+  status:        "success" | "failed" | "skipped"
+  input:         unknown
+  output:        unknown
+  latency_ms:    number
+  cost:          number
+  tokens?:       { input: number; output: number }
+  error?:        string
+  retry_count:   number
+  used_fallback?: boolean
 }
 
-// ─── Branch condition evaluator ─────────────────────────────────────────────
-// Evaluates a JS-like condition expression against a node's output.
-// Safe: uses Function constructor in a try/catch — never throws.
-// Returns true (run the node) by default if evaluation fails.
+// ─── Condition evaluator ──────────────────────────────────────────────────────
 
-function evaluateCondition(condition: string | undefined, output: unknown): boolean {
-  if (!condition || !condition.trim()) return true
+function evaluateCondition(condition: string | undefined, output: unknown, state: Record<string, unknown>): boolean {
+  if (!condition?.trim()) return true
   try {
-    // Sanitise: disallow dangerous globals
-    const FORBIDDEN = /\b(process|require|import|eval|Function|globalThis|window|document|fetch|XMLHttpRequest|__dirname|__filename|Buffer|Deno|Bun)\b/
-    if (FORBIDDEN.test(condition)) {
-      console.warn("[Pipeline] Condition blocked — forbidden globals:", condition)
-      return true  // fail-open: run the node
-    }
+    const FORBIDDEN = /\b(process|require|import|eval|Function|globalThis|window|document|fetch|XMLHttpRequest)\b/
+    if (FORBIDDEN.test(condition)) return true
     // eslint-disable-next-line no-new-func
-    const fn = new Function("output", `"use strict"; return !!(${condition})`)
-    return fn(output)
-  } catch (err: any) {
-    console.warn("[Pipeline] Condition evaluation error:", condition, err.message)
-    return true  // fail-open: run the node
-  }
+    return !!new Function("output", "state", `"use strict"; return !!(${condition})`)(output, state)
+  } catch { return true }
 }
 
 // ─── Output field extractor ───────────────────────────────────────────────────
-// Extracts a specific field from a node's output using dot-path notation.
-// Returns the full output if no field specified or field not found.
 
-function extractOutputField(output: unknown, field: string | undefined): unknown {
-  if (!field || !field.trim()) return output
+function extractOutputField(output: unknown, field?: string): unknown {
+  if (!field?.trim()) return output
   try {
-    const parts = field.split(".")
     let val: any = output
-    for (const part of parts) {
-      // Handle array index access like "items[0]"
-      const arrMatch = part.match(/^(\w+)\[(\d+)\]$/)
-      if (arrMatch) {
-        val = val?.[arrMatch[1]!]?.[parseInt(arrMatch[2]!)]
-      } else {
-        val = val?.[part]
-      }
-      if (val === undefined) return output  // field not found, return full output
+    for (const part of field.split(".")) {
+      const arr = part.match(/^(\w+)\[(\d+)\]$/)
+      val = arr ? val?.[arr[1]!]?.[parseInt(arr[2]!)] : val?.[part]
+      if (val === undefined) return output
     }
     return val ?? output
-  } catch {
-    return output
-  }
+  } catch { return output }
 }
-// Groups nodes into levels where nodes within a level have no dependency on
-// each other and can execute concurrently.
 
-function topologicalLevels(
-  nodes: DAGNode[],
-  edges: DAGEdge[]
-): { levels: DAGNode[][]; cycle: boolean } {
+// ─── Topological levels ───────────────────────────────────────────────────────
+
+function topologicalLevels(nodes: DAGNode[], edges: DAGEdge[]): { levels: DAGNode[][]; cycle: boolean } {
   const inDegree = new Map<string, number>()
   const adj      = new Map<string, string[]>()
   const nodeMap  = new Map<string, DAGNode>()
 
-  for (const n of nodes) {
-    inDegree.set(n.id, 0)
-    adj.set(n.id, [])
-    nodeMap.set(n.id, n)
-  }
+  for (const n of nodes) { inDegree.set(n.id, 0); adj.set(n.id, []); nodeMap.set(n.id, n) }
   for (const e of edges) {
     adj.get(e.from)?.push(e.to)
     inDegree.set(e.to, (inDegree.get(e.to) ?? 0) + 1)
   }
 
   const queue: string[] = []
-  for (const [id, deg] of inDegree) {
-    if (deg === 0) queue.push(id)
-  }
+  for (const [id, deg] of inDegree) { if (deg === 0) queue.push(id) }
 
   const levels: DAGNode[][] = []
   let processed = 0
 
   while (queue.length > 0) {
-    const currentLevel = [...queue]
-    queue.length = 0
-
-    const levelNodes: DAGNode[] = []
-    for (const id of currentLevel) {
-      const node = nodeMap.get(id)
-      if (node) levelNodes.push(node)
+    const current = [...queue]; queue.length = 0
+    const level: DAGNode[] = []
+    for (const id of current) {
+      const n = nodeMap.get(id); if (n) level.push(n)
       processed++
       for (const next of adj.get(id) ?? []) {
-        const newDeg = (inDegree.get(next) ?? 0) - 1
-        inDegree.set(next, newDeg)
-        if (newDeg === 0) queue.push(next)
+        const d = (inDegree.get(next) ?? 0) - 1
+        inDegree.set(next, d)
+        if (d === 0) queue.push(next)
       }
     }
-    if (levelNodes.length > 0) levels.push(levelNodes)
+    if (level.length > 0) levels.push(level)
   }
-
   return { levels, cycle: processed !== nodes.length }
 }
 
-// ─── Node executor ────────────────────────────────────────────────────────────
+// ─── Node executor with retry + fallback ─────────────────────────────────────
 
-async function executeNode(
-  node:          DAGNode,
-  edges:         DAGEdge[],
-  agentMap:      Map<string, any>,
-  nodeOutputs:   Record<string, unknown>,
-  pipelineInput: unknown,
-  variables:     Record<string, string>,
-  userId:        string,
-  supabase:      any
+async function executeNodeWithRetry(
+  node: DAGNode, edges: DAGEdge[], agentMap: Map<string, any>,
+  nodeOutputs: Record<string, unknown>, pipelineInput: unknown,
+  variables: Record<string, string>, pipelineState: Record<string, unknown>,
+  userId: string, supabase: any
 ): Promise<NodeResult> {
-  const agent = agentMap.get(node.agent_id)
-  if (!agent) {
-    return { node_id: node.id, agent_id: node.agent_id, agent_name: node.label ?? "Unknown",
-      status: "failed", input: null, output: null, latency_ms: 0, cost: 0, error: "Agent not found" }
+  const maxRetries = Math.min(node.max_retries ?? 0, 3)
+  const retryDelay = Math.min(node.retry_delay_ms ?? 500, 5000)
+  const shouldRetry = (err: string) => {
+    if (!node.retry_on_errors?.length) return true
+    return node.retry_on_errors.some(p => err.toLowerCase().includes(p.toLowerCase()))
   }
 
-  const startMs = Date.now()
+  let lastError = ""
+  let retryCount = 0
 
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (attempt > 0) {
+      retryCount = attempt
+      await new Promise(r => setTimeout(r, retryDelay * Math.pow(2, attempt - 1)))
+    }
+    const result = await executeNode(node, edges, agentMap, nodeOutputs, pipelineInput, variables, pipelineState, userId, supabase)
+    if (result.status === "success") return { ...result, retry_count: retryCount }
+    lastError = result.error ?? "Unknown"
+    if (!shouldRetry(lastError)) break
+  }
+
+  // Try fallback
+  if (node.fallback_agent_id) {
+    const fallback = agentMap.get(node.fallback_agent_id)
+    if (fallback?.status === "active") {
+      const fbResult = await executeNode(
+        { ...node, agent_id: node.fallback_agent_id, max_retries: 0, fallback_agent_id: undefined },
+        edges, agentMap, nodeOutputs, pipelineInput, variables, pipelineState, userId, supabase
+      )
+      if (fbResult.status === "success") return { ...fbResult, retry_count: retryCount, used_fallback: true }
+    }
+  }
+
+  return {
+    node_id: node.id, agent_id: node.agent_id,
+    agent_name: agentMap.get(node.agent_id)?.name ?? node.label ?? node.id,
+    status: "failed", input: null, output: null, latency_ms: 0, cost: 0,
+    error: `Failed after ${retryCount + 1} attempt(s): ${lastError}`,
+    retry_count: retryCount,
+  }
+}
+
+// ─── Core node executor ───────────────────────────────────────────────────────
+
+async function executeNode(
+  node: DAGNode, edges: DAGEdge[], agentMap: Map<string, any>,
+  nodeOutputs: Record<string, unknown>, pipelineInput: unknown,
+  variables: Record<string, string>, pipelineState: Record<string, unknown>,
+  userId: string, supabase: any
+): Promise<Omit<NodeResult, "retry_count">> {
+  const agent = agentMap.get(node.agent_id)
+  if (!agent) return { node_id: node.id, agent_id: node.agent_id, agent_name: node.label ?? "Unknown",
+    status: "failed", input: null, output: null, latency_ms: 0, cost: 0, error: "Agent not found" }
+
+  const startMs = Date.now()
   try {
-    // Build this node's input from upstream edges (or pipeline root)
-    const upstreamEdges = edges.filter(e => e.to === node.id)
+    const upEdges = edges.filter(e => e.to === node.id)
     let nodeInput: unknown
 
-    if (upstreamEdges.length === 0) {
-      // Root node
+    if (upEdges.length === 0) {
       nodeInput = typeof pipelineInput === "string"
-        ? interpolate(pipelineInput, variables, nodeOutputs)
+        ? pipelineInput.replace(/\{\{(\w+)\}\}/g, (_, k) => variables[k] ?? `{{${k}}}`)
         : pipelineInput
     } else {
-      const upstreamOutputs = upstreamEdges
-        .map(e => nodeOutputs[e.from])
-        .filter(v => v !== undefined && v !== null)
-
-      if (node.input_mapping) {
-        nodeInput = applyInputMapping(node.input_mapping, upstreamOutputs, variables)
-      } else {
-        nodeInput = upstreamOutputs.length === 1 ? upstreamOutputs[0] : upstreamOutputs
-      }
+      const ups = upEdges.map(e => nodeOutputs[e.from]).filter(v => v !== undefined && v !== null)
+      nodeInput = node.input_mapping
+        ? applyInputMapping(node.input_mapping, ups, variables)
+        : (ups.length === 1 ? ups[0] : ups)
     }
 
-    const userMessage = typeof nodeInput === "string"
-      ? nodeInput
-      : JSON.stringify(nodeInput)
+    const withState = typeof nodeInput === "object" && nodeInput !== null
+      ? { ...(nodeInput as object), __state: pipelineState }
+      : { input: nodeInput, __state: pipelineState }
 
-    // Input sanitisation for each node
+    const userMessage = typeof withState === "string" ? withState : JSON.stringify(withState)
+
     const { filterResult } = runInjectionPipeline(userMessage.slice(0, 2000), "user")
-    if (!filterResult.allowed) {
-      throw new Error("Node input rejected by injection filter")
-    }
+    if (!filterResult.allowed) throw new Error("Node input rejected by injection filter")
 
-    // System prompt
     let systemPrompt = (node.system_prompt_override ?? agent.system_prompt ?? "").trim()
     if (!systemPrompt) throw new Error("Agent has no system prompt configured")
 
-    // RAG injection
     if (agent.knowledge_base_id) {
-      const ragResult = await retrieveRAGContext(supabase, agent.knowledge_base_id, userMessage, {
-        topK: 4, threshold: 0.65,
-      })
-      systemPrompt = buildRAGSystemPrompt(systemPrompt, ragResult)
+      const rag = await retrieveRAGContext(supabase, agent.knowledge_base_id, userMessage, { topK: 4, threshold: 0.65 })
+      systemPrompt = buildRAGSystemPrompt(systemPrompt, rag)
     }
 
-    // Input size cap
-    const maxInputChars = Math.min(32_000, (agent.max_tokens ?? 4096) * 3)
-    const safeMessage   = userMessage.slice(0, maxInputChars)
-
+    const maxChars = Math.min(32_000, agent.security_config?.maxInputChars ?? 32_000)
     const { text: rawText, inputTokens, outputTokens, costUsd } = await routeCompletion({
       model:       agent.model_name || "claude-sonnet-4-20250514",
       system:      systemPrompt,
-      userMessage: safeMessage,
+      userMessage: userMessage.slice(0, maxChars),
       maxTokens:   Math.min(agent.max_tokens || 4096, 8192),
       temperature: agent.temperature ?? 0.7,
     })
 
     const latencyMs = Date.now() - startMs
     const { text: safeText } = sanitizeOutput(rawText)
-
-    // Parse output — store as jsonb in executions table
     let outputParsed: unknown = safeText
-    try { outputParsed = JSON.parse(safeText) } catch {}
-    const outputJson: Record<string, unknown> = typeof outputParsed === "object" && outputParsed !== null
+    try {
+      const stripped = safeText.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/, "").trim()
+      outputParsed = JSON.parse(stripped)
+    } catch {}
+
+    const outputJson = typeof outputParsed === "object" && outputParsed !== null
       ? outputParsed as Record<string, unknown>
       : { text: safeText }
 
-    // Persist per-node execution record (fire-and-forget, don't block pipeline)
     Promise.all([
       supabase.from("executions").insert({
-        agent_id:     node.agent_id,
-        user_id:      userId,
-        status:       "success",
-        input:        typeof nodeInput === "object" ? nodeInput : { text: userMessage },
-        output:       outputJson,
-        tokens_input: inputTokens,
-        tokens_output: outputTokens,
-        latency_ms:   latencyMs,
-        cost_usd:     costUsd,
-        completed_at: new Date().toISOString(),
+        agent_id: node.agent_id, user_id: userId, status: "success",
+        input:    typeof nodeInput === "object" ? nodeInput : { text: String(nodeInput) },
+        output:   outputJson, tokens_input: inputTokens, tokens_output: outputTokens,
+        latency_ms: latencyMs, cost_usd: costUsd, completed_at: new Date().toISOString(),
       }),
       supabase.rpc("increment_executions_used", { user_id_param: userId }),
-    ]).catch(() => {})  // don't let observability writes block execution
+    ]).catch(() => {})
 
     return {
-      node_id:    node.id,
-      agent_id:   node.agent_id,
-      agent_name: agent.name ?? node.label ?? node.id,
-      status:     "success",
-      input:      nodeInput,
-      output:     outputParsed,
-      latency_ms: latencyMs,
-      cost:       costUsd,
-      tokens:     { input: inputTokens, output: outputTokens },
+      node_id: node.id, agent_id: node.agent_id, agent_name: agent.name ?? node.label ?? node.id,
+      status: "success", input: nodeInput, output: outputParsed,
+      latency_ms: latencyMs, cost: costUsd,
+      tokens: { input: inputTokens, output: outputTokens },
     }
-
   } catch (err: any) {
     return {
-      node_id:    node.id,
-      agent_id:   node.agent_id,
+      node_id: node.id, agent_id: node.agent_id,
       agent_name: agent.name ?? node.label ?? node.id,
-      status:     "failed",
-      input:      null,
-      output:     null,
-      latency_ms: Date.now() - startMs,
-      cost:       0,
-      error:      err.message ?? "Unknown error",
+      status: "failed", input: null, output: null,
+      latency_ms: Date.now() - startMs, cost: 0,
+      error: err.message ?? "Unknown error",
     }
   }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function interpolate(
-  template:    string,
-  variables:   Record<string, string>,
-  nodeOutputs: Record<string, unknown>
-): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (_, key) => {
-    if (key in variables)   return String(variables[key])
-    if (key in nodeOutputs) return JSON.stringify(nodeOutputs[key])
-    return `{{${key}}}`
-  })
-}
-
-function applyInputMapping(
-  mapping:         Record<string, string>,
-  upstreamOutputs: unknown[],
-  variables:       Record<string, string>
-): unknown {
+function applyInputMapping(mapping: Record<string, string>, ups: unknown[], variables: Record<string, string>): unknown {
   const result: Record<string, unknown> = {}
-  for (const [targetKey, sourceExpr] of Object.entries(mapping)) {
-    if (sourceExpr.startsWith("node.")) {
-      const parts = sourceExpr.split(".")
-      let val: any = upstreamOutputs[parseInt(parts[1] ?? "0")]
+  for (const [k, src] of Object.entries(mapping)) {
+    if (src.startsWith("node.")) {
+      const parts = src.split(".")
+      let val: any = ups[parseInt(parts[1] ?? "0")]
       for (let i = 2; i < parts.length; i++) val = val?.[parts[i]!]
-      result[targetKey] = val
-    } else if (sourceExpr in variables) {
-      result[targetKey] = variables[sourceExpr]
+      result[k] = val
+    } else if (src in variables) {
+      result[k] = variables[src]
     } else {
-      result[targetKey] = sourceExpr
+      result[k] = src
     }
   }
   return result
 }
 
 async function failPipelineExec(
-  supabase:    any,
-  execId:      string,
-  errorMsg:    string,
-  nodeResults: NodeResult[] = [],
-  cost         = 0,
-  tokensIn     = 0,
-  tokensOut    = 0,
-  latency      = 0
+  supabase: any, execId: string, errorMsg: string,
+  nodeResults: NodeResult[] = [], cost = 0, tokensIn = 0, tokensOut = 0, latency = 0
 ) {
   await supabase.from("pipeline_executions").update({
-    status:           "failed",
-    error_message:    errorMsg.slice(0, 500),
-    node_results:     nodeResults,
-    total_cost:       cost,
-    total_tokens_in:  tokensIn,
-    total_tokens_out: tokensOut,
-    total_latency_ms: latency,
-    completed_at:     new Date().toISOString(),
+    status: "failed", error_message: errorMsg.slice(0, 500),
+    node_results: nodeResults, total_cost: cost,
+    total_tokens_in: tokensIn, total_tokens_out: tokensOut,
+    total_latency_ms: latency, completed_at: new Date().toISOString(),
   }).eq("id", execId)
 }

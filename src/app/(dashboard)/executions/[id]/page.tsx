@@ -1,255 +1,278 @@
 "use client"
+export const dynamic = 'force-dynamic'
 
 import { useEffect, useState, useRef } from "react"
 import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import {
-  ArrowLeft, CheckCircle, XCircle, Clock, Loader2,
-  Zap, Brain, Code2, DollarSign, Hash, Bot,
-  ChevronRight, Copy, Check,
+  ArrowLeft, CheckCircle, XCircle, Clock, Zap, Bot,
+  Brain, Shield, Database, Copy, ExternalLink,
+  AlertCircle, Loader2, RotateCcw
 } from "lucide-react"
-import { createClient } from "@/lib/supabase/client"
-import { useUser } from "@/hooks/use-user"
 import { Button } from "@/components/ui/button"
+import { createClient } from "@/lib/supabase/client"
 import { formatRelativeTime, cn } from "@/lib/utils"
+import { DashboardSidebar } from "@/components/dashboard/sidebar"
+import toast from "react-hot-toast"
 
 const STATUS_CONFIG = {
   success: { icon: CheckCircle, color: "text-green-500", bg: "bg-green-50", label: "Success" },
   failed:  { icon: XCircle,     color: "text-red-500",   bg: "bg-red-50",   label: "Failed"  },
-  timeout: { icon: XCircle,     color: "text-orange-500",bg: "bg-orange-50",label: "Timeout" },
+  timeout: { icon: AlertCircle, color: "text-orange-500",bg: "bg-orange-50",label: "Timeout" },
   running: { icon: Loader2,     color: "text-blue-500",  bg: "bg-blue-50",  label: "Running" },
   queued:  { icon: Clock,       color: "text-zinc-400",  bg: "bg-zinc-50",  label: "Queued"  },
 } as const
 
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false)
-  const copy = () => {
-    navigator.clipboard.writeText(text)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
+function CodeBlock({ code, label }: { code: string; label?: string }) {
+  const copy = () => { navigator.clipboard.writeText(code); toast.success("Copied!") }
   return (
-    <button onClick={copy}
-      className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-700 transition-colors p-1 rounded">
-      {copied ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
-    </button>
+    <div className="relative">
+      {label && <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wide mb-1.5">{label}</p>}
+      <div className="relative bg-zinc-950 rounded-xl border border-zinc-800 overflow-hidden">
+        <button onClick={copy} className="absolute top-2.5 right-2.5 text-zinc-500 hover:text-zinc-300 transition-colors z-10">
+          <Copy className="h-3.5 w-3.5" />
+        </button>
+        <pre className="p-4 text-xs font-mono text-zinc-200 overflow-x-auto leading-relaxed max-h-72 overflow-y-auto">
+          <code>{code}</code>
+        </pre>
+      </div>
+    </div>
   )
 }
 
 export default function ExecutionDetailPage() {
   const { id }   = useParams<{ id: string }>()
   const router   = useRouter()
-  const { user, loading: authLoading } = useUser()
+  const [data,   setData]   = useState<any>(null)
+  const [trace,  setTrace]  = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [error,  setError]  = useState("")
+
   const supabaseRef = useRef(createClient())
   const supabase    = supabaseRef.current
 
-  const [execution, setExecution] = useState<any>(null)
-  const [trace,     setTrace]     = useState<any>(null)
-  const [loading,   setLoading]   = useState(true)
-  const [notFound,  setNotFound]  = useState(false)
-
   useEffect(() => {
-    if (authLoading) return
-    if (!user) { router.push("/login"); return }
-    if (!id)   return
-
+    if (!id) return
     let cancelled = false
-    Promise.all([
-      supabase.from("executions")
-        .select("*, agents(id, name, category, model_name)")
-        .eq("id",      id)
-        .eq("user_id", user.id)
-        .single(),
-      supabase.from("execution_traces")
-        .select("*")
-        .eq("execution_id", id)
-        .eq("user_id",      user.id)
-        .order("created_at", { ascending: true })
-        .limit(1)
-        .single(),
-    ]).then(([{ data: exec }, { data: traceData }]) => {
+
+    async function load() {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) { router.push("/login"); return }
+
+      const [
+        { data: execution, error: execErr },
+        { data: traceRow },
+      ] = await Promise.all([
+        supabase.from("executions")
+          .select("*, agents(id, name, category, model_name, icon_url)")
+          .eq("id", id).eq("user_id", user.id).single(),
+        supabase.from("execution_traces")
+          .select("*").eq("execution_id", id).maybeSingle(),
+      ])
+
       if (cancelled) return
-      if (!exec) { setNotFound(true); setLoading(false); return }
-      setExecution(exec)
-      setTrace(traceData)
+      if (execErr || !execution) { setError("Execution not found or access denied"); setLoading(false); return }
+      setData(execution)
+      setTrace(traceRow)
       setLoading(false)
-    })
+    }
+    load()
     return () => { cancelled = true }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, authLoading, id])
+  }, [id])
 
-  if (authLoading || loading) {
-    return (
-      <div className="space-y-4 animate-pulse">
-        <div className="h-8 w-48 bg-zinc-100 rounded-xl" />
-        <div className="h-32 bg-zinc-50 border border-zinc-100 rounded-2xl" />
-        <div className="h-48 bg-zinc-50 border border-zinc-100 rounded-2xl" />
+  if (loading) return (
+    <div className="flex min-h-screen bg-white">
+      <DashboardSidebar />
+      <div className="flex-1 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="h-7 w-7 animate-spin text-primary" />
+          <p className="text-sm text-zinc-400">Loading execution trace…</p>
+        </div>
       </div>
-    )
-  }
+    </div>
+  )
 
-  if (notFound) {
-    return (
-      <div className="text-center py-20">
-        <Hash className="h-10 w-10 text-zinc-300 mx-auto mb-3" />
-        <p className="font-semibold text-zinc-900 mb-1">Execution not found</p>
-        <p className="text-sm text-zinc-400 mb-5">It may belong to a different account or be too old.</p>
-        <Link href="/executions">
-          <Button variant="outline" className="rounded-xl">← Back to Executions</Button>
-        </Link>
+  if (error || !data) return (
+    <div className="flex min-h-screen bg-white">
+      <DashboardSidebar />
+      <div className="flex-1 flex items-center justify-center p-8">
+        <div className="text-center">
+          <AlertCircle className="h-8 w-8 text-red-400 mx-auto mb-3" />
+          <p className="text-zinc-700 font-semibold mb-1">{error || "Execution not found"}</p>
+          <Link href="/executions"><Button variant="outline" className="rounded-xl mt-3">← Back</Button></Link>
+        </div>
       </div>
-    )
-  }
+    </div>
+  )
 
-  if (!execution) return null
+  const status   = (data.status ?? "queued") as keyof typeof STATUS_CONFIG
+  const cfg      = STATUS_CONFIG[status] ?? STATUS_CONFIG.queued
+  const Icon     = cfg.icon
+  const cost     = data.cost_usd ?? data.cost ?? 0
+  const inputStr = typeof data.input === "string" ? data.input : JSON.stringify(data.input, null, 2)
+  const outStr   = typeof data.output === "string" ? data.output : JSON.stringify(data.output, null, 2)
 
-  const cfg        = STATUS_CONFIG[execution.status as keyof typeof STATUS_CONFIG] ?? STATUS_CONFIG.queued
-  const StatusIcon = cfg.icon
-  const agent      = execution.agents
-  const cost       = execution.cost_usd ?? execution.cost ?? 0
-
-  const outputStr  = typeof execution.output === "string"
-    ? execution.output
-    : JSON.stringify(execution.output, null, 2)
-  const inputStr   = typeof execution.input === "string"
-    ? execution.input
-    : JSON.stringify(execution.input, null, 2)
+  const METRICS = [
+    { label: "Status",       value: <span className={cn("font-bold", cfg.color)}>{cfg.label}</span> },
+    { label: "Latency",      value: data.latency_ms ? `${data.latency_ms.toLocaleString()}ms` : "—" },
+    { label: "Tokens In",    value: data.tokens_input?.toLocaleString() ?? "—" },
+    { label: "Tokens Out",   value: data.tokens_output?.toLocaleString() ?? "—" },
+    { label: "Cost",         value: cost > 0 ? `$${cost.toFixed(6)}` : "Free" },
+    { label: "Created",      value: formatRelativeTime(data.created_at) },
+  ]
 
   return (
-    <div className="space-y-6 max-w-3xl">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <Link href="/executions">
-          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-xl">
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-        </Link>
-        <div className="flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-xl font-bold text-zinc-900">Execution Detail</h1>
-            <span className={cn("inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-full", cfg.bg, cfg.color)}>
-              <StatusIcon className={cn("h-3 w-3", execution.status === "running" && "animate-spin")} />
-              {cfg.label}
-            </span>
-          </div>
-          <p className="text-xs text-zinc-400 font-mono mt-0.5">{execution.id}</p>
-        </div>
-      </div>
+    <div className="flex min-h-screen bg-white">
+      <DashboardSidebar />
+      <main className="flex-1 overflow-auto bg-zinc-50">
+        <div className="max-w-4xl mx-auto px-6 py-8 space-y-6">
 
-      {/* Summary card */}
-      <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-        <div className="flex items-center gap-3 mb-5">
-          <div className="w-10 h-10 rounded-xl bg-primary/8 flex items-center justify-center flex-shrink-0">
-            <Bot className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <p className="font-semibold text-zinc-900">
-              {agent?.name ?? "Deleted Agent"}
-            </p>
-            {agent?.category && (
-              <p className="text-xs text-zinc-400 capitalize">{agent.category.replace("_", " ")}</p>
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Link href="/executions">
+                <Button variant="ghost" size="icon" className="h-9 w-9 rounded-xl"><ArrowLeft className="h-4 w-4" /></Button>
+              </Link>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h1 className="text-xl font-bold text-zinc-900">Execution Trace</h1>
+                  <div className={cn("inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-0.5 rounded-full", cfg.bg, cfg.color)}>
+                    <Icon className={cn("h-3.5 w-3.5", status === "running" && "animate-spin")} />
+                    {cfg.label}
+                  </div>
+                </div>
+                <p className="text-xs text-zinc-400 font-mono mt-0.5">{id}</p>
+              </div>
+            </div>
+            {data.agents && (
+              <Link href={`/marketplace/${data.agents.id}`} target="_blank">
+                <Button variant="outline" size="sm" className="rounded-xl border-zinc-200 gap-1.5">
+                  <ExternalLink className="h-3.5 w-3.5" /> View Agent
+                </Button>
+              </Link>
             )}
           </div>
-          {agent?.id && (
-            <Link href={`/marketplace/${agent.id}`}
-              className="ml-auto text-xs font-semibold text-primary hover:underline flex items-center gap-1">
-              View agent <ChevronRight className="h-3 w-3" />
-            </Link>
-          )}
-        </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          {[
-            { icon: Zap,      label: "Latency",      value: execution.latency_ms ? `${execution.latency_ms.toLocaleString()}ms` : "—" },
-            { icon: Brain,    label: "Tokens In",    value: execution.tokens_input?.toLocaleString() ?? "—" },
-            { icon: Brain,    label: "Tokens Out",   value: execution.tokens_output?.toLocaleString() ?? "—" },
-            { icon: DollarSign,label: "Cost",        value: cost > 0 ? `$${cost.toFixed(6)}` : "Free" },
-          ].map(s => (
-            <div key={s.label} className="bg-zinc-50 border border-zinc-100 rounded-xl px-4 py-3">
-              <div className="flex items-center gap-1.5 mb-1">
-                <s.icon className="h-3.5 w-3.5 text-zinc-400" />
-                <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wide">{s.label}</span>
+          {/* Agent card */}
+          {data.agents && (
+            <div className="bg-white border border-zinc-100 rounded-2xl p-4 flex items-center gap-3" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+              <div className="w-10 h-10 rounded-xl bg-primary/8 flex items-center justify-center flex-shrink-0">
+                <Bot className="h-5 w-5 text-primary" />
               </div>
-              <p className="text-base font-black text-zinc-900 nums">{s.value}</p>
+              <div>
+                <p className="font-semibold text-zinc-900">{data.agents.name}</p>
+                <p className="text-xs text-zinc-400">{data.agents.model_name} · {data.agents.category?.replace("_"," ")}</p>
+              </div>
             </div>
-          ))}
-        </div>
+          )}
 
-        <p className="text-xs text-zinc-400 mt-4">{formatRelativeTime(execution.created_at)}</p>
-      </div>
-
-      {/* Input */}
-      <div className="bg-white border border-zinc-100 rounded-2xl overflow-hidden" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-zinc-50">
-          <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Input</p>
-          <CopyButton text={inputStr} />
-        </div>
-        <pre className="px-5 py-4 text-xs font-mono text-zinc-600 overflow-auto max-h-64 leading-relaxed whitespace-pre-wrap">
-          {inputStr}
-        </pre>
-      </div>
-
-      {/* Output */}
-      <div className="bg-white border border-zinc-100 rounded-2xl overflow-hidden" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-zinc-50">
-          <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Output</p>
-          {outputStr && <CopyButton text={outputStr} />}
-        </div>
-        {execution.status === "failed" ? (
-          <div className="px-5 py-4">
-            <p className="text-xs font-semibold text-red-600 mb-1">Error</p>
-            <pre className="text-xs font-mono text-red-500 leading-relaxed whitespace-pre-wrap">
-              {execution.error_message ?? "Unknown error"}
-            </pre>
-          </div>
-        ) : (
-          <pre className="px-5 py-4 text-xs font-mono text-zinc-600 overflow-auto max-h-80 leading-relaxed whitespace-pre-wrap">
-            {outputStr || <span className="text-zinc-300">No output</span>}
-          </pre>
-        )}
-      </div>
-
-      {/* Trace (if available) */}
-      {trace && (
-        <div className="bg-white border border-zinc-100 rounded-2xl overflow-hidden" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-          <div className="px-5 py-3.5 border-b border-zinc-50 flex items-center gap-2">
-            <Code2 className="h-4 w-4 text-zinc-400" />
-            <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">LLM Trace</p>
-          </div>
-          <div className="divide-y divide-zinc-50">
-            {[
-              { label: "Model",       value: trace.model ?? "—" },
-              { label: "TTFT",        value: trace.ttft_ms ? `${trace.ttft_ms}ms` : "—" },
-              { label: "Temperature", value: trace.temperature ?? "—" },
-              { label: "Tool calls",  value: trace.tool_calls != null ? String(trace.tool_calls) : "0" },
-            ].map(r => (
-              <div key={r.label} className="flex items-center justify-between px-5 py-3">
-                <span className="text-xs font-semibold text-zinc-400">{r.label}</span>
-                <span className="text-sm font-mono text-zinc-700">{r.value}</span>
+          {/* Metrics grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            {METRICS.map(m => (
+              <div key={m.label} className="bg-white border border-zinc-100 rounded-2xl px-4 py-3" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+                <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-0.5">{m.label}</p>
+                <p className="text-sm font-bold text-zinc-900 nums">{m.value}</p>
               </div>
             ))}
           </div>
-          {trace.system_prompt && (
-            <div className="border-t border-zinc-50">
-              <div className="flex items-center justify-between px-5 py-3.5 bg-zinc-50/50">
-                <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">System Prompt</p>
-                <CopyButton text={trace.system_prompt} />
+
+          {/* Input / Output */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center">
+                  <Zap className="h-3.5 w-3.5 text-blue-600" />
+                </div>
+                <p className="text-sm font-semibold text-zinc-900">Input</p>
               </div>
-              <pre className="px-5 py-4 text-xs font-mono text-zinc-500 overflow-auto max-h-40 leading-relaxed whitespace-pre-wrap">
-                {trace.system_prompt}
-              </pre>
+              <CodeBlock code={inputStr} />
+            </div>
+            <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-7 h-7 rounded-lg bg-green-50 flex items-center justify-center">
+                  <CheckCircle className="h-3.5 w-3.5 text-green-600" />
+                </div>
+                <p className="text-sm font-semibold text-zinc-900">Output</p>
+              </div>
+              {data.error_message ? (
+                <div className="bg-red-50 border border-red-100 rounded-xl p-3 text-xs text-red-700 font-mono leading-relaxed">
+                  {data.error_message}
+                </div>
+              ) : (
+                <CodeBlock code={outStr ?? "No output"} />
+              )}
+            </div>
+          </div>
+
+          {/* LLM Trace — only shown when execution_traces row exists */}
+          {trace && (
+            <div className="bg-white border border-zinc-100 rounded-2xl p-5 space-y-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-violet-50 flex items-center justify-center">
+                  <Brain className="h-4 w-4 text-violet-600" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-zinc-900">LLM Trace</p>
+                  <p className="text-xs text-zinc-400">{trace.model} · TTFT: {trace.ttft_ms ?? "—"}ms · Total: {trace.total_ms ?? "—"}ms</p>
+                </div>
+              </div>
+
+              {trace.system_prompt && <CodeBlock code={trace.system_prompt} label="System Prompt" />}
+              {trace.user_message  && <CodeBlock code={trace.user_message}  label="User Message" />}
+              {trace.assistant_reply && <CodeBlock code={trace.assistant_reply} label="Model Response" />}
+
+              {trace.tool_calls && Array.isArray(trace.tool_calls) && trace.tool_calls.length > 0 && (
+                <div>
+                  <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wide mb-1.5">Tool Calls</p>
+                  <CodeBlock code={JSON.stringify(trace.tool_calls, null, 2)} />
+                </div>
+              )}
+
+              {/* Timing breakdown */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3 border-t border-zinc-50">
+                {[
+                  { label: "TTFT",        value: trace.ttft_ms ? `${trace.ttft_ms}ms` : "—" },
+                  { label: "Total",       value: trace.total_ms ? `${trace.total_ms}ms` : "—" },
+                  { label: "Tokens In",   value: trace.tokens_input?.toLocaleString() ?? "—" },
+                  { label: "Tokens Out",  value: trace.tokens_output?.toLocaleString() ?? "—" },
+                ].map(m => (
+                  <div key={m.label}>
+                    <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-0.5">{m.label}</p>
+                    <p className="text-sm font-bold text-zinc-700 nums">{m.value}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
-        </div>
-      )}
 
-      {/* API reference */}
-      <div className="bg-zinc-50 border border-zinc-100 rounded-2xl px-5 py-4">
-        <p className="text-xs font-semibold text-zinc-500 mb-2">Replay via API</p>
-        <code className="text-xs font-mono text-zinc-600">
-          GET /api/executions/{execution.id}
-        </code>
-      </div>
+          {/* Security flags */}
+          {trace?.status === "flagged" && (
+            <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 flex items-start gap-3">
+              <Shield className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-amber-800">Security flag detected</p>
+                <p className="text-xs text-amber-700 mt-0.5">
+                  {trace.error_message ?? "PII or suspicious content detected in output — some fields may have been redacted."}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Replay CTA */}
+          <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-4 flex items-center justify-between flex-wrap gap-4">
+            <div>
+              <p className="text-sm font-semibold text-zinc-900">Replay this execution</p>
+              <p className="text-xs text-zinc-400 mt-0.5">Re-run with the same input against the same agent.</p>
+            </div>
+            <Link href={`/marketplace/${data.agents?.id}?replay=${id}`}>
+              <Button variant="outline" size="sm" className="rounded-xl border-zinc-200 gap-1.5">
+                <RotateCcw className="h-3.5 w-3.5" /> Replay
+              </Button>
+            </Link>
+          </div>
+
+        </div>
+      </main>
     </div>
   )
 }

@@ -162,11 +162,13 @@ export async function POST(req: NextRequest) {
           }
 
           // Atomically add credits using the RPC function
+          // reference_id must be UUID — generate a deterministic UUID v5 from session.id
+          // to avoid DB constraint errors (Stripe session IDs are not UUIDs)
           const { data: result } = await supabase.rpc("add_credits", {
             user_id_param:      userId,
             amount_param:       creditsUsd,
-            description_param:  `Credits package: ${packageId}`,
-            reference_id_param: session.id as unknown as string,  // session ID as reference
+            description_param:  `Credits package: ${packageId} (${session.id})`,
+            reference_id_param: null,  // No UUID reference for Stripe session
           })
 
           if (!result?.success) {

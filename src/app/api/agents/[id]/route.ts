@@ -26,16 +26,22 @@ export async function GET(
       return NextResponse.json({ error: "Invalid agent id" }, { status: 400 })
     }
 
+    // Allow: active agents (public) OR the seller viewing their own agent (any status)
     const { data: agent, error } = await supabase
-      .from("agents")
-      .select(
-        `*, profiles!seller_id(id, full_name, username, avatar_url, bio, is_verified, total_earned)`
-      )
-      .eq("id", id)
-      .eq("status", "active")
-      .single()
+    .from("agents")
+    .select(
+      `*, profiles!seller_id(id, full_name, username, avatar_url, bio, is_verified, total_earned)`
+    )
+    .eq("id", id)
+    .single()
 
     if (error || !agent) {
+    return NextResponse.json({ error: "Agent not found" }, { status: 404 })
+    }
+
+    // Gate: only active agents are public; non-active only visible to their seller
+    const { data: { user } } = await supabase.auth.getUser()
+    if (agent.status !== "active" && agent.seller_id !== user?.id) {
       return NextResponse.json({ error: "Agent not found" }, { status: 404 })
     }
 
