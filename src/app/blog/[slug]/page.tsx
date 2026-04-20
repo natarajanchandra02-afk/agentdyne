@@ -243,7 +243,7 @@ Our verification process checks:
 2. **Error contract** — all error states return structured errors, not raw exceptions
 3. **Schema accuracy** — tool parameter descriptions match what the API actually accepts
 
-The `verified` badge on an AgentDyne integration means your agent will not break silently because an MCP server shipped a bad update.
+The \`verified\` badge on an AgentDyne integration means your agent will not break silently because an MCP server shipped a bad update.
 
 ## Using MCP in Your Agent
 
@@ -508,7 +508,7 @@ This returns only agents that claim both capabilities, ranked by their composite
 
 The most powerful feature in the registry is chain suggestions — the registry not only tells you which agent handles your task, it suggests what should come before and after it.
 
-This is derived from execution history. When we observe that 73% of calls to `legal_summariser` are preceded by a call to `pdf_extractor` and followed by a call to `action_item_extractor`, we encode those as chain suggestions:
+This is derived from execution history. When we observe that 73% of calls to \`legal_summariser\` are preceded by a call to \`pdf_extractor\` and followed by a call to \`action_item_extractor\`, we encode those as chain suggestions:
 
 \`\`\`json
 {
@@ -524,11 +524,11 @@ This is how the intelligence layer bootstraps itself. The registry learns common
 
 ## Version Stability
 
-The registry is versioned at the agent level. When a seller publishes `v2.1` of their agent, the registry:
+The registry is versioned at the agent level. When a seller publishes \`v2.1\` of their agent, the registry:
 
 1. Runs the new version through our automated eval suite
 2. If quality scores improve, promotes it as the default
-3. Keeps `v2.0` available for direct-version pinning
+3. Keeps \`v2.0\` available for direct-version pinning
 4. Notifies subscribers of the version update
 
 Users who want the latest improvements get them automatically. Users who need stability can pin to a specific version in their API calls.

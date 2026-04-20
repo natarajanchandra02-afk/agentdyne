@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient }      from "@/lib/supabase/server"
 import { createAdminClient } from "@/lib/supabase/admin"
 import { getRBAC }           from "@/lib/rbac"
+import { sendAgentApprovedEmail, sendAgentRejectedEmail } from "@/lib/email"
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
@@ -117,6 +118,28 @@ export async function PATCH(req: NextRequest) {
       ? "Your agent is now active on the AgentDyne marketplace."
       : `Reason: ${reason ?? "See admin feedback"}`,
   }).then(() => {})
+
+  // Send transactional email (non-blocking, fire-and-forget)
+  const { data: sellerProfile } = await admin
+    .from("profiles").select("email, full_name").eq("id", agent.seller_id).single()
+
+  if (sellerProfile?.email) {
+    if (action === "approve") {
+      sendAgentApprovedEmail({
+        to:         sellerProfile.email,
+        sellerName: sellerProfile.full_name ?? "",
+        agentName:  agent.name,
+        agentId:    agent_id,
+      }).catch(() => {})
+    } else if (action === "reject") {
+      sendAgentRejectedEmail({
+        to:         sellerProfile.email,
+        sellerName: sellerProfile.full_name ?? "",
+        agentName:  agent.name,
+        reason:     reason ?? "See admin feedback",
+      }).catch(() => {})
+    }
+  }
 
   return NextResponse.json({ ok: true, agent_id, action, new_status: mapped.status })
 }

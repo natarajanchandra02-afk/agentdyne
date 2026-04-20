@@ -1,186 +1,208 @@
 /**
- * AgentDyne — Environment Variable Validation
+ * @module env
+ * @path   src/lib/env.ts
  *
- * Called once at process startup from layout.tsx (server-side only).
- * Never throws — logs warnings so builds don't crash on missing vars,
- * but logs clearly so developers know what to fix.
+ * Environment variable validation for AgentDyne.
  *
- * Usage in layout.tsx:
- *   import { validateEnv } from "@/lib/env"
- *   validateEnv()   // call at module scope — runs once per process
+ * Validates required vs optional env vars at startup.
+ * Called from src/app/layout.tsx on first render.
  *
- * Usage in API routes:
- *   import { requireEnv, featureAvailable } from "@/lib/env"
- *   const key = requireEnv("OPENAI_API_KEY")        // throws if missing
- *   const ok  = featureAvailable("OPENAI_API_KEY")  // boolean check
+ * Required (platform won't start without these):
+ *   NEXT_PUBLIC_SUPABASE_URL
+ *   NEXT_PUBLIC_SUPABASE_ANON_KEY
+ *   ANTHROPIC_API_KEY
+ *
+ * Strongly recommended (features degrade without these):
+ *   RESEND_API_KEY          — transactional email
+ *   OPENAI_API_KEY          — RAG embeddings, semantic search
+ *   SUPABASE_SERVICE_ROLE_KEY — admin client (required for admin panel)
+ *
+ * Optional (enables additional providers):
+ *   GOOGLE_AI_API_KEY
+ *   VLLM_BASE_URL
+ *   STRIPE_SECRET_KEY
+ *   STRIPE_WEBHOOK_SECRET
+ *   ADMIN_ALERT_EMAIL
+ *   NEXT_PUBLIC_APP_URL
  */
 
+export interface EnvValidationResult {
+  ok:       boolean
+  missing:  string[]   // required vars that are absent
+  warnings: string[]   // recommended vars that are absent
+  summary:  string
+}
+
 interface EnvSpec {
-  key:      string
-  required: boolean
-  secret:   boolean   // true = never log value
-  feature:  string    // what breaks without it
+  key:         string
+  required:    boolean
+  description: string
+  example?:    string
 }
 
 const ENV_SPECS: EnvSpec[] = [
-  // ── Core (required) ───────────────────────────────────────────────────────
+  // ── Required ──────────────────────────────────────────────────────────────
   {
-    key:      "NEXT_PUBLIC_SUPABASE_URL",
-    required: true,
-    secret:   false,
-    feature:  "Database (all features broken without this)",
+    key:         "NEXT_PUBLIC_SUPABASE_URL",
+    required:    true,
+    description: "Supabase project URL",
+    example:     "https://xxxx.supabase.co",
   },
   {
-    key:      "NEXT_PUBLIC_SUPABASE_ANON_KEY",
-    required: true,
-    secret:   true,
-    feature:  "Database auth (all features broken without this)",
+    key:         "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+    required:    true,
+    description: "Supabase anon key (public)",
   },
   {
-    key:      "SUPABASE_SERVICE_ROLE_KEY",
-    required: true,
-    secret:   true,
-    feature:  "Admin operations + Stripe webhooks",
+    key:         "ANTHROPIC_API_KEY",
+    required:    true,
+    description: "Anthropic API key (required for Claude agents)",
+    example:     "sk-ant-...",
   },
   {
-    key:      "ANTHROPIC_API_KEY",
-    required: true,
-    secret:   true,
-    feature:  "Claude agent execution (core feature)",
+    key:         "SUPABASE_SERVICE_ROLE_KEY",
+    required:    true,
+    description: "Supabase service role key (required for admin panel and server-side operations)",
+  },
+  // ── Strongly recommended ─────────────────────────────────────────────────
+  {
+    key:         "RESEND_API_KEY",
+    required:    false,
+    description: "Resend API key — required for transactional email (agent approvals, welcome emails, alerts)",
+    example:     "re_...",
   },
   {
-    key:      "NEXT_PUBLIC_APP_URL",
-    required: true,
-    secret:   false,
-    feature:  "Stripe checkout redirect URLs + email links",
+    key:         "OPENAI_API_KEY",
+    required:    false,
+    description: "OpenAI API key — required for RAG embeddings (semantic search) and GPT agents",
+    example:     "sk-...",
   },
-  // ── Optional — disable features gracefully ─────────────────────────────────
+  // ── Optional ──────────────────────────────────────────────────────────────
   {
-    key:      "OPENAI_API_KEY",
-    required: false,
-    secret:   true,
-    feature:  "RAG embeddings + GPT models (RAG disabled without this)",
-  },
-  {
-    key:      "STRIPE_SECRET_KEY",
-    required: false,
-    secret:   true,
-    feature:  "Billing (subscriptions + credits disabled without this)",
+    key:         "GOOGLE_AI_API_KEY",
+    required:    false,
+    description: "Google AI API key — enables Gemini model agents",
   },
   {
-    key:      "STRIPE_WEBHOOK_SECRET",
-    required: false,
-    secret:   true,
-    feature:  "Stripe webhook verification (billing events ignored without this)",
+    key:         "STRIPE_SECRET_KEY",
+    required:    false,
+    description: "Stripe secret key — required for billing and payouts",
+    example:     "sk_live_...",
   },
   {
-    key:      "STRIPE_STARTER_PRICE_ID",
-    required: false,
-    secret:   false,
-    feature:  "Starter plan checkout",
+    key:         "STRIPE_WEBHOOK_SECRET",
+    required:    false,
+    description: "Stripe webhook signing secret",
+    example:     "whsec_...",
   },
   {
-    key:      "STRIPE_PRO_PRICE_ID",
-    required: false,
-    secret:   false,
-    feature:  "Pro plan checkout",
+    key:         "NEXT_PUBLIC_APP_URL",
+    required:    false,
+    description: "Production URL (used in emails and HITL approval links)",
+    example:     "https://agentdyne.com",
   },
   {
-    key:      "GOOGLE_AI_API_KEY",
-    required: false,
-    secret:   true,
-    feature:  "Gemini model routing",
+    key:         "ADMIN_ALERT_EMAIL",
+    required:    false,
+    description: "Email address for admin alerts",
+    example:     "support@inteleion.com",
   },
 ]
 
-let _validated = false
-
-/** Run once at startup from layout.tsx */
-export function validateEnv(): void {
-  if (_validated) return
-  _validated = true
-
-  // Client-side: skip entirely (env vars are either not set or NEXT_PUBLIC_*)
-  if (typeof window !== "undefined") return
-
-  const missing:  EnvSpec[] = []
-  const optional: EnvSpec[] = []
+/**
+ * validateEnv
+ *
+ * Call once at startup. Returns a result object — does not throw.
+ * In development, logs warnings. In production, missing required vars
+ * are surfaced as a critical error in logs.
+ *
+ * @example
+ * // In src/app/layout.tsx:
+ * import { validateEnv } from "@/lib/env"
+ * validateEnv()
+ */
+export function validateEnv(): EnvValidationResult {
+  const missing:  string[] = []
+  const warnings: string[] = []
 
   for (const spec of ENV_SPECS) {
     const val = process.env[spec.key]
-    const empty = !val || val.trim().length === 0 || val.includes("your-") || val === "placeholder"
+    const isSet = val && val.trim().length > 0
 
-    if (empty) {
-      if (spec.required) missing.push(spec)
-      else               optional.push(spec)
+    if (!isSet) {
+      if (spec.required) {
+        missing.push(spec.key)
+      } else {
+        warnings.push(spec.key)
+      }
     }
   }
 
-  if (missing.length > 0) {
-    const lines = missing.map(s => `   ❌  ${s.key}\n       → Feature broken: ${s.feature}`)
-    console.error(
-      `\n═══════════════════════════════════════════════════════\n` +
-      `  AgentDyne — MISSING REQUIRED ENVIRONMENT VARIABLES\n` +
-      `═══════════════════════════════════════════════════════\n` +
-      lines.join("\n") +
-      `\n\nSet these in:\n` +
-      `  • .env.local (local development)\n` +
-      `  • Cloudflare Pages → Settings → Environment Variables (production)\n` +
-      `  • .env.production.local (local production preview)\n` +
-      `═══════════════════════════════════════════════════════\n`
-    )
+  const ok = missing.length === 0
+
+  if (!ok) {
+    const lines = missing.map(k => {
+      const spec = ENV_SPECS.find(s => s.key === k)!
+      return `  ❌ ${k} — ${spec.description}${spec.example ? ` (e.g. ${spec.example})` : ""}`
+    })
+    console.error(`[AgentDyne] CRITICAL: Missing required environment variables:\n${lines.join("\n")}`)
+    console.error("[AgentDyne] Set these in Cloudflare Pages → Settings → Environment Variables")
   }
 
-  if (optional.length > 0) {
-    const lines = optional.map(s => `   ⚠   ${s.key}  →  ${s.feature}`)
-    console.warn(
-      `\n── AgentDyne: Optional env vars not configured ──────\n` +
-      lines.join("\n") + "\n"
-    )
+  if (warnings.length > 0) {
+    const lines = warnings.map(k => {
+      const spec = ENV_SPECS.find(s => s.key === k)!
+      return `  ⚠️  ${k} — ${spec.description}`
+    })
+    console.warn(`[AgentDyne] Optional env vars not set (some features disabled):\n${lines.join("\n")}`)
   }
 
-  if (missing.length === 0 && optional.length === 0) {
-    console.log("✅  AgentDyne: All environment variables configured.")
-  }
+  const featureStatus = [
+    `Email:         ${process.env.RESEND_API_KEY            ? "✓" : "✗ (set RESEND_API_KEY)"}`,
+    `RAG/Embeddings:${process.env.OPENAI_API_KEY            ? "✓" : "✗ (set OPENAI_API_KEY)"}`,
+    `Billing:       ${process.env.STRIPE_SECRET_KEY         ? "✓" : "✗ (set STRIPE_SECRET_KEY)"}`,
+    `Admin panel:   ${process.env.SUPABASE_SERVICE_ROLE_KEY ? "✓" : "✗ (set SUPABASE_SERVICE_ROLE_KEY)"}`,
+    `Gemini agents: ${process.env.GOOGLE_AI_API_KEY         ? "✓" : "○ (optional)"}`,
+  ].join("\n  ")
+
+  const summary = ok
+    ? `[AgentDyne] Environment OK. Feature status:\n  ${featureStatus}`
+    : `[AgentDyne] CRITICAL: ${missing.length} required env var(s) missing`
+
+  if (ok) console.log(summary)
+
+  return { ok, missing, warnings, summary }
 }
 
 /**
- * requireEnv — throw if a required env var is missing.
- * Use in API route handlers that cannot function without a specific var.
+ * getRequiredEnv
+ * Throws a descriptive error if a required env var is missing.
+ * Use in API routes that need a specific var.
  *
  * @example
- *   const apiKey = requireEnv("OPENAI_API_KEY")
+ * const apiKey = getRequiredEnv("ANTHROPIC_API_KEY")
  */
-export function requireEnv(key: string): string {
+export function getRequiredEnv(key: string): string {
   const val = process.env[key]
-  if (!val || val.trim().length === 0) {
+  if (!val || !val.trim()) {
     throw new Error(
       `Missing required environment variable: ${key}. ` +
-      `Add it to .env.local or Cloudflare Pages environment settings.`
+      `Set it in Cloudflare Pages → Settings → Environment Variables.`
     )
   }
   return val
 }
 
 /**
- * featureAvailable — check whether an optional feature is configured.
- * Use to conditionally enable features in the UI or API.
- *
- * @example
- *   if (featureAvailable("OPENAI_API_KEY")) {
- *     // RAG is available
- *   }
+ * isFeatureEnabled — check if an optional feature is available
  */
-export function featureAvailable(key: string): boolean {
-  const val = process.env[key]
-  return !!val && val.trim().length > 0 && !val.includes("your-")
-}
-
-/**
- * getOptionalEnv — return env var or null (never throws).
- * Use when a missing var should degrade gracefully, not error.
- */
-export function getOptionalEnv(key: string): string | null {
-  const val = process.env[key]
-  return val && val.trim().length > 0 ? val : null
+export function isFeatureEnabled(feature: "email" | "rag" | "billing" | "gemini" | "vllm"): boolean {
+  const MAP: Record<string, string[]> = {
+    email:   ["RESEND_API_KEY"],
+    rag:     ["OPENAI_API_KEY"],
+    billing: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"],
+    gemini:  ["GOOGLE_AI_API_KEY"],
+    vllm:    ["VLLM_BASE_URL"],
+  }
+  return (MAP[feature] ?? []).every(k => !!process.env[k]?.trim())
 }

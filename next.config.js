@@ -86,9 +86,11 @@ const nextConfig = {
 
   // ── Compiler options ───────────────────────────────────────────────────────
   compiler: {
-    // Remove console.log in production (keep console.error/warn for Sentry)
+    // Keep error + warn in production (Sentry, CF Logs need them).
+    // Also keep 'info' so startup env validation messages are visible in
+    // Cloudflare Pages build logs and production Workers logs.
     removeConsole: process.env.NODE_ENV === "production"
-      ? { exclude: ["error", "warn"] }
+      ? { exclude: ["error", "warn", "info"] }
       : false,
   },
 
