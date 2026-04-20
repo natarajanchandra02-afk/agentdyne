@@ -192,9 +192,51 @@ export async function POST(
         return NextResponse.json({ error: "Pipeline execution timed out", executionId: pipelineExec.id }, { status: 408 })
       }
 
-      // Run all nodes in this level concurrently
+      // ── Per-execution cost kill switch ────────────────────────────────────
+      const creditBalance = Number(credits?.balance_usd ?? 0)
+      if (totalCost > 0 && totalCost >= creditBalance * 0.95) {
+        // Abort before spending more than user has remaining
+        await failPipelineExec(supabase, pipelineExec.id,
+          `Cost kill switch: spent ${totalCost.toFixed(6)} of ${creditBalance.toFixed(6)} balance`,
+          nodeResults, totalCost, totalTokensIn, totalTokensOut, Date.now() - startTotal)
+        return NextResponse.json({
+          error: "Pipeline aborted: would exceed credit balance. Partial results returned.",
+          code:  "COST_KILL_SWITCH",
+          executionId:   pipelineExec.id,
+          node_results:  nodeResults,
+          partial_output: lastOutput,
+          cost_so_far:   totalCost.toFixed(6),
+        }, { status: 402 })
+      }
+
+      // ── Evaluate branch conditions for each node in this level ──────────
+      const nodesToRun = level.filter(node => {
+        if (node.node_type !== "branch" || !node.condition) return true
+        // Check the condition against the LAST output that fed into this node
+        const upstreamEdge   = dag.edges.find(e => e.to === node.id)
+        const upstreamOutput = upstreamEdge ? nodeOutputs[upstreamEdge.from] : lastOutput
+        const shouldRun      = evaluateCondition(node.condition, upstreamOutput)
+        if (!shouldRun) {
+          // Record as skipped
+          nodeResults.push({
+            node_id:    node.id,
+            agent_id:   node.agent_id,
+            agent_name: agentMap.get(node.agent_id)?.name ?? node.label ?? node.id,
+            status:     "skipped",
+            input:      null,
+            output:     null,
+            latency_ms: 0,
+            cost:       0,
+          })
+          // Propagate the upstream output through the skipped node
+          nodeOutputs[node.id] = upstreamOutput
+        }
+        return shouldRun
+      })
+
+      // Run all passing nodes in this level concurrently
       const levelResults = await Promise.all(
-        level.map(node =>
+        nodesToRun.map(node =>
           executeNode(node, dag.edges, agentMap, nodeOutputs, input, variables, userId!, supabase)
         )
       )
@@ -202,21 +244,25 @@ export async function POST(
       let levelFailed = false
       for (const result of levelResults) {
         nodeResults.push(result)
-        nodeOutputs[result.node_id] = result.output
 
         if (result.status === "success") {
+          // Apply output_field extraction before storing
+          const node = dag.nodes.find(n => n.id === result.node_id)
+          const extractedOutput = extractOutputField(result.output, node?.output_field)
+          nodeOutputs[result.node_id] = extractedOutput
+
           totalCost      += result.cost
           totalTokensIn  += result.tokens?.input  ?? 0
           totalTokensOut += result.tokens?.output ?? 0
-          if (result.output !== null && result.output !== undefined) {
-            lastOutput = result.output
+          if (extractedOutput !== null && extractedOutput !== undefined) {
+            lastOutput = extractedOutput
           }
         } else {
           const node = dag.nodes.find(n => n.id === result.node_id)
           if (!node?.continue_on_failure) {
             levelFailed = true
           } else {
-            nodeOutputs[result.node_id] = null  // pass null downstream
+            nodeOutputs[result.node_id] = null
           }
         }
       }
@@ -287,18 +333,27 @@ interface DAGNode {
   id:                      string
   agent_id:                string
   label?:                  string
+  node_type?:              "linear" | "parallel" | "branch" | "subagent"
   system_prompt_override?: string
   input_mapping?:          Record<string, string>
   continue_on_failure?:    boolean
+  parallel_group?:         string
+  condition?:              string
+  sub_pipeline_id?:        string
+  output_field?:           string
 }
 
-interface DAGEdge { from: string; to: string }
+interface DAGEdge {
+  from:       string
+  to:         string
+  condition?: string
+}
 
 interface NodeResult {
   node_id:    string
   agent_id:   string
   agent_name: string
-  status:     "success" | "failed"
+  status:     "success" | "failed" | "skipped"
   input:      unknown
   output:     unknown
   latency_ms: number
@@ -307,7 +362,53 @@ interface NodeResult {
   error?:     string
 }
 
-// ─── Topological level grouping ───────────────────────────────────────────────
+// ─── Branch condition evaluator ─────────────────────────────────────────────
+// Evaluates a JS-like condition expression against a node's output.
+// Safe: uses Function constructor in a try/catch — never throws.
+// Returns true (run the node) by default if evaluation fails.
+
+function evaluateCondition(condition: string | undefined, output: unknown): boolean {
+  if (!condition || !condition.trim()) return true
+  try {
+    // Sanitise: disallow dangerous globals
+    const FORBIDDEN = /\b(process|require|import|eval|Function|globalThis|window|document|fetch|XMLHttpRequest|__dirname|__filename|Buffer|Deno|Bun)\b/
+    if (FORBIDDEN.test(condition)) {
+      console.warn("[Pipeline] Condition blocked — forbidden globals:", condition)
+      return true  // fail-open: run the node
+    }
+    // eslint-disable-next-line no-new-func
+    const fn = new Function("output", `"use strict"; return !!(${condition})`)
+    return fn(output)
+  } catch (err: any) {
+    console.warn("[Pipeline] Condition evaluation error:", condition, err.message)
+    return true  // fail-open: run the node
+  }
+}
+
+// ─── Output field extractor ───────────────────────────────────────────────────
+// Extracts a specific field from a node's output using dot-path notation.
+// Returns the full output if no field specified or field not found.
+
+function extractOutputField(output: unknown, field: string | undefined): unknown {
+  if (!field || !field.trim()) return output
+  try {
+    const parts = field.split(".")
+    let val: any = output
+    for (const part of parts) {
+      // Handle array index access like "items[0]"
+      const arrMatch = part.match(/^(\w+)\[(\d+)\]$/)
+      if (arrMatch) {
+        val = val?.[arrMatch[1]!]?.[parseInt(arrMatch[2]!)]
+      } else {
+        val = val?.[part]
+      }
+      if (val === undefined) return output  // field not found, return full output
+    }
+    return val ?? output
+  } catch {
+    return output
+  }
+}
 // Groups nodes into levels where nodes within a level have no dependency on
 // each other and can execute concurrently.
 
