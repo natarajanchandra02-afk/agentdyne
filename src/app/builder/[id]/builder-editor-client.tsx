@@ -13,13 +13,8 @@ import {
   Plus, Trash2, Info, ChevronDown, ChevronUp,
   Zap, Settings2, Database, Puzzle, Bot,
   FileText, Link2, Upload, BookOpen,
-  Globe, Lock,
+  Globe, Lock, ShieldCheck, AlertTriangle, Eye, EyeOff,
 } from "lucide-react"
-// NOTE: lucide-react exports a "Link" icon, but we also import the Next.js
-// <Link> component below. To avoid the duplicate-identifier webpack error we
-// import the lucide icon as "Link2" (already the canonical lucide name for
-// the chain-link icon). Any JSX that previously used <Link /> for the icon
-// now uses <Link2 />.
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -50,6 +45,34 @@ const MODELS = SUPPORTED_MODELS.map(v => ({ value: v, label: MODEL_LABELS[v] ?? 
 
 function sanitize(s: string) {
   return s.replace(/\x00/g, "").replace(/[\u200B-\u200D\uFEFF]/g, "").trim()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Guardrails config type
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface GuardrailsConfig {
+  blockPII:           boolean
+  strictMode:         boolean
+  blockHarmful:       boolean
+  outputScrubPII:     boolean
+  maxInputChars:      number
+  allowedTopics:      string   // comma-separated
+  blockedKeywords:    string   // comma-separated
+  requireJsonOutput:  boolean
+  outputSchemaStrict: boolean
+}
+
+const DEFAULT_GUARDRAILS: GuardrailsConfig = {
+  blockPII:           false,
+  strictMode:         false,
+  blockHarmful:       true,
+  outputScrubPII:     true,
+  maxInputChars:      8000,
+  allowedTopics:      "",
+  blockedKeywords:    "",
+  requireJsonOutput:  false,
+  outputSchemaStrict: false,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -104,12 +127,184 @@ function SectionTitle({ icon: Icon, title, subtitle }: { icon: any; title: strin
 function Divider() { return <div className="border-t border-zinc-100 my-8" /> }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Toggle row helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ToggleRow({
+  label, sublabel, checked, onChange, recommended,
+}: { label: string; sublabel: string; checked: boolean; onChange: (v: boolean) => void; recommended?: boolean }) {
+  return (
+    <div className="flex items-start justify-between gap-4 py-3 border-b border-zinc-50 last:border-0">
+      <div>
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-medium text-zinc-900">{label}</p>
+          {recommended && (
+            <span className="text-[10px] font-bold bg-green-50 text-green-700 px-1.5 py-0.5 rounded-full">recommended</span>
+          )}
+        </div>
+        <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">{sublabel}</p>
+      </div>
+      <button type="button" onClick={() => onChange(!checked)} className="flex-shrink-0 mt-0.5">
+        <div className={cn("w-10 h-5 rounded-full relative transition-colors", checked ? "bg-primary" : "bg-zinc-200")}>
+          <span className={cn("absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform", checked ? "translate-x-5" : "translate-x-0.5")} />
+        </div>
+      </button>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Guardrails Section
+// ─────────────────────────────────────────────────────────────────────────────
+
+function GuardrailsSection({
+  config, onChange,
+}: { config: GuardrailsConfig; onChange: (c: GuardrailsConfig) => void }) {
+  const set = (key: keyof GuardrailsConfig, value: any) =>
+    onChange({ ...config, [key]: value })
+
+  const riskLevel = (): { label: string; color: string; icon: any } => {
+    const critical = config.blockHarmful && config.outputScrubPII
+    const strict   = config.blockPII || config.strictMode
+    if (strict && critical)  return { label: "Maximum",  color: "text-green-600 bg-green-50  border-green-200",  icon: ShieldCheck }
+    if (critical)            return { label: "Standard", color: "text-blue-600  bg-blue-50   border-blue-200",   icon: ShieldCheck }
+    return                          { label: "Low",      color: "text-amber-600 bg-amber-50  border-amber-200",  icon: AlertTriangle }
+  }
+
+  const risk = riskLevel()
+  const RiskIcon = risk.icon
+
+  return (
+    <div className="space-y-5">
+      {/* Risk level indicator */}
+      <div className={cn("flex items-center gap-3 px-4 py-3 rounded-xl border text-sm font-semibold", risk.color)}>
+        <RiskIcon className="h-4 w-4 flex-shrink-0" />
+        <div>
+          <span>{risk.label} security level</span>
+          <p className="text-xs font-normal opacity-80 mt-0.5">
+            {risk.label === "Maximum"  && "All guardrails active — recommended for public marketplace agents"}
+            {risk.label === "Standard" && "Core protections active — good for most use cases"}
+            {risk.label === "Low"      && "Minimal protection — enable at least Harmful Content and Output Scrubbing"}
+          </p>
+        </div>
+      </div>
+
+      {/* INPUT guardrails */}
+      <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+        <div className="flex items-center gap-2 mb-4">
+          <Eye className="h-4 w-4 text-zinc-500" />
+          <p className="text-sm font-semibold text-zinc-900">Input Guardrails</p>
+          <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider ml-auto">Applied before LLM call</span>
+        </div>
+
+        <ToggleRow
+          label="Block Harmful Content"
+          sublabel="Automatically reject CBRN synthesis, CSAM, malware generation, and credential-theft requests. Always recommended."
+          checked={config.blockHarmful}
+          onChange={v => set("blockHarmful", v)}
+          recommended
+        />
+        <ToggleRow
+          label="Block PII in Input"
+          sublabel="Reject requests containing credit cards, SSNs, API keys, or phone numbers. Enable for compliance-sensitive agents."
+          checked={config.blockPII}
+          onChange={v => set("blockPII", v)}
+        />
+        <ToggleRow
+          label="Strict Mode"
+          sublabel="Block input containing any critical PII or suspicious injection patterns, even if not a hard policy violation. Best for enterprise."
+          checked={config.strictMode}
+          onChange={v => set("strictMode", v)}
+        />
+
+        <div className="mt-4 grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold text-zinc-600 uppercase tracking-wider">Max Input Length (chars)</Label>
+            <Input
+              type="number" min={100} max={32000} step={500}
+              value={config.maxInputChars}
+              onChange={e => set("maxInputChars", parseInt(e.target.value) || 8000)}
+              className="h-9 rounded-xl border-zinc-200 text-sm"
+            />
+            <p className="text-[11px] text-zinc-400">Inputs exceeding this limit are rejected (default 8,000)</p>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold text-zinc-600 uppercase tracking-wider">Blocked Keywords</Label>
+            <Input
+              value={config.blockedKeywords}
+              onChange={e => set("blockedKeywords", e.target.value)}
+              placeholder="e.g. competitor, lawsuit, confidential"
+              className="h-9 rounded-xl border-zinc-200 text-sm"
+            />
+            <p className="text-[11px] text-zinc-400">Comma-separated. Exact word match (case-insensitive)</p>
+          </div>
+        </div>
+
+        <div className="mt-4 space-y-1.5">
+          <Label className="text-xs font-semibold text-zinc-600 uppercase tracking-wider">Allowed Topics (optional — restricts scope)</Label>
+          <Input
+            value={config.allowedTopics}
+            onChange={e => set("allowedTopics", e.target.value)}
+            placeholder="e.g. software development, code review, documentation"
+            className="h-9 rounded-xl border-zinc-200 text-sm"
+          />
+          <p className="text-[11px] text-zinc-400">
+            Leave blank for unrestricted. When set, off-topic requests are flagged (not blocked, but logged).
+          </p>
+        </div>
+      </div>
+
+      {/* OUTPUT guardrails */}
+      <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+        <div className="flex items-center gap-2 mb-4">
+          <EyeOff className="h-4 w-4 text-zinc-500" />
+          <p className="text-sm font-semibold text-zinc-900">Output Guardrails</p>
+          <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider ml-auto">Applied after LLM response</span>
+        </div>
+
+        <ToggleRow
+          label="Scrub PII from Output"
+          sublabel="Automatically redact emails, phone numbers, API keys, and credit cards from the LLM response before returning to caller. Always recommended."
+          checked={config.outputScrubPII}
+          onChange={v => set("outputScrubPII", v)}
+          recommended
+        />
+        <ToggleRow
+          label="Require JSON Output"
+          sublabel="Return 422 if the LLM response is not valid JSON. Use this when downstream systems expect structured data."
+          checked={config.requireJsonOutput}
+          onChange={v => set("requireJsonOutput", v)}
+        />
+        <ToggleRow
+          label="Strict Schema Validation"
+          sublabel="Validate output against your declared Output Schema and flag (not block) responses that don't conform."
+          checked={config.outputSchemaStrict}
+          onChange={v => set("outputSchemaStrict", v)}
+        />
+      </div>
+
+      {/* How it works explainer */}
+      <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-4">
+        <p className="text-xs font-semibold text-zinc-600 mb-2.5 flex items-center gap-1.5">
+          <Info className="h-3.5 w-3.5" /> How guardrails work
+        </p>
+        <div className="space-y-2 text-xs text-zinc-500 leading-relaxed">
+          <p>Guardrail settings are stored on the agent and enforced server-side on <strong>every API call</strong> — they cannot be bypassed by callers.</p>
+          <p>The execution pipeline: <code className="font-mono bg-zinc-100 px-1 rounded">Input → Injection Filter → Guardrails → LLM → Output Scrubber → Caller</code></p>
+          <p>All blocked/flagged events are logged to the Security tab in Admin Panel for audit review.</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MCP Tool Picker
 // ─────────────────────────────────────────────────────────────────────────────
 
 function MCPPicker({ selected, onChange }: { selected: string[]; onChange: (ids: string[]) => void }) {
-  const [q,         setQ]       = useState("")
-  const [catFilter, setCat]     = useState<MCPCategory | "all">("all")
+  const [q,         setQ]   = useState("")
+  const [catFilter, setCat] = useState<MCPCategory | "all">("all")
   const [showAll,   setShowAll] = useState(false)
 
   const filtered = MCP_SERVERS.filter(s => {
@@ -132,15 +327,11 @@ function MCPPicker({ selected, onChange }: { selected: string[]; onChange: (ids:
             className="pl-9 h-9 rounded-xl border-zinc-200 text-sm" />
         </div>
         <Select value={catFilter} onValueChange={v => setCat(v as any)}>
-          <SelectTrigger className="h-9 w-44 rounded-xl border-zinc-200 text-sm">
-            <SelectValue />
-          </SelectTrigger>
+          <SelectTrigger className="h-9 w-44 rounded-xl border-zinc-200 text-sm"><SelectValue /></SelectTrigger>
           <SelectContent className="rounded-xl">
             <SelectItem value="all">All categories</SelectItem>
             {MCP_CATEGORIES.map(c => (
-              <SelectItem key={c.id} value={c.id} className="text-sm">
-                {c.icon} {c.label} ({c.count})
-              </SelectItem>
+              <SelectItem key={c.id} value={c.id} className="text-sm">{c.icon} {c.label} ({c.count})</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -177,15 +368,11 @@ function MCPPicker({ selected, onChange }: { selected: string[]; onChange: (ids:
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-semibold text-zinc-900 truncate">{srv.name}</span>
-                  {srv.verified && (
-                    <span className="text-[9px] font-bold bg-green-50 text-green-700 px-1.5 py-0.5 rounded-full flex-shrink-0">✓</span>
-                  )}
+                  {srv.verified && <span className="text-[9px] font-bold bg-green-50 text-green-700 px-1.5 py-0.5 rounded-full flex-shrink-0">✓</span>}
                 </div>
                 <p className="text-[11px] text-zinc-400 mt-0.5 line-clamp-1">{srv.description}</p>
               </div>
-              {on
-                ? <CheckSquare className="h-4 w-4 text-primary flex-shrink-0 mt-0.5" />
-                : <Square      className="h-4 w-4 text-zinc-300 flex-shrink-0 mt-0.5" />}
+              {on ? <CheckSquare className="h-4 w-4 text-primary flex-shrink-0 mt-0.5" /> : <Square className="h-4 w-4 text-zinc-300 flex-shrink-0 mt-0.5" />}
             </button>
           )
         })}
@@ -194,15 +381,10 @@ function MCPPicker({ selected, onChange }: { selected: string[]; onChange: (ids:
       {filtered.length > 12 && (
         <button type="button" onClick={() => setShowAll(v => !v)}
           className="w-full text-xs text-zinc-400 hover:text-primary transition-colors py-2 flex items-center justify-center gap-1.5">
-          {showAll
-            ? <><ChevronUp className="h-3 w-3" /> Show fewer</>
-            : <><ChevronDown className="h-3 w-3" /> Show {filtered.length - 12} more</>}
+          {showAll ? <><ChevronUp className="h-3 w-3" /> Show fewer</> : <><ChevronDown className="h-3 w-3" /> Show {filtered.length - 12} more</>}
         </button>
       )}
-
-      {filtered.length === 0 && (
-        <div className="text-center py-8 text-zinc-400 text-sm">No integrations match your search.</div>
-      )}
+      {filtered.length === 0 && <div className="text-center py-8 text-zinc-400 text-sm">No integrations match.</div>}
     </div>
   )
 }
@@ -238,11 +420,9 @@ function KnowledgeSection({ items, onChange }: { items: KnowledgeItem[]; onChang
       <div className="flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-xs text-blue-700">
         <Info className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
         <span>
-          <strong>RAG is enabled.</strong> Add text chunks or URLs — they are embedded and injected
-          into the agent's context at runtime via semantic search. Full file upload coming in v1.1.
+          <strong>RAG is enabled.</strong> Add text chunks or URLs — they are embedded and injected into the agent's context at runtime via semantic search.
         </span>
       </div>
-
       <div className="flex gap-2">
         <button type="button" onClick={() => setAdding("text")}
           className="flex items-center gap-2 px-3 py-2 rounded-xl border border-zinc-200 text-xs font-semibold text-zinc-700 hover:border-primary/30 hover:bg-primary/5 transition-all">
@@ -250,7 +430,6 @@ function KnowledgeSection({ items, onChange }: { items: KnowledgeItem[]; onChang
         </button>
         <button type="button" onClick={() => setAdding("url")}
           className="flex items-center gap-2 px-3 py-2 rounded-xl border border-zinc-200 text-xs font-semibold text-zinc-700 hover:border-primary/30 hover:bg-primary/5 transition-all">
-          {/* Use Link2 (chain icon) here — NOT the Next.js <Link> component */}
           <Link2 className="h-3.5 w-3.5" /> Add URL
         </button>
         <button type="button" disabled
@@ -258,18 +437,13 @@ function KnowledgeSection({ items, onChange }: { items: KnowledgeItem[]; onChang
           <Upload className="h-3.5 w-3.5" /> Upload file (soon)
         </button>
       </div>
-
       <AnimatePresence>
         {adding && (
           <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
             className="bg-zinc-50 border border-zinc-200 rounded-xl p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <p className="text-sm font-semibold text-zinc-900">
-                {adding === "url" ? "Add URL source" : "Add text chunk"}
-              </p>
-              <button type="button" onClick={() => setAdding(null)} className="text-zinc-400 hover:text-zinc-700">
-                <X className="h-4 w-4" />
-              </button>
+              <p className="text-sm font-semibold text-zinc-900">{adding === "url" ? "Add URL source" : "Add text chunk"}</p>
+              <button type="button" onClick={() => setAdding(null)} className="text-zinc-400 hover:text-zinc-700"><X className="h-4 w-4" /></button>
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs font-medium text-zinc-600">Label (optional)</Label>
@@ -278,13 +452,10 @@ function KnowledgeSection({ items, onChange }: { items: KnowledgeItem[]; onChang
                 className="h-9 rounded-xl border-zinc-200 text-sm" />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-zinc-600">
-                {adding === "url" ? "URL" : "Content"} *
-              </Label>
+              <Label className="text-xs font-medium text-zinc-600">{adding === "url" ? "URL" : "Content"} *</Label>
               {adding === "url"
                 ? <Input value={draft.content} onChange={e => setDraft(d => ({ ...d, content: e.target.value }))}
-                    placeholder="https://docs.example.com/page"
-                    className="h-9 rounded-xl border-zinc-200 text-sm" />
+                    placeholder="https://docs.example.com/page" className="h-9 rounded-xl border-zinc-200 text-sm" />
                 : <Textarea value={draft.content} onChange={e => setDraft(d => ({ ...d, content: e.target.value }))}
                     rows={5} placeholder="Paste your knowledge content here…"
                     className="rounded-xl border-zinc-200 text-sm resize-none font-mono text-xs" />}
@@ -300,25 +471,18 @@ function KnowledgeSection({ items, onChange }: { items: KnowledgeItem[]; onChang
           </motion.div>
         )}
       </AnimatePresence>
-
       {items.length > 0 ? (
         <div className="space-y-2">
           {items.map(item => (
-            <div key={item.id}
-              className="flex items-start gap-3 bg-white border border-zinc-100 rounded-xl p-3">
+            <div key={item.id} className="flex items-start gap-3 bg-white border border-zinc-100 rounded-xl p-3">
               <div className="w-7 h-7 rounded-lg bg-zinc-50 flex items-center justify-center flex-shrink-0 mt-0.5">
-                {item.type === "url"
-                  ? <Globe className="h-3.5 w-3.5 text-zinc-400" />
-                  : <BookOpen className="h-3.5 w-3.5 text-zinc-400" />}
+                {item.type === "url" ? <Globe className="h-3.5 w-3.5 text-zinc-400" /> : <BookOpen className="h-3.5 w-3.5 text-zinc-400" />}
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-zinc-900 truncate">{item.label}</p>
-                <p className="text-xs text-zinc-400 truncate mt-0.5">
-                  {item.content.slice(0, 80)}{item.content.length > 80 ? "…" : ""}
-                </p>
+                <p className="text-xs text-zinc-400 truncate mt-0.5">{item.content.slice(0, 80)}{item.content.length > 80 ? "…" : ""}</p>
               </div>
-              <button type="button" onClick={() => remove(item.id)}
-                className="text-zinc-400 hover:text-red-500 transition-colors p-1 flex-shrink-0">
+              <button type="button" onClick={() => remove(item.id)} className="text-zinc-400 hover:text-red-500 transition-colors p-1 flex-shrink-0">
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
             </div>
@@ -339,7 +503,7 @@ function KnowledgeSection({ items, onChange }: { items: KnowledgeItem[]; onChang
 // Main component
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function BuilderEditorClient({ agent, defaultTab = "basics" }: { agent: any; defaultTab?: string }) {
+export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent: any; defaultTab?: string }) {
   const router   = useRouter()
   const supabase = createClient()
 
@@ -349,6 +513,11 @@ export function BuilderEditorClient({ agent, defaultTab = "basics" }: { agent: a
     Array.isArray(agent.mcp_server_ids) ? agent.mcp_server_ids : []
   )
   const [knowledgeItems, setKnowledgeItems] = useState<KnowledgeItem[]>([])
+  const [guardrails, setGuardrails] = useState<GuardrailsConfig>(() => {
+    // Load existing guardrail config from agent.security_config if present
+    const saved = agent.security_config ?? agent.guardrails_config
+    return saved ? { ...DEFAULT_GUARDRAILS, ...saved } : DEFAULT_GUARDRAILS
+  })
   const [testInput,  setTestInput]  = useState('{"input": "Hello, what can you do?"}')
   const [testOutput, setTestOutput] = useState("")
   const [testing,    setTesting]    = useState(false)
@@ -408,6 +577,8 @@ export function BuilderEditorClient({ agent, defaultTab = "basics" }: { agent: a
         timeout_seconds:             data.timeout_seconds,
         documentation:               data.documentation ? sanitize(data.documentation) : null,
         mcp_server_ids:              mcpSelected,
+        // Guardrails stored as JSONB in security_config column
+        security_config:             guardrails,
         input_schema:                knowledgeItems.length > 0
           ? { knowledgeSources: knowledgeItems }
           : agent.input_schema || {},
@@ -441,34 +612,25 @@ export function BuilderEditorClient({ agent, defaultTab = "basics" }: { agent: a
 
   // ── Test runner ───────────────────────────────────────────────────────────
   const runTest = useCallback(async () => {
-    setTesting(true)
-    setTestOutput("")
-    setTestTrace(null)
+    setTesting(true); setTestOutput(""); setTestTrace(null)
     if (testInput.length > 32_768) { toast.error("Input too large — max 32 KB"); setTesting(false); return }
     try {
       let parsedInput: unknown
       try { parsedInput = JSON.parse(testInput) } catch { parsedInput = testInput }
-
       const res  = await fetch(`/api/agents/${agent.id}/execute`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body:   JSON.stringify({ input: parsedInput }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
-
       setTestOutput(typeof data.output === "string" ? data.output : JSON.stringify(data.output, null, 2))
       setTestTrace({ latencyMs: data.latencyMs ?? 0, tokens: data.tokens ?? { input: 0, output: 0 }, cost: data.cost ?? 0 })
       toast.success(`Done in ${data.latencyMs}ms`)
     } catch (e: any) {
-      toast.error(e.message)
-      setTestOutput(`Error: ${e.message}`)
-    } finally {
-      setTesting(false)
-    }
+      toast.error(e.message); setTestOutput(`Error: ${e.message}`)
+    } finally { setTesting(false) }
   }, [agent.id, testInput])
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // RENDER
   // ─────────────────────────────────────────────────────────────────────────
   return (
     <div className="flex min-h-screen bg-white">
@@ -497,7 +659,6 @@ export function BuilderEditorClient({ agent, defaultTab = "basics" }: { agent: a
                   <p className="text-xs text-zinc-400 mt-0.5 font-mono">ID: {agent.id}</p>
                 </div>
               </div>
-
               <div className="flex items-center gap-2">
                 {isDirty && (
                   <Button variant="outline" size="sm" className="gap-1.5 rounded-xl border-zinc-200"
@@ -514,8 +675,7 @@ export function BuilderEditorClient({ agent, defaultTab = "basics" }: { agent: a
                   </Link>
                 )}
                 {agent.status === "draft" && (
-                  <Button size="sm"
-                    className="gap-1.5 rounded-xl bg-zinc-900 text-white hover:bg-zinc-700"
+                  <Button size="sm" className="gap-1.5 rounded-xl bg-zinc-900 text-white hover:bg-zinc-700"
                     onClick={submitForReview} disabled={submitting}>
                     {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
                     {submitting ? "Submitting…" : "Submit for Review"}
@@ -527,17 +687,17 @@ export function BuilderEditorClient({ agent, defaultTab = "basics" }: { agent: a
             {/* Tabs */}
             <form onSubmit={handleSubmit(onSave)}>
               <Tabs defaultValue="overview">
-                <TabsList className="mb-6 bg-zinc-50 border border-zinc-100 p-1 rounded-xl">
-                  <TabsTrigger value="overview"
-                    className="rounded-lg text-sm gap-1.5 data-[state=active]:bg-white data-[state=active]:shadow-sm">
+                <TabsList className="mb-6 bg-zinc-50 border border-zinc-100 p-1 rounded-xl flex-wrap h-auto gap-1">
+                  <TabsTrigger value="overview"      className="rounded-lg text-sm gap-1.5 data-[state=active]:bg-white data-[state=active]:shadow-sm">
                     <LayoutDashboard className="h-3.5 w-3.5" /> Overview
                   </TabsTrigger>
-                  <TabsTrigger value="behavior"
-                    className="rounded-lg text-sm gap-1.5 data-[state=active]:bg-white data-[state=active]:shadow-sm">
+                  <TabsTrigger value="behavior"      className="rounded-lg text-sm gap-1.5 data-[state=active]:bg-white data-[state=active]:shadow-sm">
                     <Brain className="h-3.5 w-3.5" /> Behavior
                   </TabsTrigger>
-                  <TabsTrigger value="monetization"
-                    className="rounded-lg text-sm gap-1.5 data-[state=active]:bg-white data-[state=active]:shadow-sm">
+                  <TabsTrigger value="security"      className="rounded-lg text-sm gap-1.5 data-[state=active]:bg-white data-[state=active]:shadow-sm">
+                    <ShieldCheck className="h-3.5 w-3.5" /> Security
+                  </TabsTrigger>
+                  <TabsTrigger value="monetization"  className="rounded-lg text-sm gap-1.5 data-[state=active]:bg-white data-[state=active]:shadow-sm">
                     <DollarSign className="h-3.5 w-3.5" /> Monetization
                   </TabsTrigger>
                 </TabsList>
@@ -557,8 +717,7 @@ export function BuilderEditorClient({ agent, defaultTab = "basics" }: { agent: a
                     ))}
                   </div>
 
-                  <div className="bg-white border border-zinc-100 rounded-2xl p-5 space-y-4"
-                    style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+                  <div className="bg-white border border-zinc-100 rounded-2xl p-5 space-y-4" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
                     <SectionTitle icon={Bot} title="Agent Identity" subtitle="How your agent appears in the marketplace" />
                     <div className="space-y-1.5">
                       <Label className="text-sm font-medium text-zinc-700">Name *</Label>
@@ -566,17 +725,12 @@ export function BuilderEditorClient({ agent, defaultTab = "basics" }: { agent: a
                       {errors.name && <p className="text-xs text-red-500">{errors.name.message}</p>}
                     </div>
                     <div className="space-y-1.5">
-                      <Label className="text-sm font-medium text-zinc-700">
-                        Short Description * <span className="text-zinc-400 font-normal">(marketplace cards)</span>
-                      </Label>
-                      <Textarea {...register("description")} rows={2}
-                        className="rounded-xl border-zinc-200 text-sm resize-none" />
+                      <Label className="text-sm font-medium text-zinc-700">Short Description * <span className="text-zinc-400 font-normal">(marketplace cards)</span></Label>
+                      <Textarea {...register("description")} rows={2} className="rounded-xl border-zinc-200 text-sm resize-none" />
                       {errors.description && <p className="text-xs text-red-500">{errors.description.message}</p>}
                     </div>
                     <div className="space-y-1.5">
-                      <Label className="text-sm font-medium text-zinc-700">
-                        Long Description <span className="text-zinc-400 font-normal">(detail page — optional)</span>
-                      </Label>
+                      <Label className="text-sm font-medium text-zinc-700">Long Description <span className="text-zinc-400 font-normal">(detail page — optional)</span></Label>
                       <Textarea {...register("long_description")} rows={4}
                         placeholder="Describe features, use cases, example inputs/outputs…"
                         className="rounded-xl border-zinc-200 text-sm resize-none" />
@@ -606,13 +760,11 @@ export function BuilderEditorClient({ agent, defaultTab = "basics" }: { agent: a
                     </div>
                   </div>
 
-                  {/* Visibility */}
-                  <div className="bg-white border border-zinc-100 rounded-2xl p-5"
-                    style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+                  <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
                     <SectionTitle icon={Globe} title="Visibility" subtitle="Control who can discover and use this agent" />
                     <div className="flex gap-3">
                       {[
-                        { val: false, icon: Lock,  label: "Private", sub: "Only you can use this agent"     },
+                        { val: false, icon: Lock,  label: "Private", sub: "Only you can use this agent" },
                         { val: true,  icon: Globe, label: "Public",  sub: "Listed on the marketplace" },
                       ].map(opt => (
                         <button key={String(opt.val)} type="button" onClick={() => setValue("is_public", opt.val)}
@@ -628,23 +780,18 @@ export function BuilderEditorClient({ agent, defaultTab = "basics" }: { agent: a
                     </div>
                   </div>
 
-                  {/* Docs */}
-                  <div className="bg-white border border-zinc-100 rounded-2xl p-5"
-                    style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+                  <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
                     <SectionTitle icon={BookOpen} title="Documentation" subtitle="Plain text shown on your agent's detail page" />
                     <Textarea {...register("documentation")} rows={8}
                       className="rounded-xl border-zinc-200 font-mono text-xs resize-none"
                       placeholder={"Overview\n--------\nThis agent takes... and returns...\n\nInput format\n------------\n{ input: \"your text\" }"}
                     />
-                    {errors.documentation && <p className="text-xs text-red-500">{errors.documentation.message}</p>}
                   </div>
                 </TabsContent>
 
                 {/* ─── BEHAVIOR ──────────────────────────────────── */}
                 <TabsContent value="behavior" className="space-y-6">
-                  {/* System prompt */}
-                  <div className="bg-white border border-zinc-100 rounded-2xl p-5"
-                    style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+                  <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
                     <div className="flex items-center justify-between mb-4">
                       <SectionTitle icon={Brain} title="Instructions" subtitle="Defines your agent's persona, role, and behaviour" />
                       <span className={cn("text-xs font-mono",
@@ -660,9 +807,7 @@ export function BuilderEditorClient({ agent, defaultTab = "basics" }: { agent: a
 
                   <Divider />
 
-                  {/* Model */}
-                  <div className="bg-white border border-zinc-100 rounded-2xl p-5"
-                    style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+                  <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
                     <SectionTitle icon={Zap} title="Model & Parameters" subtitle="Choose the AI model and tune runtime settings" />
                     <div className="space-y-4">
                       <div className="space-y-1.5">
@@ -670,28 +815,23 @@ export function BuilderEditorClient({ agent, defaultTab = "basics" }: { agent: a
                         <Select defaultValue={agent.model_name} onValueChange={v => setValue("model_name", v)}>
                           <SelectTrigger className="rounded-xl border-zinc-200 h-10"><SelectValue /></SelectTrigger>
                           <SelectContent className="rounded-xl">
-                            {MODELS.map(m => (
-                              <SelectItem key={m.value} value={m.value} className="text-sm">{m.label}</SelectItem>
-                            ))}
+                            {MODELS.map(m => <SelectItem key={m.value} value={m.value} className="text-sm">{m.label}</SelectItem>)}
                           </SelectContent>
                         </Select>
                       </div>
                       <div className="grid grid-cols-3 gap-4">
                         <div className="space-y-1.5">
                           <Label className="text-sm font-medium text-zinc-700">Temperature</Label>
-                          <Input type="number" step="0.1" min="0" max="2"
-                            className="rounded-xl border-zinc-200 h-10" {...register("temperature")} />
+                          <Input type="number" step="0.1" min="0" max="2" className="rounded-xl border-zinc-200 h-10" {...register("temperature")} />
                           <p className="text-[11px] text-zinc-400">0 = precise · 2 = creative</p>
                         </div>
                         <div className="space-y-1.5">
                           <Label className="text-sm font-medium text-zinc-700">Max Tokens</Label>
-                          <Input type="number" min="100" max="32000"
-                            className="rounded-xl border-zinc-200 h-10" {...register("max_tokens")} />
+                          <Input type="number" min="100" max="32000" className="rounded-xl border-zinc-200 h-10" {...register("max_tokens")} />
                         </div>
                         <div className="space-y-1.5">
                           <Label className="text-sm font-medium text-zinc-700">Timeout (s)</Label>
-                          <Input type="number" min="5" max="300"
-                            className="rounded-xl border-zinc-200 h-10" {...register("timeout_seconds")} />
+                          <Input type="number" min="5" max="300" className="rounded-xl border-zinc-200 h-10" {...register("timeout_seconds")} />
                         </div>
                       </div>
                     </div>
@@ -699,37 +839,46 @@ export function BuilderEditorClient({ agent, defaultTab = "basics" }: { agent: a
 
                   <Divider />
 
-                  {/* Knowledge / RAG */}
-                  <div className="bg-white border border-zinc-100 rounded-2xl p-5"
-                    style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-                    <SectionTitle icon={Database}
-                      title="Knowledge Base (RAG)"
+                  <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+                    <SectionTitle icon={Database} title="Knowledge Base (RAG)"
                       subtitle="Ground your agent in custom facts — text chunks and URLs are embedded and retrieved at runtime" />
                     <KnowledgeSection items={knowledgeItems} onChange={setKnowledgeItems} />
                   </div>
 
                   <Divider />
 
-                  {/* MCP Tools */}
-                  <div className="bg-white border border-zinc-100 rounded-2xl p-5"
-                    style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-                    <SectionTitle icon={Puzzle}
-                      title="MCP Tools & Integrations"
-                      subtitle={`${mcpSelected.length} integration${mcpSelected.length !== 1 ? "s" : ""} connected — gives your agent real-world capabilities`} />
+                  <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+                    <SectionTitle icon={Puzzle} title="MCP Tools & Integrations"
+                      subtitle={`${mcpSelected.length} integration${mcpSelected.length !== 1 ? "s" : ""} connected`} />
                     <MCPPicker selected={mcpSelected} onChange={setMcpSelected} />
                   </div>
                 </TabsContent>
 
+                {/* ─── SECURITY / GUARDRAILS ─────────────────────────────── */}
+                <TabsContent value="security" className="space-y-6">
+                  <div className="flex items-start gap-3 bg-zinc-50 border border-zinc-100 rounded-2xl px-5 py-4">
+                    <ShieldCheck className="h-5 w-5 text-primary flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-semibold text-zinc-900 mb-0.5">Guardrails &amp; Security Policies</p>
+                      <p className="text-xs text-zinc-500 leading-relaxed">
+                        These settings are enforced server-side on every API call — callers cannot bypass them.
+                        Settings are saved with your agent config and applied at execution time.
+                        All violations are logged to the Admin → Security dashboard.
+                      </p>
+                    </div>
+                  </div>
+                  <GuardrailsSection config={guardrails} onChange={setGuardrails} />
+                </TabsContent>
+
                 {/* ─── MONETIZATION ──────────────────────────────── */}
                 <TabsContent value="monetization" className="space-y-6">
-                  <div className="bg-white border border-zinc-100 rounded-2xl p-5"
-                    style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+                  <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
                     <SectionTitle icon={DollarSign} title="Pricing Model" subtitle="Choose how users pay to use your agent" />
                     <div className="grid grid-cols-2 gap-3 mb-5">
                       {([
                         { key: "free",         label: "Free",         sub: "No cost — platform covers inference" },
                         { key: "per_call",     label: "Pay per Call", sub: "Charge per execution, you earn 80%" },
-                        { key: "subscription", label: "Subscription", sub: "Monthly recurring, you earn 80%"    },
+                        { key: "subscription", label: "Subscription", sub: "Monthly recurring, you earn 80%" },
                         { key: "freemium",     label: "Freemium",     sub: "Free tier + paid calls above quota" },
                       ] as const).map(p => (
                         <button key={p.key} type="button" onClick={() => setValue("pricing_model", p.key)}
@@ -740,19 +889,16 @@ export function BuilderEditorClient({ agent, defaultTab = "basics" }: { agent: a
                         </button>
                       ))}
                     </div>
-
                     {(pricingModel === "per_call" || pricingModel === "freemium") && (
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1.5">
                           <Label className="text-sm font-medium text-zinc-700">Price per Call (USD)</Label>
-                          <Input type="number" step="0.0001" min="0" placeholder="0.0100"
-                            className="rounded-xl border-zinc-200 h-10" {...register("price_per_call")} />
-                          <p className="text-xs text-zinc-400">You receive 80 % of this amount</p>
+                          <Input type="number" step="0.0001" min="0" placeholder="0.0100" className="rounded-xl border-zinc-200 h-10" {...register("price_per_call")} />
+                          <p className="text-xs text-zinc-400">You receive 80% of this amount</p>
                         </div>
                         <div className="space-y-1.5">
                           <Label className="text-sm font-medium text-zinc-700">Free calls/month</Label>
-                          <Input type="number" min="0" placeholder="10"
-                            className="rounded-xl border-zinc-200 h-10" {...register("free_calls_per_month")} />
+                          <Input type="number" min="0" placeholder="10" className="rounded-xl border-zinc-200 h-10" {...register("free_calls_per_month")} />
                         </div>
                       </div>
                     )}
@@ -760,19 +906,16 @@ export function BuilderEditorClient({ agent, defaultTab = "basics" }: { agent: a
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1.5">
                           <Label className="text-sm font-medium text-zinc-700">Monthly Price (USD)</Label>
-                          <Input type="number" step="0.01" min="0" placeholder="9.99"
-                            className="rounded-xl border-zinc-200 h-10" {...register("subscription_price_monthly")} />
-                          <p className="text-xs text-zinc-400">You receive 80 % of this amount</p>
+                          <Input type="number" step="0.01" min="0" placeholder="9.99" className="rounded-xl border-zinc-200 h-10" {...register("subscription_price_monthly")} />
+                          <p className="text-xs text-zinc-400">You receive 80% of this amount</p>
                         </div>
                         <div className="space-y-1.5">
                           <Label className="text-sm font-medium text-zinc-700">Free trial calls/month</Label>
-                          <Input type="number" min="0" placeholder="10"
-                            className="rounded-xl border-zinc-200 h-10" {...register("free_calls_per_month")} />
+                          <Input type="number" min="0" placeholder="10" className="rounded-xl border-zinc-200 h-10" {...register("free_calls_per_month")} />
                         </div>
                       </div>
                     )}
                   </div>
-
                   {pricingModel !== "free" && (
                     <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-5">
                       <p className="text-sm font-semibold text-zinc-900 mb-1">Revenue estimate</p>
@@ -800,9 +943,7 @@ export function BuilderEditorClient({ agent, defaultTab = "basics" }: { agent: a
                     <p className="text-sm text-zinc-500">You have unsaved changes</p>
                     <Button type="submit" size="sm" disabled={saving}
                       className="gap-1.5 rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold">
-                      {saving
-                        ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…</>
-                        : <><Check className="h-3.5 w-3.5" /> Save Changes</>}
+                      {saving ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…</> : <><Check className="h-3.5 w-3.5" /> Save Changes</>}
                     </Button>
                   </div>
                 </motion.div>
@@ -821,7 +962,6 @@ export function BuilderEditorClient({ agent, defaultTab = "basics" }: { agent: a
               <p className="text-sm font-semibold text-zinc-900">Test Playground</p>
             </div>
           </div>
-
           <div className="flex-1 overflow-auto p-4 space-y-3">
             {agent.status !== "active" && (
               <div className="bg-amber-50 border border-amber-100 rounded-xl px-3 py-2 text-xs text-amber-700 flex items-center gap-2">
@@ -829,30 +969,22 @@ export function BuilderEditorClient({ agent, defaultTab = "basics" }: { agent: a
                 Agent must be active to run. Save and submit for review first.
               </div>
             )}
-
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Input JSON</label>
               <Textarea value={testInput} onChange={e => setTestInput(e.target.value)}
                 rows={6} className="rounded-xl border-zinc-200 bg-white font-mono text-xs resize-none" />
             </div>
-
             <Button type="button" onClick={runTest} disabled={testing}
               className="w-full rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold gap-2">
-              {testing
-                ? <><Loader2 className="h-4 w-4 animate-spin" /> Running…</>
-                : <><Play className="h-4 w-4" /> Run</>}
+              {testing ? <><Loader2 className="h-4 w-4 animate-spin" /> Running…</> : <><Play className="h-4 w-4" /> Run</>}
             </Button>
-
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Output</label>
-              <div className={cn(
-                "min-h-[140px] max-h-[280px] overflow-auto rounded-xl border border-zinc-200 bg-white font-mono text-xs p-3 whitespace-pre-wrap text-zinc-600 leading-relaxed",
-                testing && "animate-pulse bg-zinc-50"
-              )}>
+              <div className={cn("min-h-[140px] max-h-[280px] overflow-auto rounded-xl border border-zinc-200 bg-white font-mono text-xs p-3 whitespace-pre-wrap text-zinc-600 leading-relaxed",
+                testing && "animate-pulse bg-zinc-50")}>
                 {testing ? "Running…" : testOutput || <span className="text-zinc-300">Output will appear here…</span>}
               </div>
             </div>
-
             {testTrace && (
               <div className="rounded-xl border border-zinc-100 bg-white px-3 py-2.5 space-y-1">
                 <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-2">Execution trace</p>
@@ -870,7 +1002,6 @@ export function BuilderEditorClient({ agent, defaultTab = "basics" }: { agent: a
               </div>
             )}
           </div>
-
           <div className="p-4 border-t border-zinc-100 space-y-2">
             <Link href="/docs#execute" target="_blank"
               className="flex items-center gap-2 text-xs text-zinc-400 hover:text-primary transition-colors">
