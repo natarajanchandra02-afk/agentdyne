@@ -53,6 +53,7 @@ export async function POST(
           .eq("key_hash", keyHash).single()
         if (keyRow?.is_active && !(keyRow.expires_at && new Date(keyRow.expires_at) < new Date())) {
           userId = keyRow.user_id
+          // Fire-and-forget last_used update — never block execution
           supabase.from("api_keys").update({ last_used_at: new Date().toISOString() })
             .eq("key_hash", keyHash).then(() => {})
         }
@@ -79,7 +80,7 @@ export async function POST(
       .eq("id", userId).single()
 
     if (profile?.is_banned)
-      return NextResponse.json({ error: "Your account has been suspended. Contact support@inteleion.com" }, { status: 403 })
+      return NextResponse.json({ error: "Your account has been suspended. Contact support@agentdyne.com" }, { status: 403 })
 
     const quota = profile?.monthly_execution_quota ?? 100
     const used  = profile?.executions_used_this_month ?? 0
@@ -104,11 +105,12 @@ export async function POST(
     const { filterResult, score, shouldLog } = runInjectionPipeline(userMessage, "user")
 
     if (!guardrailResult.allowed || !filterResult.allowed) {
+      // Fire-and-forget injection log — never let logging block response
       supabase.from("injection_attempts").insert({
         user_id: userId, agent_id: agentId,
-        input: userMessage.slice(0, 500),
+        input:   userMessage.slice(0, 500),
         pattern: !guardrailResult.allowed ? (guardrailResult.blocked_by ?? "content_policy") : (filterResult as any).pattern,
-        action: "blocked", score,
+        action:  "blocked", score,
       }).then(() => {})
       return NextResponse.json({ error: "Input rejected.", code: "GUARDRAIL_BLOCKED" }, { status: 400 })
     }
@@ -116,7 +118,7 @@ export async function POST(
     if (shouldLog || guardrailResult.flagged) {
       supabase.from("injection_attempts").insert({
         user_id: userId, agent_id: agentId,
-        input: userMessage.slice(0, 500),
+        input:   userMessage.slice(0, 500),
         pattern: `flagged_score_${score}`, action: "flagged", score,
       }).then(() => {})
     }
@@ -137,10 +139,10 @@ export async function POST(
       requestedTokens: agent.max_tokens as number,
       creditBalance,
       requestHeaders: {
-        userAgent:    req.headers.get("user-agent"),
-        accept:       req.headers.get("accept"),
-        origin:       req.headers.get("origin"),
-        referer:      req.headers.get("referer"),
+        userAgent:     req.headers.get("user-agent"),
+        accept:        req.headers.get("accept"),
+        origin:        req.headers.get("origin"),
+        referer:       req.headers.get("referer"),
         cfThreatScore: req.headers.get("cf-threat-score")
           ? Number(req.headers.get("cf-threat-score")) : null,
       },
@@ -180,12 +182,20 @@ export async function POST(
     }
 
     // ── Create execution record ───────────────────────────────────────────────
+    // BUG FIX: handle null execution gracefully — never use `?? ""` for UUID
     const inputJson: Record<string, unknown> =
       typeof input === "string" ? { text: input } : (input as Record<string, unknown> ?? {})
 
-    const { data: execution } = await supabase.from("executions")
+    const { data: execution, error: execInsertErr } = await supabase.from("executions")
       .insert({ agent_id: agentId, user_id: userId, status: "running", input: inputJson })
       .select("id").single()
+
+    if (execInsertErr || !execution?.id) {
+      // Log but continue — we can still execute; observability is degraded not broken
+      console.error("[execute] Failed to create execution record:", execInsertErr?.message)
+    }
+
+    const executionId = execution?.id ?? null
 
     // ── RAG ───────────────────────────────────────────────────────────────────
     let enrichedSystem = agent.system_prompt as string
@@ -205,8 +215,11 @@ export async function POST(
       compressToTokenBudget(enrichedSystem, resolvedInput, 14_000)
 
     const modelParams = {
-      model: resolvedModel, system: compressedSystem, userMessage: compressedUser,
-      maxTokens: tg.tokenBudget, temperature: (agent.temperature as number) || 0.7,
+      model:       resolvedModel,
+      system:      compressedSystem,
+      userMessage: compressedUser,
+      maxTokens:   tg.tokenBudget,
+      temperature: (agent.temperature as number) || 0.7,
     }
 
     const mcpServerIds: string[] = Array.isArray(agent.mcp_server_ids) ? agent.mcp_server_ids : []
@@ -215,46 +228,88 @@ export async function POST(
     // ── STREAMING PATH ────────────────────────────────────────────────────────
     if (wantsStream && !useMCPLoop) {
       const encoder = new TextEncoder()
-      const stream = new ReadableStream({
+      const stream  = new ReadableStream({
         async start(controller) {
           const send = (d: object) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(d)}\n\n`))
           let fullText = "", inputTok = 0, outputTok = 0
           try {
             const { inputTokens, outputTokens, costUsd } = await routeStream(modelParams,
               chunk => { send({ type: "delta", delta: chunk }); fullText += chunk })
-            inputTok = inputTokens; outputTok = outputTokens
+            inputTok  = inputTokens
+            outputTok = outputTokens
             const latencyMs = Date.now() - startMs
-            const { safe: safeText } = processOutput(fullText, (agent as any).output_schema)
-            const outputJson: Record<string, unknown> = { text: safeText }
-            send({ type: "done", executionId: execution?.id, latencyMs, cost: costUsd })
+
+            // BUG FIX: processOutput — capture full scrub result in streaming
+            const { safe: safeText, scrub, parsed: parsedOut } = processOutput(fullText, (agent as any).output_schema)
+            const outputJson: Record<string, unknown> = parsedOut?.isJSON
+              ? (typeof parsedOut.parsed === "object" && parsedOut.parsed !== null ? parsedOut.parsed as any : { result: parsedOut.parsed })
+              : { text: safeText }
+
+            send({ type: "done", executionId, latencyMs, cost: costUsd })
             controller.enqueue(encoder.encode("data: [DONE]\n\n"))
             controller.close()
-            await Promise.all([
-              supabase.from("executions").update({
-                status: "success", output: outputJson, tokens_input: inputTok, tokens_output: outputTok,
-                latency_ms: latencyMs, cost: costUsd, cost_usd: costUsd, completed_at: new Date().toISOString(),
-              }).eq("id", execution?.id ?? ""),
-              supabase.rpc("increment_executions_used", { user_id_param: userId }),
-            ])
+
+            // BUG FIX: use executionId (not execution?.id) — null-safe
+            if (executionId) {
+              // Critical writes — await these
+              await Promise.all([
+                supabase.from("executions").update({
+                  status:       "success",
+                  output:       outputJson,
+                  tokens_input: inputTok,
+                  tokens_output: outputTok,
+                  latency_ms:   latencyMs,
+                  cost:         costUsd,
+                  cost_usd:     costUsd,
+                  completed_at: new Date().toISOString(),
+                }).eq("id", executionId),
+                supabase.rpc("increment_executions_used", { user_id_param: userId }),
+              ])
+
+              // BUG FIX: execution_traces is fire-and-forget — never block streaming response
+              supabase.from("execution_traces").insert({
+                execution_id:   executionId,
+                agent_id:       agentId,
+                user_id:        userId,
+                model:          resolvedModel,
+                system_prompt:  enrichedSystem,
+                user_message:   userMessage,
+                assistant_reply: safeText,
+                total_ms:       latencyMs,
+                tokens_input:   inputTok,
+                tokens_output:  outputTok,
+                cost_usd:       costUsd,
+                status:         scrub?.flagged ? "flagged" : "success",
+                error_message:  scrub?.flagged ? scrub?.redacted?.join(",") : null,
+                temperature:    modelParams.temperature,
+              }).then(() => {}).catch(() => {})  // never throw — table may not exist yet
+            }
+
             if (creditsRequired > 0) {
               supabase.rpc("deduct_credits", {
-                user_id_param: userId, amount_param: creditsRequired,
-                description_param: `Agent: ${agent.name}`, reference_id_param: execution?.id ?? null,
+                user_id_param:      userId,
+                amount_param:       creditsRequired,
+                description_param:  `Agent: ${agent.name}`,
+                reference_id_param: executionId,
               }).then(() => {})
             }
           } catch (err: any) {
             send({ type: "error", error: "Execution failed" })
             controller.close()
-            if (execution?.id) {
+            if (executionId) {
               await supabase.from("executions").update({
                 status: "failed", error_message: err.message, completed_at: new Date().toISOString(),
-              }).eq("id", execution.id)
+              }).eq("id", executionId)
             }
           }
         },
       })
       return new Response(stream, {
-        headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive" },
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection":   "keep-alive",
+        },
       })
     }
 
@@ -263,14 +318,24 @@ export async function POST(
 
     if (useMCPLoop) {
       const r = await runAnthropicToolLoop({
-        model: resolvedModel, system: enrichedSystem, userMessage: resolvedInput,
-        maxTokens: modelParams.maxTokens, temperature: modelParams.temperature, mcpServerIds,
+        model:       resolvedModel,
+        system:      enrichedSystem,
+        userMessage: resolvedInput,
+        maxTokens:   modelParams.maxTokens,
+        temperature: modelParams.temperature,
+        mcpServerIds,
       })
-      rawText = r.text; inputTok = r.inputTokens; outputTok = r.outputTokens
-      costUsd = r.costUsd; toolCalls = r.toolCallCount
+      rawText   = r.text
+      inputTok  = r.inputTokens
+      outputTok = r.outputTokens
+      costUsd   = r.costUsd
+      toolCalls = r.toolCallCount
     } else {
       const r = await routeCompletion(modelParams)
-      rawText = r.text; inputTok = r.inputTokens; outputTok = r.outputTokens; costUsd = r.costUsd
+      rawText   = r.text
+      inputTok  = r.inputTokens
+      outputTok = r.outputTokens
+      costUsd   = r.costUsd
     }
 
     const latencyMs = Date.now() - startMs
@@ -280,41 +345,66 @@ export async function POST(
       : { text: safeText }
     const output = parsedOut.isJSON ? parsedOut.parsed : safeText
 
-    await Promise.all([
-      supabase.from("executions").update({
-        status: "success", output: outputStorable, tokens_input: inputTok, tokens_output: outputTok,
-        latency_ms: latencyMs, cost: costUsd, cost_usd: costUsd, completed_at: new Date().toISOString(),
-      }).eq("id", execution?.id ?? ""),
-      supabase.rpc("increment_executions_used", { user_id_param: userId }),
+    // BUG FIX: Critical writes are awaited; execution_traces is fire-and-forget
+    if (executionId) {
+      // Critical: mark execution complete + increment quota
+      await Promise.all([
+        supabase.from("executions").update({
+          status:        "success",
+          output:        outputStorable,
+          tokens_input:  inputTok,
+          tokens_output: outputTok,
+          latency_ms:    latencyMs,
+          cost:          costUsd,
+          cost_usd:      costUsd,
+          completed_at:  new Date().toISOString(),
+        }).eq("id", executionId),
+        supabase.rpc("increment_executions_used", { user_id_param: userId }),
+      ])
+
+      // Non-critical: execution trace for deep observability — fire-and-forget
+      // This table may not exist yet — wrapped in try/catch to never surface errors
       supabase.from("execution_traces").insert({
-        execution_id: execution?.id, agent_id: agentId, user_id: userId,
-        model: resolvedModel, system_prompt: enrichedSystem,
-        user_message: userMessage, assistant_reply: safeText,
-        total_ms: latencyMs, tokens_input: inputTok, tokens_output: outputTok,
-        cost_usd: costUsd, status: scrub.flagged ? "flagged" : "success",
-        error_message: scrub.flagged ? scrub.redacted?.join(",") : null,
-        temperature: modelParams.temperature,
-      }),
-    ])
+        execution_id:   executionId,
+        agent_id:       agentId,
+        user_id:        userId,
+        model:          resolvedModel,
+        system_prompt:  enrichedSystem,   // full prompt including RAG context
+        user_message:   userMessage,       // original user input before compression
+        assistant_reply: safeText,
+        total_ms:       latencyMs,
+        tokens_input:   inputTok,
+        tokens_output:  outputTok,
+        cost_usd:       costUsd,
+        status:         scrub.flagged ? "flagged" : "success",
+        error_message:  scrub.flagged ? scrub.redacted?.join(",") : null,
+        temperature:    modelParams.temperature,
+      }).then(() => {}).catch(() => {})  // intentionally swallow — observability, not correctness
+    } else {
+      // No execution record — at minimum increment quota
+      supabase.rpc("increment_executions_used", { user_id_param: userId }).then(() => {})
+    }
 
     if (creditsRequired > 0) {
       await supabase.rpc("deduct_credits", {
-        user_id_param: userId, amount_param: creditsRequired,
-        description_param: `Agent: ${agent.name}`, reference_id_param: execution?.id ?? null,
+        user_id_param:      userId,
+        amount_param:       creditsRequired,
+        description_param:  `Agent: ${agent.name}`,
+        reference_id_param: executionId,
       })
     }
 
     return NextResponse.json({
-      executionId:  execution?.id,
+      executionId,
       output,
       latencyMs,
-      tokens:       { input: inputTok, output: outputTok },
-      cost:         costUsd,
-      model:        resolvedModel,
+      tokens:      { input: inputTok, output: outputTok },
+      cost:        costUsd,
+      model:       resolvedModel,
       modelChanged: resolvedModel !== agent.model_name,
-      toolCalls:    toolCalls > 0 ? toolCalls : undefined,
-      ragUsed:      ragUsed     ? true       : undefined,
-      flagged:      scrub.flagged ? true     : undefined,
+      toolCalls:   toolCalls > 0 ? toolCalls : undefined,
+      ragUsed:     ragUsed        ? true       : undefined,
+      flagged:     scrub.flagged  ? true       : undefined,
     })
 
   } catch (err: any) {

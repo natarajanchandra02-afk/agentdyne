@@ -8,7 +8,7 @@ import {
   Plus, Layers, Play, Globe, Lock, Clock,
   MoreHorizontal, Trash2, Copy, AlertCircle, Loader2,
   ChevronRight, ArrowRight, Zap, Bot, Sparkles, X,
-  GitBranch, Cpu, CheckCircle2, AlertTriangle,
+  GitBranch, Cpu, CheckCircle2,
 } from "lucide-react"
 import { Button }   from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -44,6 +44,81 @@ interface ComposerResult {
   error?:      string
 }
 
+// ─── Pipeline templates ────────────────────────────────────────────────────────
+// Templates pre-fill the AI Composer with a proven goal + pattern.
+// They deliberately do NOT hardcode agent IDs — the Composer picks the best
+// available agents from the marketplace dynamically at compose-time.
+
+interface Template {
+  id:          string
+  name:        string
+  description: string
+  goal:        string
+  pattern:     PatternType
+  emoji:       string
+  category:    string
+  tags:        string[]
+  sampleInputHint: string
+}
+
+const TEMPLATES: Template[] = [
+  {
+    id:          "support-automation",
+    name:        "Customer Support Automation",
+    description: "Classify support tickets by urgency, draft personalised replies, and flag critical issues for human review.",
+    goal:        "Read a customer support ticket, classify it as low/medium/high urgency, draft a helpful reply based on the urgency level, and flag critical issues. Output the classification, reply draft, and whether it needs human escalation.",
+    pattern:     "branch",
+    emoji:       "🎧",
+    category:    "Customer Support",
+    tags:        ["support", "classification", "reply-draft"],
+    sampleInputHint: "Customer support ticket text",
+  },
+  {
+    id:          "lead-enrichment",
+    name:        "Lead Enrichment Pipeline",
+    description: "Take a lead's name and company, research them, score qualification, and output a CRM-ready summary.",
+    goal:        "Given a lead's name and company: (1) research their company size, industry, and recent news, (2) extract key facts, (3) score lead qualification from 1-10 with reasoning, (4) write a personalised outreach message. Output structured JSON with all fields.",
+    pattern:     "linear",
+    emoji:       "🎯",
+    category:    "Sales",
+    tags:        ["lead-scoring", "research", "outreach"],
+    sampleInputHint: '{"name": "Sarah Chen", "company": "Acme Corp", "role": "CTO"}',
+  },
+  {
+    id:          "content-pipeline",
+    name:        "Content Generation Pipeline",
+    description: "Turn a topic into a polished blog post with SEO keywords, a social media summary, and a LinkedIn caption — all in parallel.",
+    goal:        "Given a topic and target audience: run in parallel — (A) write a 600-word SEO-optimised blog post, (B) extract 5 target keywords, (C) write a 280-char Twitter/X summary. Combine all three outputs into a final content package.",
+    pattern:     "parallel",
+    emoji:       "✍️",
+    category:    "Marketing",
+    tags:        ["content", "seo", "social-media"],
+    sampleInputHint: '{"topic": "Benefits of AI agents for small businesses", "audience": "SME founders"}',
+  },
+  {
+    id:          "data-extraction",
+    name:        "Document Data Extraction",
+    description: "Extract structured data from unstructured text, validate it, and output clean JSON ready for your database.",
+    goal:        "Given raw text (invoice, contract, email, or form): (1) extract all key fields as structured JSON, (2) validate required fields are present and formatted correctly, (3) flag any missing or suspicious values. Output validated JSON + a list of any validation warnings.",
+    pattern:     "linear",
+    emoji:       "📄",
+    category:    "Data Analysis",
+    tags:        ["extraction", "validation", "structured-data"],
+    sampleInputHint: "Paste invoice text, contract clause, or any unstructured document",
+  },
+  {
+    id:          "research-summary",
+    name:        "Research & Summarise",
+    description: "Run multiple research queries in parallel, synthesise findings into a structured report, and highlight key insights.",
+    goal:        "Given a research question: run in parallel — (A) find key facts and statistics, (B) identify main arguments for and against, (C) find 3-5 real-world examples. Then synthesise all findings into a structured research report with an executive summary, key insights, and recommended next steps.",
+    pattern:     "parallel",
+    emoji:       "🔬",
+    category:    "Research",
+    tags:        ["research", "synthesis", "report"],
+    sampleInputHint: "What are the main risks and opportunities of implementing AI in healthcare?",
+  },
+]
+
 // ─── Pattern badge ────────────────────────────────────────────────────────────
 
 function PatternBadge({ pattern }: { pattern?: PatternType }) {
@@ -65,35 +140,79 @@ function PatternBadge({ pattern }: { pattern?: PatternType }) {
 
 function StatusPill({ status }: { status?: Pipeline["status"] }) {
   const map = {
-    idle:    { label: "Idle",    color: "bg-zinc-100 text-zinc-500"   },
-    running: { label: "Running", color: "bg-blue-50  text-blue-600"   },
-    success: { label: "Success", color: "bg-green-50 text-green-600"  },
-    failed:  { label: "Failed",  color: "bg-red-50   text-red-600"    },
+    idle:    { label: "Idle",    color: "bg-zinc-100 text-zinc-500"  },
+    running: { label: "Running", color: "bg-blue-50  text-blue-600"  },
+    success: { label: "Success", color: "bg-green-50 text-green-600" },
+    failed:  { label: "Failed",  color: "bg-red-50   text-red-600"   },
   }
   const { label, color } = map[status ?? "idle"]
   return <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded-full", color)}>{label}</span>
 }
 
-// ─── AI Composer Modal ────────────────────────────────────────────────────────
+// ─── Template card ────────────────────────────────────────────────────────────
 
-function ComposerModal({ open, onClose, onCreated }: {
-  open:      boolean
-  onClose:   () => void
-  onCreated: (p: Pipeline) => void
+function TemplateCard({ template, onUse }: { template: Template; onUse: (t: Template) => void }) {
+  return (
+    <div className="bg-white border border-zinc-100 rounded-2xl p-4 hover:border-zinc-200 hover:shadow-sm transition-all group"
+      style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+      <div className="flex items-start gap-3 mb-3">
+        <div className="w-10 h-10 rounded-xl bg-zinc-50 flex items-center justify-center text-xl flex-shrink-0 border border-zinc-100">
+          {template.emoji}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap mb-0.5">
+            <h3 className="font-semibold text-zinc-900 text-sm">{template.name}</h3>
+            <PatternBadge pattern={template.pattern} />
+          </div>
+          <p className="text-[11px] text-zinc-400">{template.category}</p>
+        </div>
+      </div>
+      <p className="text-xs text-zinc-500 leading-relaxed mb-3 line-clamp-2">{template.description}</p>
+      <div className="flex items-center justify-between">
+        <div className="flex flex-wrap gap-1">
+          {template.tags.map(tag => (
+            <span key={tag} className="text-[10px] bg-zinc-50 border border-zinc-100 text-zinc-500 px-1.5 py-0.5 rounded-full">
+              {tag}
+            </span>
+          ))}
+        </div>
+        <Button size="sm" onClick={() => onUse(template)}
+          className="rounded-xl h-7 px-3 text-xs bg-zinc-900 text-white hover:bg-zinc-700 font-semibold gap-1 flex-shrink-0 ml-2 opacity-0 group-hover:opacity-100 transition-all">
+          <Sparkles className="h-3 w-3" /> Use
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+// ─── AI Composer Modal ─────────────────────────────────────────────────────────
+
+function ComposerModal({ open, onClose, onCreated, prefillGoal, prefillPattern }: {
+  open:           boolean
+  onClose:        () => void
+  onCreated:      (p: Pipeline) => void
+  prefillGoal?:   string
+  prefillPattern?: PatternType
 }) {
   const router = useRouter()
-  const [goal,       setGoal]       = useState("")
-  const [budget,     setBudget]     = useState("")
-  const [pattern,    setPattern]    = useState<PatternType | "">("")
-  const [loading,    setLoading]    = useState(false)
-  const [result,     setResult]     = useState<ComposerResult | null>(null)
-  const [saveLoading,setSaveLoading]= useState(false)
+  const [goal,        setGoal]        = useState(prefillGoal ?? "")
+  const [budget,      setBudget]      = useState("")
+  const [pattern,     setPattern]     = useState<PatternType | "">(prefillPattern ?? "")
+  const [loading,     setLoading]     = useState(false)
+  const [result,      setResult]      = useState<ComposerResult | null>(null)
+  const [saveLoading, setSaveLoading] = useState(false)
+
+  // Sync prefill when template changes
+  useEffect(() => {
+    if (prefillGoal)    setGoal(prefillGoal)
+    if (prefillPattern) setPattern(prefillPattern)
+  }, [prefillGoal, prefillPattern])
 
   const PATTERNS: Array<{ value: PatternType; label: string; desc: string; icon: React.ReactNode }> = [
-    { value: "linear",   label: "Linear",   desc: "A → B → C sequential chain",             icon: <ArrowRight className="h-4 w-4" /> },
-    { value: "parallel", label: "Parallel", desc: "A → (B ∥ C ∥ D) → E concurrent fan-out", icon: <Zap className="h-4 w-4" /> },
-    { value: "branch",   label: "Branch",   desc: "A → [condition] → B | C conditional",    icon: <GitBranch className="h-4 w-4" /> },
-    { value: "subagent", label: "Subagent", desc: "Main agent delegates to sub-agents",      icon: <Cpu className="h-4 w-4" /> },
+    { value: "linear",   label: "Linear",   desc: "A → B → C sequential",             icon: <ArrowRight className="h-4 w-4" /> },
+    { value: "parallel", label: "Parallel", desc: "A → (B ∥ C) → D concurrent",       icon: <Zap className="h-4 w-4" /> },
+    { value: "branch",   label: "Branch",   desc: "A → [condition] → B | C",           icon: <GitBranch className="h-4 w-4" /> },
+    { value: "subagent", label: "Subagent", desc: "Main agent delegates to sub-agents", icon: <Cpu className="h-4 w-4" /> },
   ]
 
   const compose = async () => {
@@ -101,21 +220,15 @@ function ComposerModal({ open, onClose, onCreated }: {
     setLoading(true); setResult(null)
     try {
       const res  = await fetch("/api/composer", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({
-          goal:             goal.trim(),
-          maxBudgetUsd:     budget ? parseFloat(budget) : undefined,
-          preferredPattern: pattern || undefined,
-        }),
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body:   JSON.stringify({ goal: goal.trim(), maxBudgetUsd: budget ? parseFloat(budget) : undefined, preferredPattern: pattern || undefined }),
       })
       const data: ComposerResult = await res.json()
       setResult(data)
+      if (!data.ok) toast.error(data.error ?? "Composer failed")
     } catch (err: any) {
       toast.error(err.message ?? "Composer failed")
-    } finally {
-      setLoading(false)
-    }
+    } finally { setLoading(false) }
   }
 
   const savePipeline = async () => {
@@ -123,9 +236,8 @@ function ComposerModal({ open, onClose, onCreated }: {
     setSaveLoading(true)
     try {
       const res  = await fetch("/api/pipelines", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body:   JSON.stringify({
           name:        result.dag.description.slice(0, 80),
           description: `AI-composed from: "${goal.slice(0, 200)}"`,
           dag:         { nodes: result.dag.nodes, edges: result.dag.edges },
@@ -141,9 +253,7 @@ function ComposerModal({ open, onClose, onCreated }: {
       router.push(`/pipelines/${data.id}`)
     } catch (err: any) {
       toast.error(err.message)
-    } finally {
-      setSaveLoading(false)
-    }
+    } finally { setSaveLoading(false) }
   }
 
   if (!open) return null
@@ -169,10 +279,8 @@ function ComposerModal({ open, onClose, onCreated }: {
           </button>
         </div>
 
-        {/* Body */}
         <div className="overflow-y-auto flex-1 px-6 py-5 space-y-5">
-
-          {/* Goal input */}
+          {/* Goal */}
           <div className="space-y-2">
             <label className="text-xs font-semibold text-zinc-600 uppercase tracking-wider">
               Your Goal <span className="text-red-400">*</span>
@@ -182,7 +290,7 @@ function ComposerModal({ open, onClose, onCreated }: {
               onChange={e => setGoal(e.target.value)}
               rows={3}
               maxLength={1000}
-              placeholder={`E.g. "Research top 5 competitors in AI space and write a comparison report"\n"Fetch support tickets, classify them by urgency, then draft reply emails"\n"Translate product descriptions to French and Spanish in parallel"`}
+              placeholder={`E.g. "Research top 5 competitors in AI space and write a comparison report"\n"Classify support tickets by urgency then draft personalized replies"\n"Translate product descriptions to French and Spanish in parallel"`}
               className="rounded-xl border-zinc-200 text-sm resize-none"
             />
           </div>
@@ -212,9 +320,7 @@ function ComposerModal({ open, onClose, onCreated }: {
                     <p className="text-xs font-semibold text-zinc-900">{p.label}</p>
                     <p className="text-[11px] text-zinc-400 mt-0.5">{p.desc}</p>
                   </div>
-                  {pattern === p.value && (
-                    <CheckCircle2 className="h-4 w-4 text-primary flex-shrink-0 ml-auto mt-0.5" />
-                  )}
+                  {pattern === p.value && <CheckCircle2 className="h-4 w-4 text-primary flex-shrink-0 ml-auto mt-0.5" />}
                 </button>
               ))}
             </div>
@@ -227,12 +333,9 @@ function ComposerModal({ open, onClose, onCreated }: {
             </label>
             <div className="relative max-w-[160px]">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm">$</span>
-              <input
-                type="number" min="0" step="0.01" value={budget}
-                onChange={e => setBudget(e.target.value)}
+              <input type="number" min="0" step="0.01" value={budget} onChange={e => setBudget(e.target.value)}
                 placeholder="0.10"
-                className="w-full h-9 pl-7 pr-3 rounded-xl border border-zinc-200 text-sm focus:outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-100 transition-all"
-              />
+                className="w-full h-9 pl-7 pr-3 rounded-xl border border-zinc-200 text-sm focus:outline-none focus:border-zinc-400 transition-all" />
             </div>
           </div>
 
@@ -248,14 +351,9 @@ function ComposerModal({ open, onClose, onCreated }: {
                     <CheckCircle2 className="h-4 w-4 text-green-600 flex-shrink-0" />
                     <p className="text-sm font-semibold text-zinc-900">Workflow designed!</p>
                     <PatternBadge pattern={result.dag.pattern} />
-                    <span className="text-xs text-zinc-400 ml-auto">
-                      {Math.round(result.confidence * 100)}% confidence
-                    </span>
+                    <span className="text-xs text-zinc-400 ml-auto">{Math.round(result.confidence * 100)}% confidence</span>
                   </div>
-
                   <p className="text-xs text-zinc-600 leading-relaxed">{result.reasoning}</p>
-
-                  {/* Node flow preview */}
                   <div className="bg-white border border-zinc-100 rounded-xl p-3">
                     <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-2">
                       Workflow ({result.dag.nodes.length} steps)
@@ -268,27 +366,23 @@ function ComposerModal({ open, onClose, onCreated }: {
                             {n.condition && <GitBranch className="h-3 w-3 text-amber-500" />}
                             <span className="text-xs font-medium text-zinc-700">{n.label}</span>
                           </div>
-                          {i < result.dag!.nodes.length - 1 && (
-                            <ArrowRight className="h-3 w-3 text-zinc-300 flex-shrink-0" />
-                          )}
+                          {i < result.dag!.nodes.length - 1 && <ArrowRight className="h-3 w-3 text-zinc-300 flex-shrink-0" />}
                         </div>
                       ))}
                     </div>
                     {result.dag.estimatedCost > 0 && (
-                      <p className="text-[11px] text-zinc-400 mt-2">
-                        Estimated cost: ${result.dag.estimatedCost.toFixed(4)} / run
-                      </p>
+                      <p className="text-[11px] text-zinc-400 mt-2">Estimated: ${result.dag.estimatedCost.toFixed(4)}/run</p>
                     )}
                   </div>
                 </>
               ) : (
                 <div className="flex items-start gap-2">
-                  <AlertTriangle className="h-4 w-4 text-red-500 flex-shrink-0 mt-0.5" />
+                  <AlertCircle className="h-4 w-4 text-red-500 flex-shrink-0 mt-0.5" />
                   <div>
                     <p className="text-sm font-semibold text-red-700">Composition failed</p>
                     <p className="text-xs text-red-600 mt-0.5">{result.error}</p>
                     <p className="text-xs text-zinc-400 mt-2">
-                      Try: be more specific, add agents in the Marketplace first, or choose a different pattern.
+                      Try: be more specific, add agents to the Marketplace first, or choose a different pattern.
                     </p>
                   </div>
                 </div>
@@ -300,14 +394,12 @@ function ComposerModal({ open, onClose, onCreated }: {
         {/* Footer */}
         <div className="px-6 py-4 border-t border-zinc-100 bg-zinc-50/50 flex items-center gap-3">
           <Button variant="outline" onClick={onClose} disabled={loading || saveLoading}
-            className="rounded-xl border-zinc-200 flex-1">
-            Cancel
-          </Button>
+            className="rounded-xl border-zinc-200 flex-1">Cancel</Button>
           {result?.ok ? (
             <Button onClick={savePipeline} disabled={saveLoading}
               className="flex-1 rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold gap-2">
               {saveLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-              {saveLoading ? "Creating…" : "Save & Edit Pipeline →"}
+              {saveLoading ? "Creating…" : "Save & Edit →"}
             </Button>
           ) : (
             <Button onClick={compose} disabled={loading || !goal.trim()}
@@ -319,9 +411,7 @@ function ComposerModal({ open, onClose, onCreated }: {
           )}
           {result?.ok && (
             <Button variant="outline" onClick={() => setResult(null)} disabled={saveLoading}
-              className="rounded-xl border-zinc-200 px-3">
-              ↺ Retry
-            </Button>
+              className="rounded-xl border-zinc-200 px-3">↺ Retry</Button>
           )}
         </div>
       </div>
@@ -357,7 +447,7 @@ function NewPipelineModal({ open, onClose, onCreated, prefilledAgentId, prefille
         : []
       const res  = await fetch("/api/pipelines", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), description: desc.trim() || null, is_public: isPublic, dag: { nodes: initialNodes, edges: [] } }),
+        body:   JSON.stringify({ name: name.trim(), description: desc.trim() || null, is_public: isPublic, dag: { nodes: initialNodes, edges: [] } }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? "Failed to create pipeline")
@@ -400,10 +490,11 @@ function NewPipelineModal({ open, onClose, onCreated, prefilledAgentId, prefille
             <label className="text-xs font-semibold text-zinc-600 uppercase tracking-wider block mb-1.5">Description</label>
             <textarea rows={2} maxLength={500} value={desc} onChange={e => setDesc(e.target.value)}
               placeholder="What does this pipeline do?"
-              className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm resize-none focus:outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-100 transition-all" />
+              className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm resize-none focus:outline-none focus:border-zinc-400 transition-all" />
           </div>
           <label className="flex items-center gap-3 cursor-pointer select-none">
-            <div onClick={() => setIsPublic(v => !v)} className={cn("w-9 h-5 rounded-full transition-colors relative flex-shrink-0", isPublic ? "bg-primary" : "bg-zinc-200")}>
+            <div onClick={() => setIsPublic(v => !v)}
+              className={cn("w-9 h-5 rounded-full transition-colors relative flex-shrink-0", isPublic ? "bg-primary" : "bg-zinc-200")}>
               <span className={cn("absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform", isPublic ? "translate-x-4" : "translate-x-0.5")} />
             </div>
             <span className="text-sm font-medium text-zinc-900">Public pipeline</span>
@@ -448,7 +539,7 @@ function PipelineCard({ pipeline, onDelete }: { pipeline: Pipeline; onDelete: (i
     try {
       const res = await fetch("/api/pipelines", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: `${pipeline.name} (copy)`, description: pipeline.description, is_public: false, dag: pipeline.dag }),
+        body:   JSON.stringify({ name: `${pipeline.name} (copy)`, description: pipeline.description, is_public: false, dag: pipeline.dag }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? "Clone failed")
@@ -520,7 +611,7 @@ function PipelineCard({ pipeline, onDelete }: { pipeline: Pipeline; onDelete: (i
   )
 }
 
-// ─── Inner page ───────────────────────────────────────────────────────────────
+// ─── Inner page ────────────────────────────────────────────────────────────────
 
 function PipelinesPageInner() {
   const router       = useRouter()
@@ -531,12 +622,14 @@ function PipelinesPageInner() {
     ? decodeURIComponent(searchParams.get("agent_name")!)
     : undefined
 
-  const [pipelines,     setPipelines]     = useState<Pipeline[]>([])
-  const [loading,       setLoading]       = useState(true)
-  const [error,         setError]         = useState("")
-  const [showNew,       setShowNew]       = useState(false)
-  const [showComposer,  setShowComposer]  = useState(false)
-  const [tab,           setTab]           = useState<"mine" | "public">("mine")
+  const [pipelines,       setPipelines]       = useState<Pipeline[]>([])
+  const [loading,         setLoading]         = useState(true)
+  const [error,           setError]           = useState("")
+  const [showNew,         setShowNew]         = useState(false)
+  const [showComposer,    setShowComposer]    = useState(false)
+  const [composerGoal,    setComposerGoal]    = useState("")
+  const [composerPattern, setComposerPattern] = useState<PatternType | "">("")
+  const [tab,             setTab]             = useState<"mine" | "public" | "templates">("mine")
 
   useEffect(() => { if (addAgentId) setShowNew(true) }, [addAgentId])
 
@@ -553,10 +646,18 @@ function PipelinesPageInner() {
     finally { setLoading(false) }
   }, [])
 
-  useEffect(() => { load(tab) }, [tab, load])
+  useEffect(() => {
+    if (tab !== "templates") load(tab as "mine" | "public")
+  }, [tab, load])
 
   const handleCreated = (p: Pipeline) => setPipelines(prev => [p, ...prev])
   const handleDelete  = (id: string)  => setPipelines(prev => prev.filter(p => p.id !== id))
+
+  const openComposerWithTemplate = (template: Template) => {
+    setComposerGoal(template.goal)
+    setComposerPattern(template.pattern)
+    setShowComposer(true)
+  }
 
   return (
     <>
@@ -569,8 +670,10 @@ function PipelinesPageInner() {
       />
       <ComposerModal
         open={showComposer}
-        onClose={() => setShowComposer(false)}
+        onClose={() => { setShowComposer(false); setComposerGoal(""); setComposerPattern("") }}
         onCreated={handleCreated}
+        prefillGoal={composerGoal}
+        prefillPattern={composerPattern as PatternType | undefined}
       />
 
       <div className="space-y-6">
@@ -584,100 +687,118 @@ function PipelinesPageInner() {
             </p>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
-            {/* AI Composer — primary CTA */}
             <Button
-              onClick={() => setShowComposer(true)}
-              className="rounded-xl bg-gradient-to-r from-primary to-primary/80 text-white font-semibold gap-2 shadow-md shadow-primary/20 hover:shadow-lg hover:shadow-primary/30 transition-all">
+              onClick={() => { setComposerGoal(""); setComposerPattern(""); setShowComposer(true) }}
+              className="rounded-xl bg-gradient-to-r from-primary to-primary/80 text-white font-semibold gap-2 shadow-md shadow-primary/20">
               <Sparkles className="h-4 w-4" /> AI Composer
             </Button>
-            {/* Manual create */}
-            <Button variant="outline" onClick={() => setShowNew(true)}
-              className="rounded-xl border-zinc-200 gap-1.5">
+            <Button variant="outline" onClick={() => setShowNew(true)} className="rounded-xl border-zinc-200 gap-1.5">
               <Plus className="h-4 w-4" /> Manual
-            </Button>
-          </div>
-        </div>
-
-        {/* AI Composer callout banner */}
-        <div className="bg-gradient-to-r from-primary/[0.06] to-primary/[0.02] border border-primary/20 rounded-2xl px-5 py-4">
-          <div className="flex items-start gap-4">
-            <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
-              <Sparkles className="h-4.5 w-4.5 text-primary" />
-            </div>
-            <div className="flex-1">
-              <p className="text-sm font-semibold text-zinc-900 mb-1">New: AI Workflow Composer</p>
-              <p className="text-xs text-zinc-500 leading-relaxed">
-                Describe your goal in plain English — AI selects agents from the marketplace and builds the optimal workflow
-                using <strong>linear</strong>, <strong>parallel</strong>, <strong>branch</strong>, or <strong>subagent</strong> patterns automatically.
-              </p>
-              <div className="flex items-center gap-3 mt-3 flex-wrap">
-                {[
-                  { icon: <ArrowRight className="h-3 w-3" />, label: "Linear A→B→C" },
-                  { icon: <Zap className="h-3 w-3" />,          label: "Parallel (B∥C)" },
-                  { icon: <GitBranch className="h-3 w-3" />,    label: "Branch [if/else]" },
-                  { icon: <Cpu className="h-3 w-3" />,          label: "Subagent delegation" },
-                ].map(item => (
-                  <span key={item.label} className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-600 bg-white border border-zinc-100 px-2.5 py-1 rounded-full">
-                    {item.icon} {item.label}
-                  </span>
-                ))}
-              </div>
-            </div>
-            <Button size="sm" onClick={() => setShowComposer(true)}
-              className="rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold gap-1.5 flex-shrink-0">
-              <Sparkles className="h-3.5 w-3.5" /> Try it
             </Button>
           </div>
         </div>
 
         {/* Tab filter */}
         <div className="flex items-center gap-1 bg-zinc-50 border border-zinc-100 rounded-xl p-1 w-fit">
-          {(["mine", "public"] as const).map(t => (
+          {([
+            ["mine",      "My Pipelines"],
+            ["public",    "Public"],
+            ["templates", "Templates ✦"],
+          ] as const).map(([t, label]) => (
             <button key={t} onClick={() => setTab(t)}
               className={cn("px-4 py-1.5 rounded-lg text-sm font-medium transition-all",
                 tab === t ? "bg-white shadow-sm text-zinc-900" : "text-zinc-500 hover:text-zinc-900")}>
-              {t === "mine" ? "My Pipelines" : "Public"}
+              {label}
             </button>
           ))}
         </div>
 
-        {error && (
-          <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
-            <AlertCircle className="h-4 w-4 flex-shrink-0" /> {error}
+        {/* ── TEMPLATES TAB ─────────────────────────────────────────────────── */}
+        {tab === "templates" && (
+          <div className="space-y-5">
+            <div className="bg-gradient-to-r from-primary/[0.06] to-primary/[0.02] border border-primary/20 rounded-2xl px-5 py-4">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                  <Sparkles className="h-4 w-4 text-primary" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-zinc-900 mb-0.5">Pre-built workflow templates</p>
+                  <p className="text-xs text-zinc-500 leading-relaxed">
+                    Click <strong>Use</strong> on any template to open the AI Composer with a pre-filled goal.
+                    The AI selects the best available agents from the marketplace automatically — no agent IDs to copy, no configuration needed.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {TEMPLATES.map(template => (
+                <TemplateCard
+                  key={template.id}
+                  template={template}
+                  onUse={openComposerWithTemplate}
+                />
+              ))}
+            </div>
+            <div className="text-center py-6 border-2 border-dashed border-zinc-100 rounded-2xl">
+              <p className="text-sm font-semibold text-zinc-700 mb-1">Have a workflow in mind?</p>
+              <p className="text-xs text-zinc-400 mb-4">Describe your goal in plain English and let AI build it for you.</p>
+              <Button
+                onClick={() => { setComposerGoal(""); setComposerPattern(""); setShowComposer(true) }}
+                className="rounded-xl bg-gradient-to-r from-primary to-primary/80 text-white font-semibold gap-2">
+                <Sparkles className="h-4 w-4" /> Open AI Composer
+              </Button>
+            </div>
           </div>
         )}
 
-        {loading ? (
-          <div className="space-y-3">
-            {[...Array(3)].map((_, i) => <div key={i} className="h-24 bg-zinc-50 border border-zinc-100 rounded-2xl animate-pulse" />)}
-          </div>
-        ) : pipelines.length === 0 ? (
-          <div className="text-center py-20 border-2 border-dashed border-zinc-100 rounded-2xl">
-            <div className="w-14 h-14 rounded-2xl bg-primary/8 flex items-center justify-center mx-auto mb-4">
-              <Layers className="h-7 w-7 text-primary" />
-            </div>
-            <h3 className="font-semibold text-zinc-900 mb-1">
-              {tab === "mine" ? "No pipelines yet" : "No public pipelines"}
-            </h3>
-            <p className="text-sm text-zinc-400 mb-5 max-w-xs mx-auto">
-              {tab === "mine" ? "Use AI Composer to build your first workflow in seconds." : "No public pipelines shared yet."}
-            </p>
-            {tab === "mine" && (
-              <div className="flex items-center gap-2 justify-center">
-                <Button onClick={() => setShowComposer(true)}
-                  className="rounded-xl bg-gradient-to-r from-primary to-primary/80 text-white font-semibold gap-2">
-                  <Sparkles className="h-4 w-4" /> AI Composer
-                </Button>
-                <Button variant="outline" onClick={() => setShowNew(true)} className="rounded-xl border-zinc-200 gap-1.5">
-                  <Plus className="h-4 w-4" /> Manual
-                </Button>
+        {/* ── MINE / PUBLIC TABS ────────────────────────────────────────────── */}
+        {tab !== "templates" && (
+          <>
+            {error && (
+              <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
+                <AlertCircle className="h-4 w-4 flex-shrink-0" /> {error}
               </div>
             )}
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {pipelines.map(p => <PipelineCard key={p.id} pipeline={p} onDelete={handleDelete} />)}
-          </div>
+
+            {loading ? (
+              <div className="space-y-3">
+                {[...Array(3)].map((_, i) => <div key={i} className="h-24 bg-zinc-50 border border-zinc-100 rounded-2xl animate-pulse" />)}
+              </div>
+            ) : pipelines.length === 0 ? (
+              <div className="text-center py-20 border-2 border-dashed border-zinc-100 rounded-2xl">
+                <div className="w-14 h-14 rounded-2xl bg-primary/8 flex items-center justify-center mx-auto mb-4">
+                  <Layers className="h-7 w-7 text-primary" />
+                </div>
+                <h3 className="font-semibold text-zinc-900 mb-1">
+                  {tab === "mine" ? "No pipelines yet" : "No public pipelines"}
+                </h3>
+                <p className="text-sm text-zinc-400 mb-5 max-w-xs mx-auto">
+                  {tab === "mine"
+                    ? "Start from a template or describe your goal to the AI Composer."
+                    : "No public pipelines shared yet."}
+                </p>
+                {tab === "mine" && (
+                  <div className="flex items-center gap-2 justify-center flex-wrap">
+                    <Button
+                      onClick={() => { setComposerGoal(""); setComposerPattern(""); setShowComposer(true) }}
+                      className="rounded-xl bg-gradient-to-r from-primary to-primary/80 text-white font-semibold gap-2">
+                      <Sparkles className="h-4 w-4" /> AI Composer
+                    </Button>
+                    <Button variant="outline" onClick={() => setTab("templates")} className="rounded-xl border-zinc-200 gap-1.5">
+                      Browse Templates
+                    </Button>
+                    <Button variant="outline" onClick={() => setShowNew(true)} className="rounded-xl border-zinc-200 gap-1.5">
+                      <Plus className="h-4 w-4" /> Manual
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {pipelines.map(p => <PipelineCard key={p.id} pipeline={p} onDelete={handleDelete} />)}
+              </div>
+            )}
+          </>
         )}
       </div>
     </>
@@ -688,11 +809,18 @@ function PipelinesSkeleton() {
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
-        <div className="space-y-2"><div className="h-7 w-32 bg-zinc-100 rounded-xl animate-pulse" /><div className="h-4 w-64 bg-zinc-50 rounded-full animate-pulse" /></div>
-        <div className="flex gap-2"><div className="h-9 w-36 bg-zinc-100 rounded-xl animate-pulse" /><div className="h-9 w-24 bg-zinc-50 rounded-xl animate-pulse" /></div>
+        <div className="space-y-2">
+          <div className="h-7 w-32 bg-zinc-100 rounded-xl animate-pulse" />
+          <div className="h-4 w-64 bg-zinc-50 rounded-full animate-pulse" />
+        </div>
+        <div className="flex gap-2">
+          <div className="h-9 w-36 bg-zinc-100 rounded-xl animate-pulse" />
+          <div className="h-9 w-24 bg-zinc-50 rounded-xl animate-pulse" />
+        </div>
       </div>
-      <div className="h-24 bg-primary/[0.04] border border-primary/20 rounded-2xl animate-pulse" />
-      <div className="space-y-3">{[...Array(3)].map((_, i) => <div key={i} className="h-24 bg-zinc-50 border border-zinc-100 rounded-2xl animate-pulse" />)}</div>
+      <div className="space-y-3">
+        {[...Array(3)].map((_, i) => <div key={i} className="h-24 bg-zinc-50 border border-zinc-100 rounded-2xl animate-pulse" />)}
+      </div>
     </div>
   )
 }

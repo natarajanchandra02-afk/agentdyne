@@ -100,6 +100,12 @@ function AgentCard({ agent, view }: { agent: any; view: "grid" | "list" }) {
                 {agent.average_rating?.toFixed(1)}
               </span>
             )}
+            {/* Used in X pipelines flywheel signal */}
+            {(agent.pipeline_count || 0) > 0 && (
+              <span className="hidden md:flex items-center gap-1 text-[11px] text-primary font-semibold bg-primary/8 border border-primary/20 px-2 py-0.5 rounded-full">
+                🔥 {formatNumber(agent.pipeline_count)} pipeline{agent.pipeline_count > 1 ? 's' : ''}
+              </span>
+            )}
             <span className={cn(
               "text-[10px] font-semibold px-2.5 py-1 rounded-full border",
               getPricingColor(agent.pricing_model)
@@ -158,6 +164,12 @@ function AgentCard({ agent, view }: { agent: any; view: "grid" | "list" }) {
               <span className="flex items-center gap-1 nums">
                 <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
                 {agent.average_rating?.toFixed(1)}
+              </span>
+            )}
+            {/* Flywheel: used in X pipelines */}
+            {(agent.pipeline_count || 0) > 0 && (
+              <span className="flex items-center gap-1 text-primary font-semibold nums">
+                🔥 {formatNumber(agent.pipeline_count)}
               </span>
             )}
           </div>
@@ -259,7 +271,7 @@ export function MarketplaceLoader() {
       let query = supabase
         .from("agents")
         .select(
-          "id, name, description, category, pricing_model, price_per_call, subscription_price_monthly, free_calls_per_month, total_executions, average_rating, total_reviews, is_verified, is_featured, icon_url, profiles!seller_id(full_name, username, avatar_url, is_verified)",
+          "id, name, description, category, pricing_model, price_per_call, subscription_price_monthly, free_calls_per_month, total_executions, average_rating, total_reviews, is_verified, is_featured, icon_url, profiles!seller_id(full_name, username, avatar_url, is_verified), agent_pipeline_stats(pipeline_count, total_pipeline_uses)",
           { count: "exact" }
         )
         .eq("status", "active")
@@ -277,7 +289,12 @@ export function MarketplaceLoader() {
 
       const { data, count } = await query
       if (!cancelled) {
-        setAgents(data || [])
+        // Flatten agent_pipeline_stats join into pipeline_count for easy access in card
+        const enriched = (data || []).map((a: any) => ({
+          ...a,
+          pipeline_count: (a.agent_pipeline_stats as any)?.pipeline_count ?? 0,
+        }))
+        setAgents(enriched)
         setTotal(count || 0)
         setLoading(false)
       }
