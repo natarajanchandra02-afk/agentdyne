@@ -35,17 +35,17 @@ const MONEY_NAV = [
 const ADMIN_NAV  = [{ href: "/admin",    icon: ShieldCheck, label: "Admin Panel" }]
 const BOTTOM_NAV = [
   { href: "/settings", icon: Settings,   label: "Settings" },
-  { href: "/docs",     icon: HelpCircle, label: "Docs" },
+  { href: "/docs",     icon: HelpCircle, label: "Docs", newTab: true },
 ]
 
 function NavItem({
-  href, icon: Icon, label, badge, pathname,
+  href, icon: Icon, label, badge, pathname, newTab,
 }: {
-  href: string; icon: any; label: string; badge?: string; pathname: string
+  href: string; icon: any; label: string; badge?: string; pathname: string; newTab?: boolean
 }) {
   const active = pathname === href || pathname.startsWith(href + "/")
   return (
-    <Link href={href}>
+    <Link href={href} target={newTab ? "_blank" : undefined} rel={newTab ? "noopener noreferrer" : undefined}>
       <div className={cn(
         "flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all duration-150 group",
         active
@@ -164,14 +164,23 @@ export function DashboardSidebar() {
                 </p>
                 <p className="text-[11px] text-zinc-400 truncate">{user.email}</p>
               </div>
-              <button
-                onClick={e => { e.stopPropagation(); signOut() }}
-                disabled={signingOut}
-                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-lg hover:bg-red-50"
-                aria-label="Sign out" title="Sign out"
-              >
-                <LogOut className="h-3.5 w-3.5 text-zinc-400 hover:text-red-500 transition-colors" />
-              </button>
+              <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                  onClick={e => { e.stopPropagation(); router.push("/settings") }}
+                  className="p-1 rounded-lg hover:bg-zinc-100 text-zinc-400 hover:text-zinc-700 transition-colors"
+                  title="Settings"
+                >
+                  <Settings className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={e => { e.stopPropagation(); signOut() }}
+                  disabled={signingOut}
+                  className="p-1 rounded-lg hover:bg-red-50"
+                  aria-label="Sign out" title="Sign out"
+                >
+                  <LogOut className="h-3.5 w-3.5 text-zinc-400 hover:text-red-500 transition-colors" />
+                </button>
+              </div>
             </div>
           </div>
         ) : null}

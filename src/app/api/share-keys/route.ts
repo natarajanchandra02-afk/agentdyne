@@ -1,51 +1,23 @@
 export const runtime = "edge"
 
 /**
- * /api/share-keys
+ * POST /api/share-keys
  *
- * GET  — list all share keys owned by the user
- * POST — create a new share key for a pipeline
+ * Creates a pipeline share key — a unique token that lets anyone
+ * execute a specific pipeline via /api/run/[key] without needing an account.
+ *
+ * Rate: 10 keys per user per day (prevent abuse / key farming).
+ * All executions via share key are billed to the pipeline owner.
  */
 
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { apiRateLimit } from "@/lib/rate-limit"
+import { strictRateLimit } from "@/lib/rate-limit"
 
-// ── GET /api/share-keys ───────────────────────────────────────────────────────
-
-export async function GET(req: NextRequest) {
-  const limited = await apiRateLimit(req)
-  if (limited) return limited
-
-  try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: "Authentication required" }, { status: 401 })
-
-    const { searchParams } = new URL(req.url)
-    const pipelineId = searchParams.get("pipeline_id")
-
-    let query = supabase
-      .from("pipeline_share_keys")
-      .select("*, pipelines(name)")
-      .eq("owner_id", user.id)
-      .order("created_at", { ascending: false })
-
-    if (pipelineId) query = query.eq("pipeline_id", pipelineId)
-
-    const { data, error } = await query
-    if (error) throw error
-
-    return NextResponse.json({ share_keys: data ?? [] })
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
-  }
-}
-
-// ── POST /api/share-keys ──────────────────────────────────────────────────────
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export async function POST(req: NextRequest) {
-  const limited = await apiRateLimit(req)
+  const limited = await strictRateLimit(req)
   if (limited) return limited
 
   try {
@@ -53,76 +25,105 @@ export async function POST(req: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: "Authentication required" }, { status: 401 })
 
-    let body: Record<string, unknown>
-    try { body = await req.json() } catch {
-      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 })
+    let body: {
+      pipeline_id:   string
+      share_key?:    string
+      name?:         string
+      description?:  string
+      allow_execute?: boolean
+      daily_limit?:  number
     }
+    try { body = await req.json() }
+    catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }) }
 
-    const { pipeline_id, share_key, name, description, allow_execute, daily_limit } = body as any
+    const { pipeline_id, share_key, name, description, allow_execute = true, daily_limit = 100 } = body
 
-    if (!pipeline_id || !/^[0-9a-f-]{36}$/i.test(pipeline_id))
-      return NextResponse.json({ error: "Valid pipeline_id required" }, { status: 400 })
+    // Validate pipeline_id
+    if (!pipeline_id || !UUID_RE.test(pipeline_id))
+      return NextResponse.json({ error: "Invalid pipeline_id" }, { status: 400 })
 
-    if (!share_key || typeof share_key !== "string" || share_key.length < 6 || share_key.length > 64)
-      return NextResponse.json({ error: "share_key must be 6–64 characters" }, { status: 400 })
-
-    // Verify the user owns this pipeline
+    // Verify pipeline ownership
     const { data: pipeline } = await supabase
-      .from("pipelines").select("id, name").eq("id", pipeline_id).eq("owner_id", user.id).single()
+      .from("pipelines")
+      .select("id, owner_id, name")
+      .eq("id", pipeline_id)
+      .single()
 
-    if (!pipeline)
-      return NextResponse.json({ error: "Pipeline not found or you do not own it" }, { status: 404 })
+    if (!pipeline) return NextResponse.json({ error: "Pipeline not found" }, { status: 404 })
+    if (pipeline.owner_id !== user.id)
+      return NextResponse.json({ error: "You don't own this pipeline" }, { status: 403 })
 
-    // Check share key is not taken
-    const { data: existing } = await supabase
-      .from("pipeline_share_keys").select("id").eq("share_key", share_key).maybeSingle()
+    // Check user hasn't created too many keys today
+    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    const { count: keyCount } = await supabase
+      .from("pipeline_share_keys")
+      .select("id", { count: "exact", head: true })
+      .eq("owner_id", user.id)
+      .gte("created_at", dayAgo)
 
-    if (existing)
-      return NextResponse.json({ error: "This share key is already taken. Try a different one." }, { status: 409 })
+    if ((keyCount ?? 0) >= 10)
+      return NextResponse.json({ error: "Rate limit: max 10 share keys per day" }, { status: 429 })
+
+    // Generate or use provided share key
+    const finalKey = share_key && /^[a-zA-Z0-9_-]{6,32}$/.test(share_key)
+      ? share_key
+      : (() => {
+          const buf = new Uint8Array(8)
+          crypto.getRandomValues(buf)
+          return Array.from(buf).map(b => b.toString(36)).join("").slice(0, 12)
+        })()
 
     const { data: created, error } = await supabase
       .from("pipeline_share_keys")
       .insert({
         pipeline_id,
-        owner_id:      user.id,
-        share_key,
-        name:          name          ?? `${pipeline.name} API`,
-        description:   description   ?? null,
-        allow_execute: allow_execute ?? true,
-        daily_limit:   daily_limit   ?? 100,
-        is_active:     true,
+        owner_id:    user.id,
+        share_key:   finalKey,
+        name:        name ?? `${pipeline.name} (shared)`,
+        description: description ?? null,
+        allow_execute,
+        daily_limit: Math.min(Math.max(1, daily_limit), 10_000),
+        is_active:   true,
       })
       .select()
       .single()
 
-    if (error) throw error
+    if (error) {
+      // Handle duplicate key (rare but possible)
+      if (error.code === "23505")
+        return NextResponse.json({ error: "Share key already exists — try again" }, { status: 409 })
+      throw error
+    }
 
-    return NextResponse.json(created, { status: 201 })
+    return NextResponse.json({
+      id:          created.id,
+      share_key:   created.share_key,
+      pipeline_id: created.pipeline_id,
+      endpoint:    `${req.nextUrl.origin}/api/run/${created.share_key}`,
+      daily_limit: created.daily_limit,
+    }, { status: 201 })
+
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    console.error("POST /api/share-keys:", err)
+    return NextResponse.json({ error: "Failed to create share key" }, { status: 500 })
   }
 }
 
-// ── DELETE /api/share-keys?id=xxx ─────────────────────────────────────────────
-
-export async function DELETE(req: NextRequest) {
+export async function GET(req: NextRequest) {
   try {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: "Authentication required" }, { status: 401 })
 
-    const id = new URL(req.url).searchParams.get("id")
-    if (!id) return NextResponse.json({ error: "id required" }, { status: 400 })
-
-    const { error } = await supabase
+    const { data: keys, error } = await supabase
       .from("pipeline_share_keys")
-      .delete()
-      .eq("id", id)
+      .select("id, pipeline_id, share_key, name, description, is_active, allow_execute, daily_limit, total_uses, executions_today, created_at")
       .eq("owner_id", user.id)
+      .order("created_at", { ascending: false })
 
     if (error) throw error
 
-    return NextResponse.json({ ok: true })
+    return NextResponse.json({ data: keys ?? [] })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
   }

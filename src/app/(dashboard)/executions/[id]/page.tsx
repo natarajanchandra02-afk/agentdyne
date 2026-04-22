@@ -1,278 +1,324 @@
 "use client"
-export const dynamic = 'force-dynamic'
 
 import { useEffect, useState, useRef } from "react"
 import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import {
-  ArrowLeft, CheckCircle, XCircle, Clock, Zap, Bot,
-  Brain, Shield, Database, Copy, ExternalLink,
-  AlertCircle, Loader2, RotateCcw
+  ArrowLeft, CheckCircle, XCircle, Clock, Loader2,
+  Bot, DollarSign, Zap, Eye, EyeOff, Code2,
+  AlertCircle, ExternalLink, RefreshCw, Terminal,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { createClient } from "@/lib/supabase/client"
-import { formatRelativeTime, cn } from "@/lib/utils"
-import { DashboardSidebar } from "@/components/dashboard/sidebar"
-import toast from "react-hot-toast"
+import { useUser } from "@/hooks/use-user"
+import { formatNumber, formatDate, cn } from "@/lib/utils"
+
+// ─── Status config ────────────────────────────────────────────────────────────
 
 const STATUS_CONFIG = {
-  success: { icon: CheckCircle, color: "text-green-500", bg: "bg-green-50", label: "Success" },
+  success: { icon: CheckCircle, color: "text-green-600", bg: "bg-green-50", label: "Success" },
   failed:  { icon: XCircle,     color: "text-red-500",   bg: "bg-red-50",   label: "Failed"  },
-  timeout: { icon: AlertCircle, color: "text-orange-500",bg: "bg-orange-50",label: "Timeout" },
+  timeout: { icon: XCircle,     color: "text-orange-500",bg: "bg-orange-50",label: "Timeout" },
   running: { icon: Loader2,     color: "text-blue-500",  bg: "bg-blue-50",  label: "Running" },
   queued:  { icon: Clock,       color: "text-zinc-400",  bg: "bg-zinc-50",  label: "Queued"  },
 } as const
 
-function CodeBlock({ code, label }: { code: string; label?: string }) {
-  const copy = () => { navigator.clipboard.writeText(code); toast.success("Copied!") }
+// ─── JSON display ─────────────────────────────────────────────────────────────
+
+function JsonDisplay({ data, maxHeight = 300 }: { data: unknown; maxHeight?: number }) {
+  const [showFull, setShowFull] = useState(false)
+  const text = typeof data === "string" ? data : JSON.stringify(data, null, 2)
+
   return (
     <div className="relative">
-      {label && <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wide mb-1.5">{label}</p>}
-      <div className="relative bg-zinc-950 rounded-xl border border-zinc-800 overflow-hidden">
-        <button onClick={copy} className="absolute top-2.5 right-2.5 text-zinc-500 hover:text-zinc-300 transition-colors z-10">
-          <Copy className="h-3.5 w-3.5" />
+      <pre
+        className="bg-zinc-950 text-zinc-200 rounded-xl px-4 py-3 text-[11px] font-mono overflow-auto leading-relaxed whitespace-pre-wrap"
+        style={{ maxHeight: showFull ? "none" : maxHeight }}>
+        {text}
+      </pre>
+      {text.length > 500 && (
+        <button
+          onClick={() => setShowFull(v => !v)}
+          className="mt-1.5 text-[11px] text-primary font-semibold hover:underline">
+          {showFull ? "Show less ↑" : "Show full output ↓"}
         </button>
-        <pre className="p-4 text-xs font-mono text-zinc-200 overflow-x-auto leading-relaxed max-h-72 overflow-y-auto">
-          <code>{code}</code>
-        </pre>
-      </div>
+      )}
     </div>
   )
 }
 
-export default function ExecutionDetailPage() {
-  const { id }   = useParams<{ id: string }>()
-  const router   = useRouter()
-  const [data,   setData]   = useState<any>(null)
-  const [trace,  setTrace]  = useState<any>(null)
-  const [loading, setLoading] = useState(true)
-  const [error,  setError]  = useState("")
+// ─── Section wrapper ──────────────────────────────────────────────────────────
 
-  const supabaseRef = useRef(createClient())
-  const supabase    = supabaseRef.current
+function Section({ title, icon: Icon, children }: { title: string; icon: any; children: React.ReactNode }) {
+  return (
+    <div className="bg-white border border-zinc-100 rounded-2xl overflow-hidden"
+      style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+      <div className="px-5 py-3.5 border-b border-zinc-50 flex items-center gap-2">
+        <Icon className="h-4 w-4 text-zinc-400" />
+        <p className="text-sm font-semibold text-zinc-900">{title}</p>
+      </div>
+      <div className="p-5">{children}</div>
+    </div>
+  )
+}
+
+// ─── Main page ────────────────────────────────────────────────────────────────
+
+export default function ExecutionDetailPage() {
+  const { id }  = useParams<{ id: string }>()
+  const router  = useRouter()
+  const { user, loading: authLoading } = useUser()
+
+  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null)
+  if (!supabaseRef.current) supabaseRef.current = createClient()
+  const supabase = supabaseRef.current
+
+  const [execution, setExecution] = useState<any>(null)
+  const [trace,     setTrace]     = useState<any>(null)
+  const [loading,   setLoading]   = useState(true)
+  const [error,     setError]     = useState("")
 
   useEffect(() => {
+    if (authLoading) return
+    if (!user) { router.push("/login"); return }
     if (!id) return
+
     let cancelled = false
 
-    async function load() {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { router.push("/login"); return }
-
-      const [
-        { data: execution, error: execErr },
-        { data: traceRow },
-      ] = await Promise.all([
-        supabase.from("executions")
-          .select("*, agents(id, name, category, model_name, icon_url)")
-          .eq("id", id).eq("user_id", user.id).single(),
-        supabase.from("execution_traces")
-          .select("*").eq("execution_id", id).maybeSingle(),
-      ])
-
+    Promise.all([
+      // Main execution record
+      supabase.from("executions")
+        .select("*, agents(id, name, category, model_name, icon_url)")
+        .eq("id", id)
+        .eq("user_id", user.id)
+        .single(),
+      // Execution trace (system prompt, user message, LLM reply)
+      supabase.from("execution_traces")
+        .select("*")
+        .eq("execution_id", id)
+        .single(),
+    ]).then(([{ data: exec, error: execErr }, { data: traceData }]) => {
       if (cancelled) return
-      if (execErr || !execution) { setError("Execution not found or access denied"); setLoading(false); return }
-      setData(execution)
-      setTrace(traceRow)
+      if (execErr || !exec) { setError("Execution not found or access denied"); setLoading(false); return }
+      setExecution(exec)
+      setTrace(traceData)  // May be null if trace not stored
       setLoading(false)
-    }
-    load()
+    }).catch(err => {
+      if (!cancelled) { setError(err.message); setLoading(false) }
+    })
+
     return () => { cancelled = true }
-  }, [id])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, user?.id, authLoading])
 
-  if (loading) return (
-    <div className="flex min-h-screen bg-white">
-      <DashboardSidebar />
-      <div className="flex-1 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-7 w-7 animate-spin text-primary" />
-          <p className="text-sm text-zinc-400">Loading execution trace…</p>
-        </div>
-      </div>
+  if (authLoading || loading) return (
+    <div className="space-y-4">
+      <div className="h-10 w-48 bg-zinc-100 rounded-xl animate-pulse" />
+      <div className="h-32 bg-zinc-50 rounded-2xl animate-pulse" />
+      <div className="h-64 bg-zinc-50 rounded-2xl animate-pulse" />
+      <div className="h-48 bg-zinc-50 rounded-2xl animate-pulse" />
     </div>
   )
 
-  if (error || !data) return (
-    <div className="flex min-h-screen bg-white">
-      <DashboardSidebar />
-      <div className="flex-1 flex items-center justify-center p-8">
-        <div className="text-center">
-          <AlertCircle className="h-8 w-8 text-red-400 mx-auto mb-3" />
-          <p className="text-zinc-700 font-semibold mb-1">{error || "Execution not found"}</p>
-          <Link href="/executions"><Button variant="outline" className="rounded-xl mt-3">← Back</Button></Link>
-        </div>
-      </div>
+  if (error || !execution) return (
+    <div className="flex flex-col items-center justify-center min-h-[50vh] text-center">
+      <AlertCircle className="h-10 w-10 text-red-400 mb-3" />
+      <h2 className="font-bold text-zinc-900 text-lg mb-1">Execution not found</h2>
+      <p className="text-zinc-400 text-sm mb-5">{error || "This execution doesn't exist or you don't have access."}</p>
+      <Link href="/executions">
+        <Button variant="outline" className="rounded-xl border-zinc-200">← Back to history</Button>
+      </Link>
     </div>
   )
 
-  const status   = (data.status ?? "queued") as keyof typeof STATUS_CONFIG
-  const cfg      = STATUS_CONFIG[status] ?? STATUS_CONFIG.queued
-  const Icon     = cfg.icon
-  const cost     = data.cost_usd ?? data.cost ?? 0
-  const inputStr = typeof data.input === "string" ? data.input : JSON.stringify(data.input, null, 2)
-  const outStr   = typeof data.output === "string" ? data.output : JSON.stringify(data.output, null, 2)
-
-  const METRICS = [
-    { label: "Status",       value: <span className={cn("font-bold", cfg.color)}>{cfg.label}</span> },
-    { label: "Latency",      value: data.latency_ms ? `${data.latency_ms.toLocaleString()}ms` : "—" },
-    { label: "Tokens In",    value: data.tokens_input?.toLocaleString() ?? "—" },
-    { label: "Tokens Out",   value: data.tokens_output?.toLocaleString() ?? "—" },
-    { label: "Cost",         value: cost > 0 ? `$${cost.toFixed(6)}` : "Free" },
-    { label: "Created",      value: formatRelativeTime(data.created_at) },
-  ]
+  const cost = execution.cost_usd ?? execution.cost ?? 0
+  const status = execution.status as keyof typeof STATUS_CONFIG
+  const stCfg  = STATUS_CONFIG[status] ?? STATUS_CONFIG.queued
+  const StatusIcon = stCfg.icon
+  const agent  = execution.agents
 
   return (
-    <div className="flex min-h-screen bg-white">
-      <DashboardSidebar />
-      <main className="flex-1 overflow-auto bg-zinc-50">
-        <div className="max-w-4xl mx-auto px-6 py-8 space-y-6">
+    <div className="space-y-6 max-w-3xl">
 
-          {/* Header */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Link href="/executions">
-                <Button variant="ghost" size="icon" className="h-9 w-9 rounded-xl"><ArrowLeft className="h-4 w-4" /></Button>
-              </Link>
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h1 className="text-xl font-bold text-zinc-900">Execution Trace</h1>
-                  <div className={cn("inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-0.5 rounded-full", cfg.bg, cfg.color)}>
-                    <Icon className={cn("h-3.5 w-3.5", status === "running" && "animate-spin")} />
-                    {cfg.label}
-                  </div>
-                </div>
-                <p className="text-xs text-zinc-400 font-mono mt-0.5">{id}</p>
-              </div>
+      {/* ── Breadcrumb ─────────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-2">
+        <Link href="/executions">
+          <Button variant="ghost" size="sm" className="rounded-xl gap-1.5 text-zinc-500 hover:text-zinc-900 -ml-2">
+            <ArrowLeft className="h-4 w-4" /> Execution History
+          </Button>
+        </Link>
+        <span className="text-zinc-300">/</span>
+        <span className="text-xs text-zinc-400 font-mono">{id.slice(0, 16)}…</span>
+      </div>
+
+      {/* ── Header card ────────────────────────────────────────────────────── */}
+      <div className="bg-white border border-zinc-100 rounded-2xl p-5"
+        style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+        <div className="flex items-start gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-primary/8 flex items-center justify-center flex-shrink-0">
+            <Bot className="h-6 w-6 text-primary" />
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-3 flex-wrap mb-1">
+              <h1 className="text-lg font-bold text-zinc-900">
+                {agent?.name ?? "Deleted Agent"}
+              </h1>
+              <span className={cn(
+                "flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full",
+                stCfg.bg, stCfg.color
+              )}>
+                <StatusIcon className={cn("h-3.5 w-3.5", status === "running" && "animate-spin")} />
+                {stCfg.label}
+              </span>
             </div>
-            {data.agents && (
-              <Link href={`/marketplace/${data.agents.id}`} target="_blank">
-                <Button variant="outline" size="sm" className="rounded-xl border-zinc-200 gap-1.5">
-                  <ExternalLink className="h-3.5 w-3.5" /> View Agent
-                </Button>
-              </Link>
-            )}
+            <p className="text-xs text-zinc-400 font-mono mb-3">{execution.id}</p>
+
+            {/* Key metrics */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              {[
+                { icon: Clock,       label: "Latency",      value: execution.latency_ms ? `${formatNumber(execution.latency_ms)}ms` : "—" },
+                { icon: DollarSign,  label: "Cost",         value: cost > 0 ? `$${cost.toFixed(6)}` : "Free" },
+                { icon: Zap,         label: "Tokens In",    value: execution.tokens_input  ? formatNumber(execution.tokens_input)  : "—" },
+                { icon: Zap,         label: "Tokens Out",   value: execution.tokens_output ? formatNumber(execution.tokens_output) : "—" },
+              ].map(m => (
+                <div key={m.label}>
+                  <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-0.5">{m.label}</p>
+                  <p className="text-sm font-bold text-zinc-900 nums flex items-center gap-1">
+                    <m.icon className="h-3.5 w-3.5 text-zinc-300" /> {m.value}
+                  </p>
+                </div>
+              ))}
+            </div>
           </div>
 
-          {/* Agent card */}
-          {data.agents && (
-            <div className="bg-white border border-zinc-100 rounded-2xl p-4 flex items-center gap-3" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-              <div className="w-10 h-10 rounded-xl bg-primary/8 flex items-center justify-center flex-shrink-0">
-                <Bot className="h-5 w-5 text-primary" />
-              </div>
-              <div>
-                <p className="font-semibold text-zinc-900">{data.agents.name}</p>
-                <p className="text-xs text-zinc-400">{data.agents.model_name} · {data.agents.category?.replace("_"," ")}</p>
-              </div>
-            </div>
+          {/* Agent link */}
+          {agent && (
+            <Link href={`/marketplace/${agent.id}`} target="_blank"
+              className="flex-shrink-0 p-2 rounded-xl border border-zinc-100 hover:border-zinc-200 hover:bg-zinc-50 text-zinc-400 hover:text-primary transition-colors"
+              title="View agent in marketplace">
+              <ExternalLink className="h-4 w-4" />
+            </Link>
+          )}
+        </div>
+
+        <div className="mt-4 pt-4 border-t border-zinc-50 flex items-center gap-4 text-xs text-zinc-400 flex-wrap">
+          <span>Created {formatDate(execution.created_at)}</span>
+          {execution.completed_at && (
+            <span>Completed {formatDate(execution.completed_at)}</span>
+          )}
+          {agent?.model_name && (
+            <span className="flex items-center gap-1">
+              <Code2 className="h-3 w-3" /> {agent.model_name}
+            </span>
+          )}
+          {/* Run again */}
+          {agent && (
+            <Link href={`/marketplace/${agent.id}`}
+              className="ml-auto flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline">
+              <RefreshCw className="h-3 w-3" /> Run again
+            </Link>
+          )}
+        </div>
+      </div>
+
+      {/* ── Error message ──────────────────────────────────────────────────── */}
+      {execution.error_message && (
+        <div className="flex items-start gap-3 bg-red-50 border border-red-100 rounded-2xl px-5 py-4">
+          <AlertCircle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-red-700 mb-1">Execution failed</p>
+            <p className="text-xs text-red-600 font-mono leading-relaxed">{execution.error_message}</p>
+          </div>
+        </div>
+      )}
+
+      {/* ── Input ──────────────────────────────────────────────────────────── */}
+      {execution.input && (
+        <Section title="Input" icon={Eye}>
+          <JsonDisplay data={execution.input} />
+        </Section>
+      )}
+
+      {/* ── Output ─────────────────────────────────────────────────────────── */}
+      {execution.output && (
+        <Section title="Output" icon={EyeOff}>
+          <JsonDisplay data={execution.output} />
+        </Section>
+      )}
+
+      {/* ── LLM Trace (if available) ───────────────────────────────────────── */}
+      {trace ? (
+        <>
+          {trace.system_prompt && (
+            <Section title="System Prompt (what the LLM saw)" icon={Terminal}>
+              <pre className="bg-zinc-950 text-zinc-200 rounded-xl px-4 py-3 text-[11px] font-mono overflow-auto leading-relaxed whitespace-pre-wrap max-h-64">
+                {trace.system_prompt}
+              </pre>
+              <p className="text-[11px] text-zinc-400 mt-2">
+                Includes base prompt + RAG context (if knowledge base attached).
+              </p>
+            </Section>
           )}
 
-          {/* Metrics grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            {METRICS.map(m => (
-              <div key={m.label} className="bg-white border border-zinc-100 rounded-2xl px-4 py-3" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          {trace.user_message && (
+            <Section title="User Message (after transformation)" icon={Eye}>
+              <pre className="bg-zinc-50 border border-zinc-100 rounded-xl px-4 py-3 text-[11px] font-mono overflow-auto leading-relaxed whitespace-pre-wrap max-h-64 text-zinc-700">
+                {trace.user_message}
+              </pre>
+            </Section>
+          )}
+
+          {trace.assistant_reply && (
+            <Section title="Raw LLM Reply (before processing)" icon={Code2}>
+              <pre className="bg-zinc-50 border border-zinc-100 rounded-xl px-4 py-3 text-[11px] font-mono overflow-auto leading-relaxed whitespace-pre-wrap max-h-64 text-zinc-700">
+                {trace.assistant_reply}
+              </pre>
+            </Section>
+          )}
+
+          {/* Trace metadata */}
+          <div className="bg-white border border-zinc-100 rounded-2xl px-5 py-4 grid grid-cols-2 sm:grid-cols-4 gap-4"
+            style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+            {[
+              { label: "Model",       value: trace.model ?? "—" },
+              { label: "Temperature", value: trace.temperature != null ? String(trace.temperature) : "—" },
+              { label: "TTFT",        value: trace.ttft_ms ? `${trace.ttft_ms}ms` : "—" },
+              { label: "Total ms",    value: trace.total_ms ? `${trace.total_ms}ms` : "—" },
+            ].map(m => (
+              <div key={m.label}>
                 <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-0.5">{m.label}</p>
-                <p className="text-sm font-bold text-zinc-900 nums">{m.value}</p>
+                <p className="text-sm font-semibold text-zinc-700 nums">{m.value}</p>
               </div>
             ))}
           </div>
-
-          {/* Input / Output */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-              <div className="flex items-center gap-2 mb-3">
-                <div className="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center">
-                  <Zap className="h-3.5 w-3.5 text-blue-600" />
-                </div>
-                <p className="text-sm font-semibold text-zinc-900">Input</p>
-              </div>
-              <CodeBlock code={inputStr} />
-            </div>
-            <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-              <div className="flex items-center gap-2 mb-3">
-                <div className="w-7 h-7 rounded-lg bg-green-50 flex items-center justify-center">
-                  <CheckCircle className="h-3.5 w-3.5 text-green-600" />
-                </div>
-                <p className="text-sm font-semibold text-zinc-900">Output</p>
-              </div>
-              {data.error_message ? (
-                <div className="bg-red-50 border border-red-100 rounded-xl p-3 text-xs text-red-700 font-mono leading-relaxed">
-                  {data.error_message}
-                </div>
-              ) : (
-                <CodeBlock code={outStr ?? "No output"} />
-              )}
-            </div>
+        </>
+      ) : (
+        // Trace not available (old executions or trace disabled)
+        execution.status === "success" && !execution.error_message && (
+          <div className="bg-zinc-50 border border-zinc-100 rounded-2xl px-5 py-4 text-center">
+            <p className="text-sm text-zinc-400">
+              Detailed LLM trace not available for this execution.
+              Traces are retained for 30 days.
+            </p>
           </div>
+        )
+      )}
 
-          {/* LLM Trace — only shown when execution_traces row exists */}
-          {trace && (
-            <div className="bg-white border border-zinc-100 rounded-2xl p-5 space-y-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-violet-50 flex items-center justify-center">
-                  <Brain className="h-4 w-4 text-violet-600" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-zinc-900">LLM Trace</p>
-                  <p className="text-xs text-zinc-400">{trace.model} · TTFT: {trace.ttft_ms ?? "—"}ms · Total: {trace.total_ms ?? "—"}ms</p>
-                </div>
-              </div>
-
-              {trace.system_prompt && <CodeBlock code={trace.system_prompt} label="System Prompt" />}
-              {trace.user_message  && <CodeBlock code={trace.user_message}  label="User Message" />}
-              {trace.assistant_reply && <CodeBlock code={trace.assistant_reply} label="Model Response" />}
-
-              {trace.tool_calls && Array.isArray(trace.tool_calls) && trace.tool_calls.length > 0 && (
-                <div>
-                  <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wide mb-1.5">Tool Calls</p>
-                  <CodeBlock code={JSON.stringify(trace.tool_calls, null, 2)} />
-                </div>
-              )}
-
-              {/* Timing breakdown */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3 border-t border-zinc-50">
-                {[
-                  { label: "TTFT",        value: trace.ttft_ms ? `${trace.ttft_ms}ms` : "—" },
-                  { label: "Total",       value: trace.total_ms ? `${trace.total_ms}ms` : "—" },
-                  { label: "Tokens In",   value: trace.tokens_input?.toLocaleString() ?? "—" },
-                  { label: "Tokens Out",  value: trace.tokens_output?.toLocaleString() ?? "—" },
-                ].map(m => (
-                  <div key={m.label}>
-                    <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-0.5">{m.label}</p>
-                    <p className="text-sm font-bold text-zinc-700 nums">{m.value}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Security flags */}
-          {trace?.status === "flagged" && (
-            <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 flex items-start gap-3">
-              <Shield className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-semibold text-amber-800">Security flag detected</p>
-                <p className="text-xs text-amber-700 mt-0.5">
-                  {trace.error_message ?? "PII or suspicious content detected in output — some fields may have been redacted."}
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Replay CTA */}
-          <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-4 flex items-center justify-between flex-wrap gap-4">
-            <div>
-              <p className="text-sm font-semibold text-zinc-900">Replay this execution</p>
-              <p className="text-xs text-zinc-400 mt-0.5">Re-run with the same input against the same agent.</p>
-            </div>
-            <Link href={`/marketplace/${data.agents?.id}?replay=${id}`}>
-              <Button variant="outline" size="sm" className="rounded-xl border-zinc-200 gap-1.5">
-                <RotateCcw className="h-3.5 w-3.5" /> Replay
-              </Button>
-            </Link>
-          </div>
-
-        </div>
-      </main>
+      {/* ── Actions ────────────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-3 flex-wrap pb-8">
+        <Link href="/executions">
+          <Button variant="outline" className="rounded-xl border-zinc-200 gap-2">
+            <ArrowLeft className="h-4 w-4" /> Back to history
+          </Button>
+        </Link>
+        {agent && (
+          <Link href={`/marketplace/${agent.id}`}>
+            <Button className="rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 gap-2 font-semibold">
+              <RefreshCw className="h-4 w-4" /> Run this agent again
+            </Button>
+          </Link>
+        )}
+      </div>
     </div>
   )
 }

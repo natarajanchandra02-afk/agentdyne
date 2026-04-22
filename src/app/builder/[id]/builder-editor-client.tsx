@@ -674,19 +674,36 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
                     </Button>
                   </Link>
                 )}
-                {agent.status === "draft" && (
+                {(agent.status === "draft" || agent.status === "rejected") && (
                   <Button size="sm" className="gap-1.5 rounded-xl bg-zinc-900 text-white hover:bg-zinc-700"
                     onClick={submitForReview} disabled={submitting}>
                     {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-                    {submitting ? "Submitting…" : "Submit for Review"}
+                    {submitting ? "Submitting…" : agent.status === "rejected" ? "Resubmit for Review" : "Submit for Review"}
                   </Button>
+                )}
+                {agent.status === "pending_review" && (
+                  <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 text-amber-700 text-xs font-semibold px-3 py-1.5 rounded-xl">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Under Review
+                  </div>
                 )}
               </div>
             </div>
 
+            {agent.status === "rejected" && (
+              <div className="mb-6 flex items-start gap-3 bg-red-50 border border-red-200 rounded-2xl px-5 py-4">
+                <AlertTriangle className="h-4 w-4 text-red-500 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold text-red-700">Agent was rejected</p>
+                  <p className="text-xs text-red-600 mt-0.5">
+                    Update your system prompt, description, or settings based on the feedback from your notification, then click Resubmit for Review.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Tabs */}
             <form onSubmit={handleSubmit(onSave)}>
-              <Tabs defaultValue="overview">
+              <Tabs defaultValue={defaultTab === "rag" ? "behavior" : defaultTab || "overview"}>
                 <TabsList className="mb-6 bg-zinc-50 border border-zinc-100 p-1 rounded-xl flex-wrap h-auto gap-1">
                   <TabsTrigger value="overview"      className="rounded-lg text-sm gap-1.5 data-[state=active]:bg-white data-[state=active]:shadow-sm">
                     <LayoutDashboard className="h-3.5 w-3.5" /> Overview
@@ -974,8 +991,8 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
               <Textarea value={testInput} onChange={e => setTestInput(e.target.value)}
                 rows={6} className="rounded-xl border-zinc-200 bg-white font-mono text-xs resize-none" />
             </div>
-            <Button type="button" onClick={runTest} disabled={testing}
-              className="w-full rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold gap-2">
+            <Button type="button" onClick={runTest} disabled={testing || agent.status !== "active"}
+              className="w-full rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold gap-2 disabled:opacity-50">
               {testing ? <><Loader2 className="h-4 w-4 animate-spin" /> Running…</> : <><Play className="h-4 w-4" /> Run</>}
             </Button>
             <div className="space-y-1.5">

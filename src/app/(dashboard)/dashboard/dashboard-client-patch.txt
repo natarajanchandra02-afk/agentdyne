@@ -1,0 +1,1 @@
+    { href: "/pipelines",   icon: Layers,    color: "bg-primary/8 text-primary",   title: "Build a Pipeline", desc: "Chain agents into multi-step workflows.",    cta: "Create pipeline" },
