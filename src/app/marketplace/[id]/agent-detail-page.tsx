@@ -4,7 +4,9 @@ import { useEffect, useState, useRef } from "react"
 import { useParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { AgentDetailClient } from "./agent-detail-client"
-import { Loader2 } from "lucide-react"
+import { Navbar } from "@/components/layout/navbar"
+import { Loader2, AlertTriangle } from "lucide-react"
+import Link from "next/link"
 
 export default function AgentDetailPage() {
   const { id }          = useParams<{ id: string }>()
@@ -24,11 +26,24 @@ export default function AgentDetailPage() {
 
         const { data: agent, error: agentErr } = await supabase
           .from("agents")
-          .select("*, profiles!seller_id(id, full_name, username, avatar_url, is_verified, bio, total_earned)")
+          .select([
+            "*",
+            // Bug 9 FIX: total_earned is private seller data — never send to all authenticated users.
+            // Only expose safe public fields from the seller profile.
+            "profiles!seller_id(id, full_name, username, avatar_url, is_verified, bio)",
+          ].join(", "))
           .eq("id", id)
           .single()
 
-        if (agentErr || !agent || agent.status !== "active") {
+        if (agentErr || !agent) {
+          if (!cancelled) setNotFound(true)
+          return
+        }
+
+        // Bug 10 FIX: sellers can view their own non-active agents,
+        // but anyone else hitting a non-active agent gets 404.
+        const isOwner = user?.id === agent.seller_id
+        if (agent.status !== "active" && !isOwner) {
           if (!cancelled) setNotFound(true)
           return
         }
@@ -52,7 +67,13 @@ export default function AgentDetailPage() {
         ])
 
         if (!cancelled) {
-          setData({ agent, reviews: reviews ?? [], user, userSubscription: subscription })
+          setData({
+            agent,
+            reviews:          reviews ?? [],
+            user,
+            userSubscription: subscription,
+            isOwner,          // Bug 10 FIX: pass down so client can show draft banner
+          })
         }
       } catch {
         if (!cancelled) setNotFound(true)
@@ -65,10 +86,22 @@ export default function AgentDetailPage() {
 
   if (notFound) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-lg font-semibold text-zinc-900 mb-2">Agent not found</p>
-          <p className="text-sm text-zinc-500">This agent may have been removed or is no longer active.</p>
+      <div className="min-h-screen bg-white">
+        <Navbar />
+        <div className="pt-14 min-h-screen flex items-center justify-center">
+          <div className="text-center max-w-md px-6">
+            <div className="w-16 h-16 rounded-2xl bg-zinc-50 flex items-center justify-center mx-auto mb-4">
+              <AlertTriangle className="h-8 w-8 text-zinc-400" />
+            </div>
+            <p className="text-lg font-semibold text-zinc-900 mb-2">Agent not found</p>
+            <p className="text-sm text-zinc-500 mb-5">
+              This agent may have been removed, is pending review, or is no longer active.
+            </p>
+            <Link href="/marketplace"
+              className="text-sm font-semibold text-primary hover:underline">
+              ← Back to Marketplace
+            </Link>
+          </div>
         </div>
       </div>
     )
@@ -76,10 +109,13 @@ export default function AgentDetailPage() {
 
   if (!data) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-7 w-7 animate-spin text-primary" />
-          <p className="text-sm text-zinc-400">Loading agent…</p>
+      <div className="min-h-screen bg-white">
+        <Navbar />
+        <div className="pt-14 min-h-screen flex items-center justify-center">
+          <div className="flex flex-col items-center gap-3">
+            <Loader2 className="h-7 w-7 animate-spin text-primary" />
+            <p className="text-sm text-zinc-400">Loading agent…</p>
+          </div>
         </div>
       </div>
     )
