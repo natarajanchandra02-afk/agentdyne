@@ -96,6 +96,84 @@ export interface CostEstimate {
  * Token estimation: 1 token ≈ 4 chars (conservative estimate for pre-flight)
  * We charge for the ESTIMATE up front; difference is reconciled post-execution.
  */
+/**
+ * estimateExecutionCostWithOverheads
+ * Full cost model including RAG, MCP, pipeline, failure overheads.
+ * Used by execute route for per-execution pricing.
+ */
+export function estimateExecutionCostWithOverheads(params: {
+  inputText:      string
+  systemPrompt:   string
+  modelName:      string
+  maxTokens:      number
+  plan:           PlanName
+  creditBalance:  number
+  isRagEnabled?:  boolean
+  isMCPEnabled?:  boolean
+  isPipeline?:    boolean
+  nodeCount?:     number
+}): CostEstimate & { breakdown: Record<string, number> } {
+  const {
+    inputText, systemPrompt, modelName, maxTokens, plan, creditBalance,
+    isRagEnabled = false, isMCPEnabled = false, isPipeline = false, nodeCount = 1,
+  } = params
+
+  const model  = MODEL_COSTS[modelName] ?? MODEL_COSTS["default"]
+  const limits = PLAN_LIMITS[plan]      ?? PLAN_LIMITS.free
+
+  const estimatedInput  = Math.ceil((inputText.length + systemPrompt.length) / 3.5)
+  const estimatedOutput = Math.min(Math.ceil(maxTokens * 0.7), limits.max_tokens_per_exec)
+
+  const llmCostPerNode =
+    (estimatedInput  / 1000) * model.input +
+    (estimatedOutput / 1000) * model.output
+
+  // Pipeline: each node runs independently → multiply by node count
+  const baseLLMCost = isPipeline
+    ? llmCostPerNode * Math.max(1, nodeCount)
+    : llmCostPerNode
+
+  // RAG embedding cost: text-embedding-3-small = $0.00013/1K tokens
+  const ragCost = isRagEnabled
+    ? (estimatedInput / 1000) * 0.00013
+    : 0
+
+  // MCP tool overhead: average 2 extra tool-call round trips
+  // Each tool call costs ~$0.001 in additional input tokens
+  const mcpCost = isMCPEnabled ? 0.002 : 0
+
+  const rawTotalCost = baseLLMCost + ragCost + mcpCost
+
+  // Platform margin with overhead factors
+  const BASE_MARGIN      = 3.0
+  const FAILURE_OVERHEAD = 0.08  // ~8% failure rate, platform eats cost
+  const INFRA_OVERHEAD   = 0.05  // Cloudflare, Supabase egress
+  const PIPELINE_PREMIUM = isPipeline ? 0.50 : 0  // +50% for parallel execution infra
+  const totalMargin      = BASE_MARGIN * (1 + FAILURE_OVERHEAD + INFRA_OVERHEAD) + PIPELINE_PREMIUM
+
+  const estimatedCredits = rawTotalCost * totalMargin
+
+  const breakdown = {
+    llm_cost:          parseFloat(baseLLMCost.toFixed(6)),
+    rag_cost:          parseFloat(ragCost.toFixed(6)),
+    mcp_cost:          parseFloat(mcpCost.toFixed(6)),
+    raw_total:         parseFloat(rawTotalCost.toFixed(6)),
+    margin_multiplier: parseFloat(totalMargin.toFixed(3)),
+    user_cost:         parseFloat(estimatedCredits.toFixed(6)),
+  }
+
+  return {
+    estimated_tokens_input:   estimatedInput,
+    estimated_tokens_output:  estimatedOutput,
+    estimated_cost_usd:       rawTotalCost,
+    model:                    modelName,
+    within_plan_limit:        rawTotalCost <= limits.max_cost_per_exec_usd,
+    within_credit_balance:    creditBalance >= estimatedCredits,
+    estimated_credits_needed: estimatedCredits,
+    breakdown,
+  }
+}
+
 export function estimateExecutionCost(params: {
   inputText:      string
   systemPrompt:   string
@@ -118,9 +196,18 @@ export function estimateExecutionCost(params: {
     (estimatedInput  / 1000) * model.input +
     (estimatedOutput / 1000) * model.output
 
-  // Platform margin: 3× (cost × 3 = what user pays in credits)
-  const MARGIN = 3
-  const estimatedCredits = estimatedCost * MARGIN
+  // ── Platform margin + overhead factors ─────────────────────────────────
+  // DeepSeek audit (April 2026): naive 3× doesn't account for:
+  //   - RAG embedding costs (~$0.00013/1K tokens, 10% of calls)
+  //   - MCP tool overhead (each tool loop = extra input tokens)
+  //   - Failed executions (you pay LLM, user pays nothing)
+  //   - Pipeline multi-node (5 agents = 5× LLM calls, user sees 1 price)
+  // Fix: apply overhead factors on top of the base margin.
+  const BASE_MARGIN           = 3.0   // 3× base LLM cost
+  const FAILURE_OVERHEAD      = 0.08  // ~8% of executions fail; you pay, user doesn't
+  const INFRA_OVERHEAD        = 0.05  // Cloudflare, Supabase, egress costs
+  const TOTAL_MARGIN          = BASE_MARGIN * (1 + FAILURE_OVERHEAD + INFRA_OVERHEAD)
+  const estimatedCredits = estimatedCost * TOTAL_MARGIN
 
   return {
     estimated_tokens_input:   estimatedInput,

@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
               "search_agents_semantic",
               {
                 query_embedding: embedding,
-                match_threshold: 0.65,
+                match_threshold: 0.75,  // Raised from 0.65: reduces irrelevant results
                 match_count:     safeLimit * 2,
               }
             )

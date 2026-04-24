@@ -74,7 +74,7 @@ export async function retrieveRAGContext(
   options: { topK?: number; threshold?: number } = {}
 ): Promise<RAGResult> {
   const topK      = Math.min(10, Math.max(1, options.topK      ?? 5))
-  const threshold = Math.max(0,  Math.min(1, options.threshold ?? 0.65))
+  const threshold = Math.max(0,  Math.min(1, options.threshold ?? 0.75))  // Raised from 0.65
 
   // Step 1: Embed query via OpenAI
   const embedding = await embedQuery(userQuery)

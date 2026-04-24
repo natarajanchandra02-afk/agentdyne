@@ -6,6 +6,8 @@ import { apiRateLimit } from "@/lib/rate-limit"
 import { routeCompletion } from "@/lib/model-router"
 import { runInjectionPipeline, sanitizeOutput } from "@/lib/injection-filter"
 import { retrieveRAGContext, buildRAGSystemPrompt } from "@/lib/rag-retriever"
+import { estimatePipelineCost, checkConcurrencyLimit } from "@/lib/concurrency"
+import { evaluateSafeCondition } from "@/lib/safe-condition-evaluator"
 
 /**
  * POST /api/pipelines/[id]/execute
@@ -66,6 +68,18 @@ export async function POST(
 
     if (profile?.is_banned)
       return NextResponse.json({ error: "Your account has been suspended." }, { status: 403 })
+
+    // ── Concurrency limit ────────────────────────────────────────────────────
+    const plan = (profile?.subscription_plan ?? "free") as any
+    const concurrency = await checkConcurrencyLimit(supabase, userId!, plan)
+    if (!concurrency.allowed) {
+      const res = NextResponse.json({
+        error: concurrency.message, code: concurrency.code,
+        current: concurrency.current, limit: concurrency.limit,
+      }, { status: 429 })
+      if (concurrency.retryAfter) res.headers.set("Retry-After", String(concurrency.retryAfter))
+      return res
+    }
 
     // ── Load pipeline ─────────────────────────────────────────────────────────
     const { data: pipeline } = await supabase
@@ -383,16 +397,10 @@ interface NodeResult {
   used_fallback?: boolean
 }
 
-// ─── Condition evaluator ──────────────────────────────────────────────────────
+// ─── Condition evaluator (delegates to safe evaluator — no eval/Function) ────
 
 function evaluateCondition(condition: string | undefined, output: unknown, state: Record<string, unknown>): boolean {
-  if (!condition?.trim()) return true
-  try {
-    const FORBIDDEN = /\b(process|require|import|eval|Function|globalThis|window|document|fetch|XMLHttpRequest)\b/
-    if (FORBIDDEN.test(condition)) return true
-    // eslint-disable-next-line no-new-func
-    return !!new Function("output", "state", `"use strict"; return !!(${condition})`)(output, state)
-  } catch { return true }
+  return evaluateSafeCondition(condition, output, state)
 }
 
 // ─── Output field extractor ───────────────────────────────────────────────────

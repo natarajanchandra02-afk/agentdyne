@@ -4,6 +4,29 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { apiRateLimit } from "@/lib/rate-limit"
 
+// Pure cycle detection (Kahn's algorithm) — O(V+E), no DB needed
+function detectCycle(nodeIds: string[], edges: Array<{ from: string; to: string }>): boolean {
+  const inDegree = new Map<string, number>(nodeIds.map(id => [id, 0]))
+  const adj      = new Map<string, string[]>(nodeIds.map(id => [id, []]))
+  for (const e of edges) {
+    if (!e.from || !e.to) continue
+    adj.get(e.from)?.push(e.to)
+    inDegree.set(e.to, (inDegree.get(e.to) ?? 0) + 1)
+  }
+  const queue = [...inDegree.entries()].filter(([, d]) => d === 0).map(([id]) => id)
+  let processed = 0
+  while (queue.length > 0) {
+    const node = queue.shift()!
+    processed++
+    for (const next of adj.get(node) ?? []) {
+      const newDeg = (inDegree.get(next) ?? 0) - 1
+      inDegree.set(next, newDeg)
+      if (newDeg === 0) queue.push(next)
+    }
+  }
+  return processed !== nodeIds.length
+}
+
 // GET /api/pipelines/[id]
 export async function GET(
   req: NextRequest,
@@ -92,6 +115,22 @@ export async function PATCH(
         return NextResponse.json({ error: "dag must have { nodes: [], edges: [] }" }, { status: 400 })
       if (dag.nodes.length > 50)
         return NextResponse.json({ error: "Pipeline cannot exceed 50 nodes" }, { status: 400 })
+
+      // ── Cycle detection on save (not just at execute time) ──────────────────
+      // DeepSeek audit: running O(n²) cycle detection on every execution
+      // is wasteful. Validate on save so users get instant feedback.
+      if (dag.nodes.length > 0 && dag.edges.length > 0) {
+        const hasCycle = detectCycle(
+          dag.nodes.map((n: any) => n.id || n.agent_id),
+          dag.edges.map((e: any) => ({ from: e.from || e.source, to: e.to || e.target }))
+        )
+        if (hasCycle) {
+          return NextResponse.json({
+            error: "Pipeline contains a cycle — agents would run in an infinite loop.",
+            code:  "DAG_CYCLE_DETECTED",
+          }, { status: 400 })
+        }
+      }
     }
 
     const { data: pipeline, error } = await supabase
