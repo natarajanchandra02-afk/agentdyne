@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
+import { AnimatePresence, motion } from "framer-motion"
 import {
   LayoutDashboard, Bot, BarChart3, CreditCard, Key,
   Settings, Store, ShieldCheck, LogOut, Zap, ChevronRight,
@@ -214,20 +215,32 @@ export function DashboardSidebar() {
         </Link>
       </div>
 
-      {/* Mobile drawer overlay */}
-      {mobileOpen && (
-        <div
-          className="md:hidden fixed inset-0 z-40 bg-black/20 backdrop-blur-sm"
-          onClick={() => setMobileOpen(false)} />
-      )}
-
-      {/* Mobile drawer */}
-      <aside className={cn(
-        "md:hidden fixed top-0 left-0 z-50 h-screen w-60 bg-white border-r border-zinc-100 flex flex-col transition-transform duration-200",
-        mobileOpen ? "translate-x-0" : "-translate-x-full"
-      )}>
-        <SidebarContent />
-      </aside>
+      {/* Mobile drawer overlay + slide-in */}
+      <AnimatePresence>
+        {mobileOpen && (
+          <>
+            <motion.div
+              key="overlay"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="md:hidden fixed inset-0 z-40 bg-black/20 backdrop-blur-sm"
+              onClick={() => setMobileOpen(false)}
+            />
+            <motion.aside
+              key="drawer"
+              initial={{ x: "-100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "-100%" }}
+              transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              className="md:hidden fixed top-0 left-0 z-50 h-screen w-60 bg-white border-r border-zinc-100 flex flex-col"
+            >
+              <SidebarContent />
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
 
       {/* Spacer for mobile top bar */}
       <div className="md:hidden h-14 flex-shrink-0" />

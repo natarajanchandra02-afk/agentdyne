@@ -11,7 +11,6 @@ const PROTECTED_PATHS = [
 
 const AUTH_ONLY_PATHS = ["/login", "/signup", "/forgot-password"]
 
-// API routes that allow cross-origin requests (for SDK/external consumers)
 const PUBLIC_API_PREFIXES = [
   "/api/agents",
   "/api/search",
@@ -27,9 +26,10 @@ const PUBLIC_API_PREFIXES = [
   "/api/credits",
   "/api/user",
   "/api/notifications",
+  "/api/health",
+  "/api/run",
 ]
 
-// Stripe webhooks must NOT have auth redirects or modified body
 const WEBHOOK_PATHS = ["/api/webhooks/"]
 
 // ─── Security headers ─────────────────────────────────────────────────────────
@@ -56,38 +56,50 @@ function buildCSP(isProd: boolean): string {
 
 function buildSecurityHeaders(isProd: boolean): Record<string, string> {
   return {
-    "X-Frame-Options":           "DENY",
-    "X-Content-Type-Options":    "nosniff",
-    "X-XSS-Protection":          "1; mode=block",
-    "Referrer-Policy":           "strict-origin-when-cross-origin",
-    "Permissions-Policy":        "camera=(), microphone=(), geolocation=(), payment=(self), interest-cohort=()",
-    "Content-Security-Policy":   buildCSP(isProd),
+    "X-Frame-Options":         "DENY",
+    "X-Content-Type-Options":  "nosniff",
+    "X-XSS-Protection":        "1; mode=block",
+    "Referrer-Policy":         "strict-origin-when-cross-origin",
+    "Permissions-Policy":      "camera=(), microphone=(), geolocation=(), payment=(self), interest-cohort=()",
+    "Content-Security-Policy": buildCSP(isProd),
     ...(isProd ? {
       "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
     } : {}),
   }
 }
 
-// ─── CORS ────────────────────────────────────────────────────────────────────
-// Allow external SDK / developer consumers on /api/* routes.
-// Uses a strict origin allowlist — never reflect arbitrary origins.
+// ─── CORS ─────────────────────────────────────────────────────────────────────
 
 const CORS_ALLOWED_ORIGINS = new Set([
-  // Production
   "https://agentdyne.com",
   "https://www.agentdyne.com",
-  // Vercel preview (pattern handled in code below)
 ])
 
+// All headers that client SDK / external callers may send
+const CORS_ALLOW_HEADERS = [
+  "Content-Type",
+  "Authorization",
+  "X-API-Key",
+  "X-Request-ID",
+  "X-Idempotency-Key",    // ← required for idempotent execute calls
+  "Cache-Control",
+].join(", ")
+
+const CORS_EXPOSE_HEADERS = [
+  "X-Request-ID",
+  "X-RateLimit-Limit",
+  "X-RateLimit-Remaining",
+  "X-RateLimit-Reset",
+  "Retry-After",
+].join(", ")
+
 function buildCORSHeaders(origin: string | null, isPreflight: boolean): Record<string, string> {
-  // Allow same-origin always. Allow specific listed origins + localhost in dev.
   const isAllowed =
-    !origin ||                              // Same-origin (no Origin header)
+    !origin ||
     CORS_ALLOWED_ORIGINS.has(origin) ||
     origin.startsWith("http://localhost:") ||
     origin.startsWith("http://127.0.0.1:") ||
     origin.endsWith(".agentdyne.com") ||
-    // Vercel preview deployments
     (origin.includes(".vercel.app") && origin.includes("agentdyne"))
 
   const allowedOrigin = isAllowed ? (origin ?? "*") : "https://agentdyne.com"
@@ -95,8 +107,8 @@ function buildCORSHeaders(origin: string | null, isPreflight: boolean): Record<s
   const headers: Record<string, string> = {
     "Access-Control-Allow-Origin":      allowedOrigin,
     "Access-Control-Allow-Credentials": "true",
-    "Access-Control-Allow-Headers":     "Content-Type, Authorization, X-API-Key, X-Request-ID",
-    "Access-Control-Expose-Headers":    "X-Request-ID, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset",
+    "Access-Control-Allow-Headers":     CORS_ALLOW_HEADERS,
+    "Access-Control-Expose-Headers":    CORS_EXPOSE_HEADERS,
     "Access-Control-Max-Age":           "86400",
   }
 
@@ -107,6 +119,29 @@ function buildCORSHeaders(origin: string | null, isPreflight: boolean): Record<s
   return headers
 }
 
+// ─── Open-redirect guard ──────────────────────────────────────────────────────
+
+const SAFE_REDIRECT_PREFIXES = [
+  "/dashboard", "/my-agents", "/analytics", "/api-keys",
+  "/billing", "/settings", "/admin", "/seller",
+  "/pipelines", "/executions", "/marketplace", "/builder",
+]
+
+function sanitizeRedirect(rawNext: string | null): string {
+  if (!rawNext) return "/dashboard"
+  const isSafe =
+    typeof rawNext === "string" &&
+    rawNext.startsWith("/") &&
+    !rawNext.startsWith("//") &&
+    !rawNext.includes("://") &&
+    !rawNext.includes("@") &&
+    !rawNext.includes("\\") &&
+    !rawNext.includes("\n") &&
+    !rawNext.includes("\r") &&
+    SAFE_REDIRECT_PREFIXES.some(p => rawNext === p || rawNext.startsWith(p + "/"))
+  return isSafe ? rawNext : "/dashboard"
+}
+
 // ─── Main middleware ──────────────────────────────────────────────────────────
 
 export async function middleware(req: NextRequest) {
@@ -115,7 +150,7 @@ export async function middleware(req: NextRequest) {
   const origin       = req.headers.get("origin")
   const method       = req.method
 
-  // ── 1. Static assets: no processing ────────────────────────────────────────
+  // ── 1. Static assets — pass through immediately ──────────────────────────
   if (
     pathname.startsWith("/_next/") ||
     pathname.startsWith("/favicon") ||
@@ -124,42 +159,36 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next()
   }
 
-  // ── 2. Stripe webhooks: skip auth, pass through cleanly ───────────────────
+  // ── 2. Stripe webhooks — skip auth, never touch body ────────────────────
   if (WEBHOOK_PATHS.some(p => pathname.startsWith(p))) {
     const res = NextResponse.next()
-    // No auth, no redirect — just security headers
     applyHeaders(res, buildSecurityHeaders(isProd))
     return res
   }
 
-  // ── 3. API routes: handle CORS preflight + add CORS headers ───────────────
-  const isApiRoute      = pathname.startsWith("/api/")
-  const isPublicApi     = PUBLIC_API_PREFIXES.some(p => pathname.startsWith(p))
+  // ── 3. CORS preflight — respond immediately ──────────────────────────────
+  const isApiRoute  = pathname.startsWith("/api/")
+  const isPublicApi = PUBLIC_API_PREFIXES.some(p => pathname.startsWith(p))
 
   if (isApiRoute && method === "OPTIONS") {
-    // CORS preflight — respond immediately without Supabase auth check
-    const preflightHeaders = {
-      ...buildCORSHeaders(origin, true),
-      ...buildSecurityHeaders(isProd),
-    }
     return new NextResponse(null, {
       status:  204,
-      headers: preflightHeaders,
+      headers: {
+        ...buildCORSHeaders(origin, true),
+        ...buildSecurityHeaders(isProd),
+      },
     })
   }
 
-  // ── 4. Request size guard for API routes ───────────────────────────────────
+  // ── 4. Request size guard ─────────────────────────────────────────────────
   if (isApiRoute && method === "POST") {
-    const contentLength = req.headers.get("content-length")
-    if (contentLength && parseInt(contentLength) > 10_000_000) {  // 10MB hard cap
-      return NextResponse.json(
-        { error: "Request body too large" },
-        { status: 413 }
-      )
+    const cl = req.headers.get("content-length")
+    if (cl && parseInt(cl) > 10_000_000) {
+      return NextResponse.json({ error: "Request body too large (max 10MB)" }, { status: 413 })
     }
   }
 
-  // ── 5. Supabase SSR session refresh ────────────────────────────────────────
+  // ── 5. Supabase SSR session refresh ──────────────────────────────────────
   let supabaseResponse = NextResponse.next({ request: req })
   let user: { id: string; email?: string } | null = null
 
@@ -180,17 +209,16 @@ export async function middleware(req: NextRequest) {
       },
     })
 
-    // Always use getUser() — validates JWT server-side, never getSession()
     try {
+      // Always use getUser() — validates JWT server-side (never getSession())
       const { data: { user: authedUser } } = await supabase.auth.getUser()
       user = authedUser
     } catch {
-      // Auth error — treat as unauthenticated (don't crash middleware)
       user = null
     }
   }
 
-  // ── 6. Route guards (UI pages) ─────────────────────────────────────────────
+  // ── 6. UI route guards ────────────────────────────────────────────────────
   const isProtected = PROTECTED_PATHS.some(
     p => pathname === p || pathname.startsWith(p + "/")
   )
@@ -207,46 +235,26 @@ export async function middleware(req: NextRequest) {
   }
 
   if (isAuthOnly && user) {
-    const rawNext = req.nextUrl.searchParams.get("next") ?? "/dashboard"
-    const SAFE_PREFIXES = [
-      "/dashboard", "/my-agents", "/analytics", "/api-keys",
-      "/billing", "/settings", "/admin", "/seller",
-      "/pipelines", "/executions", "/marketplace",
-    ]
-    // Strict open-redirect guard
-    const isSafe = (
-      typeof rawNext === "string" &&
-      rawNext.startsWith("/") &&
-      !rawNext.startsWith("//") &&
-      !rawNext.includes("://") &&
-      !rawNext.includes("@") &&
-      !rawNext.includes("\\") &&
-      !rawNext.includes("\n") &&
-      !rawNext.includes("\r") &&
-      SAFE_PREFIXES.some(p => rawNext === p || rawNext.startsWith(p + "/"))
-    )
-    const safeNext = isSafe ? rawNext : "/dashboard"
+    const safeNext = sanitizeRedirect(req.nextUrl.searchParams.get("next"))
     const res = NextResponse.redirect(new URL(safeNext, req.url))
     applyHeaders(res, buildSecurityHeaders(isProd))
     return res
   }
 
-  // ── 7. Apply headers to all responses ─────────────────────────────────────
-  const secHeaders = buildSecurityHeaders(isProd)
-  applyHeaders(supabaseResponse, secHeaders)
+  // ── 7. Apply security + CORS headers ─────────────────────────────────────
+  applyHeaders(supabaseResponse, buildSecurityHeaders(isProd))
 
-  // Add CORS headers to API routes
   if (isApiRoute && isPublicApi) {
-    const corsHeaders = buildCORSHeaders(origin, false)
-    applyHeaders(supabaseResponse, corsHeaders)
+    applyHeaders(supabaseResponse, buildCORSHeaders(origin, false))
   }
 
-  // Remove server fingerprinting headers
+  // Remove server fingerprinting
   supabaseResponse.headers.delete("X-Powered-By")
   supabaseResponse.headers.delete("Server")
 
-  // Add request ID for tracing
-  const requestId = req.headers.get("x-request-id") ??
+  // Request ID for distributed tracing
+  const requestId =
+    req.headers.get("x-request-id") ??
     crypto.randomUUID().replace(/-/g, "").slice(0, 16)
   supabaseResponse.headers.set("X-Request-ID", requestId)
 

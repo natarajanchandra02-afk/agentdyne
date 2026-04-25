@@ -17,9 +17,9 @@ const LINKS = {
     { label: "MCP Servers",    href: "/integrations" },
     { label: "Status",         href: "https://status.agentdyne.com" },
   ],
-  Company: [
+    Company: [
     { label: "About",          href: "/about" },
-    { label: "Blog",           href: "/changelog" },
+    { label: "Blog",           href: "/blog" },
     { label: "Careers",        href: "/careers" },
     { label: "Contact",        href: "/contact" },
   ],

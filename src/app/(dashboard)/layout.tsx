@@ -7,7 +7,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <div className="flex min-h-screen bg-zinc-50">
       <DashboardSidebar />
-      <main className="flex-1 overflow-auto bg-white">
+      {/* pt-14 on mobile accounts for the fixed 56px topbar the sidebar renders */}
+      <main className="flex-1 overflow-auto bg-white md:pt-0 pt-14">
         <div className="max-w-5xl mx-auto px-6 py-8">
           {children}
         </div>

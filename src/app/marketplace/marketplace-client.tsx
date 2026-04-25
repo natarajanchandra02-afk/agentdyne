@@ -136,7 +136,15 @@ function AgentCard({ agent, view }: { agent: any; view: "grid" | "list" }) {
           )}
         </div>
 
-        <p className="text-xs text-zinc-500 leading-relaxed line-clamp-2 flex-1 mb-4">{agent.description}</p>
+        <p className="text-xs text-zinc-500 leading-relaxed line-clamp-2 flex-1 mb-3">{agent.description}</p>
+
+        {/* Seller attribution */}
+        {agent.profiles?.full_name && (
+          <p className="text-[11px] text-zinc-400 mb-3 truncate">
+            by <span className="font-medium text-zinc-500">{agent.profiles.full_name}</span>
+            {agent.profiles.is_verified && <span className="ml-1 text-blue-400">✓</span>}
+          </p>
+        )}
 
         <div className="flex items-center justify-between pt-3 border-t border-zinc-50">
           <div className="flex items-center gap-3 text-xs text-zinc-400">

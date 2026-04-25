@@ -414,15 +414,20 @@ function ComposeWidget() {
     <div className="bg-gradient-to-r from-primary/[0.06] to-transparent border border-primary/20 rounded-2xl px-5 py-5">
       <div className="flex items-start gap-4">
         <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-          <Sparkles className="h-4.5 w-4.5 text-primary" />
+          <Sparkles className="h-5 w-5 text-primary" />
         </div>
         <div className="flex-1">
           <p className="text-sm font-bold text-zinc-900 mb-0.5">What do you want to automate today?</p>
           <p className="text-xs text-zinc-400 mb-3">AI selects agents, builds the workflow, and runs it — no config needed</p>
           <div className="flex gap-2">
-            <input
-              value={goal}
-              onChange={e => setGoal(e.target.value)}
+          <input
+          value={goal}
+          onChange={e => setGoal(e.target.value)}
+          onKeyDown={e => {
+                if (e.key === "Enter" && goal.trim()) {
+                  window.location.href = `/compose?goal=${encodeURIComponent(goal.trim())}`
+                }
+              }}
               placeholder="e.g. Summarise support tickets and draft replies…"
               className="flex-1 h-9 px-3 rounded-xl border border-primary/20 bg-white/80 text-sm placeholder:text-zinc-400 focus:outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10 transition-all"
             />

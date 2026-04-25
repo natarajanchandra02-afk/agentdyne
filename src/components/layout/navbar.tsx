@@ -152,8 +152,8 @@ function NotificationBell({ navigate }: { navigate: (href: string) => void }) {
                           n.is_read ? "text-zinc-500" : "text-zinc-900 font-medium")}>
                           {n.title}
                         </p>
-                        {n.message && (
-                          <p className="text-[11px] text-zinc-400 mt-0.5 line-clamp-1">{n.message}</p>
+                        {n.body && (
+                          <p className="text-[11px] text-zinc-400 mt-0.5 line-clamp-1">{n.body}</p>
                         )}
                         <p className="text-[10px] text-zinc-300 mt-1">{formatRelativeTime(n.created_at)}</p>
                       </div>
