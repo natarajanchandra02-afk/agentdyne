@@ -21,7 +21,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { SlidingTabs }                               from "@/components/ui/sliding-tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DashboardSidebar } from "@/components/dashboard/sidebar"
 import { CategoryIcon } from "@/components/ui/category-icon"
@@ -703,21 +703,34 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
 
             {/* Tabs */}
             <form onSubmit={handleSubmit(onSave)}>
-              <Tabs defaultValue={defaultTab === "rag" ? "behavior" : defaultTab || "overview"}>
-                <TabsList className="mb-6 bg-zinc-50 border border-zinc-100 p-1 rounded-xl flex-wrap h-auto gap-1">
-                  <TabsTrigger value="overview"      className="rounded-lg text-sm gap-1.5 data-[state=active]:bg-white data-[state=active]:shadow-sm">
-                    <LayoutDashboard className="h-3.5 w-3.5" /> Overview
-                  </TabsTrigger>
-                  <TabsTrigger value="behavior"      className="rounded-lg text-sm gap-1.5 data-[state=active]:bg-white data-[state=active]:shadow-sm">
-                    <Brain className="h-3.5 w-3.5" /> Behavior
-                  </TabsTrigger>
-                  <TabsTrigger value="security"      className="rounded-lg text-sm gap-1.5 data-[state=active]:bg-white data-[state=active]:shadow-sm">
-                    <ShieldCheck className="h-3.5 w-3.5" /> Security
-                  </TabsTrigger>
-                  <TabsTrigger value="monetization"  className="rounded-lg text-sm gap-1.5 data-[state=active]:bg-white data-[state=active]:shadow-sm">
-                    <DollarSign className="h-3.5 w-3.5" /> Monetization
-                  </TabsTrigger>
-                </TabsList>
+              {/* ── SlidingTabs header ─────────────────────────────────── */}
+              {(() => {
+                const EDITOR_TABS = [
+                  { id: "overview",     label: "Overview",     icon: LayoutDashboard },
+                  { id: "behavior",     label: "Behavior",     icon: Brain },
+                  { id: "security",     label: "Security",     icon: ShieldCheck },
+                  { id: "monetization",label: "Monetization", icon: DollarSign },
+                ] as const
+                return null
+              })()}
+              {/* eslint-disable-next-line react-hooks/rules-of-hooks */}
+              {(() => {
+                const EDITOR_TABS = [
+                  { id: "overview",     label: "Overview",     icon: LayoutDashboard },
+                  { id: "behavior",     label: "Behavior",     icon: Brain },
+                  { id: "security",     label: "Security",     icon: ShieldCheck },
+                  { id: "monetization",label: "Monetization", icon: DollarSign },
+                ]
+                const [activeEditorTab, setActiveEditorTab] = [defaultTab === "rag" ? "behavior" : (defaultTab || "overview"), () => {}]
+                return (
+                  <>
+                    {/* Tab bar — DeepSeek-style sliding pill */}
+                    <div className="mb-6">
+                      <EditorTabBar defaultTab={defaultTab} />
+                    </div>
+                  </>
+                )
+              })()}
 
                 {/* ─── OVERVIEW ──────────────────────────────────── */}
                 <TabsContent value="overview" className="space-y-6">
