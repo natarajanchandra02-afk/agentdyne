@@ -3,19 +3,19 @@
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { motion } from "framer-motion"
+import { motion, AnimatePresence }                  from "framer-motion"
 import {
   Star, Zap, CheckCircle, Play, Code2, BookOpen, MessageSquare,
   Tag, Globe, Clock, TrendingUp, ArrowLeft, Copy, Check, Loader2,
   Layers, Sparkles, BarChart3, Flag, FolderPlus,
   AlertTriangle, ChevronDown, Send, X,
 } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Textarea } from "@/components/ui/textarea"
-import { Navbar } from "@/components/layout/navbar"
-import { Footer } from "@/components/layout/footer"
+import { Button }                                    from "@/components/ui/button"
+import { SlidingTabs }                               from "@/components/ui/sliding-tabs"
+import { Avatar, AvatarFallback, AvatarImage }       from "@/components/ui/avatar"
+import { Textarea }                                  from "@/components/ui/textarea"
+import { Navbar }                                    from "@/components/layout/navbar"
+import { Footer }                                    from "@/components/layout/footer"
 import { CategoryIcon } from "@/components/ui/category-icon"
 import { formatNumber, formatCurrency, formatDate, getInitials, categoryLabel, cn } from "@/lib/utils"
 import { createClient } from "@/lib/supabase/client"
@@ -308,6 +308,7 @@ export function AgentDetailClient({ agent, reviews: initReviews, user, userSubsc
   const [hasMore,     setHasMore]     = useState(initReviews.length === 10)
   const [showReport,  setShowReport]  = useState(false)
   const [showCollect, setShowCollect] = useState(false)
+  const [activeDetailTab, setActiveDetailTab] = useState("playground")
 
   // Bug 12 FIX: count approved reviews from actual query, not denormalized counter
   const approvedReviewCount = reviews.length
@@ -480,22 +481,167 @@ export function AgentDetailClient({ agent, reviews: initReviews, user, userSubsc
                 </div>
               </motion.div>
 
-              <Tabs defaultValue="playground">
-                <TabsList className="bg-zinc-50 border border-zinc-100 p-1 rounded-xl flex-wrap h-auto gap-1">
-                  <TabsTrigger value="playground" className="rounded-lg text-sm data-[state=active]:bg-white data-[state=active]:shadow-sm gap-1.5">
-                    <Play className="h-3.5 w-3.5" /> Playground
-                  </TabsTrigger>
-                  <TabsTrigger value="docs" className="rounded-lg text-sm data-[state=active]:bg-white data-[state=active]:shadow-sm gap-1.5">
-                    <BookOpen className="h-3.5 w-3.5" /> Docs
-                  </TabsTrigger>
-                  <TabsTrigger value="api" className="rounded-lg text-sm data-[state=active]:bg-white data-[state=active]:shadow-sm gap-1.5">
-                    <Code2 className="h-3.5 w-3.5" /> API
-                  </TabsTrigger>
-                  <TabsTrigger value="reviews" className="rounded-lg text-sm data-[state=active]:bg-white data-[state=active]:shadow-sm gap-1.5">
-                    <MessageSquare className="h-3.5 w-3.5" />
-                    Reviews ({formatNumber(approvedReviewCount)})
-                  </TabsTrigger>
-                </TabsList>
+              {/* SlidingTabs — Apple-smooth AnimatePresence */}
+              <div>
+                <SlidingTabs
+                  variant="card"
+                  bg="bg-zinc-50 border border-zinc-100"
+                  tabs={[
+                    { id: "playground", label: "Playground", icon: Play },
+                    { id: "docs",       label: "Docs",        icon: BookOpen },
+                    { id: "api",        label: "API",          icon: Code2 },
+                    { id: "reviews",    label: `Reviews (${formatNumber(approvedReviewCount)})`, icon: MessageSquare },
+                  ]}
+                  active={activeDetailTab}
+                  onChange={setActiveDetailTab}
+                />
+
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.div
+                    key={activeDetailTab}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0, transition: { duration: 0.20, ease: [0.25, 0.46, 0.45, 0.94] } }}
+                    exit={{ opacity: 0, y: -5,  transition: { duration: 0.14, ease: [0.55, 0.06, 0.68, 0.19] } }}
+                    className="mt-4"
+                  >
+
+                  {/* Playground */}
+                  {activeDetailTab === "playground" && (
+                    <div className="space-y-4">
+                      <div className="flex flex-col md:grid md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs font-semibold text-zinc-600 uppercase tracking-wider">Input</label>
+                            <button onClick={handleTrySample} disabled={testing || !user}
+                              className="flex items-center gap-1.5 text-[11px] font-semibold text-primary hover:text-primary/80 bg-primary/8 px-2.5 py-1 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                              <Sparkles className="h-3 w-3" /><span className="hidden sm:inline">Try sample: </span>{sampleData.label}
+                            </button>
+                          </div>
+                          <Textarea value={testInput} onChange={e => setTestInput(e.target.value)}
+                            className="font-mono text-xs h-40 md:h-48 resize-none rounded-xl border-zinc-200"
+                            placeholder='{"input": "Your input here"}' />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs font-semibold text-zinc-600 uppercase tracking-wider">Output</label>
+                          <div className={cn("h-40 md:h-48 rounded-xl border border-zinc-100 bg-zinc-50 p-3 font-mono text-xs overflow-auto whitespace-pre-wrap text-zinc-500", testing && "animate-pulse")}>
+                            {testing ? "Running…" : testOutput || "Output will appear here…"}
+                          </div>
+                        </div>
+                      </div>
+                      {traceInfo && (
+                        <div className="bg-zinc-50 border border-zinc-100 rounded-xl px-4 py-2.5 flex flex-wrap items-center gap-4 text-xs text-zinc-500">
+                          <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {traceInfo.latencyMs}ms</span>
+                          {traceInfo.tokens && <span className="flex items-center gap-1"><BarChart3 className="h-3 w-3" /> {traceInfo.tokens.input}↑ {traceInfo.tokens.output}↓ tokens</span>}
+                          <span className="nums">💰 ${traceInfo.cost.toFixed(6)}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center gap-3">
+                        <Button onClick={() => handleTest()} disabled={testing} className="rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 gap-2 font-semibold">
+                          {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                          {testing ? "Running…" : "Run Agent"}
+                        </Button>
+                        {!user && <p className="text-xs text-zinc-400"><Link href="/login" className="text-primary hover:underline">Sign in</Link> to test</p>}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Docs */}
+                  {activeDetailTab === "docs" && (
+                    <div className="space-y-4">
+                      {agent.long_description && (
+                        <div className="bg-white border border-zinc-100 rounded-2xl p-5">
+                          <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3">Overview</p>
+                          <p className="text-sm text-zinc-600 leading-relaxed whitespace-pre-wrap">{agent.long_description}</p>
+                        </div>
+                      )}
+                      <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-5 min-h-32">
+                        {agent.documentation
+                          ? <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-zinc-600">{agent.documentation}</pre>
+                          : <p className="text-zinc-400 text-sm">No documentation provided for this agent yet.</p>}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* API */}
+                  {activeDetailTab === "api" && (
+                    <div className="space-y-4">
+                      <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-4">
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-xs font-semibold text-zinc-600 uppercase tracking-wider">TypeScript / JavaScript</span>
+                          <button onClick={copySnippet} className="flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
+                            {copied ? <><Check className="h-3.5 w-3.5 text-green-500" /> Copied!</> : <><Copy className="h-3.5 w-3.5" /> Copy</>}
+                          </button>
+                        </div>
+                        <pre className="text-xs font-mono text-zinc-500 overflow-auto leading-relaxed whitespace-pre">{[
+                          `const res = await fetch(\`\${window.location.origin}/api/agents/${agent.id}/execute\`, {`,
+                          `  method: "POST",`,
+                          `  headers: { "Authorization": "Bearer YOUR_API_KEY", "Content-Type": "application/json" },`,
+                          `  body: JSON.stringify({ input: "your input" })`,
+                          `});`,
+                          `const { executionId, output, latencyMs, cost } = await res.json();`,
+                        ].join("\n")}</pre>
+                      </div>
+                      {agent.capability_tags?.length > 0 && (
+                        <div className="bg-white border border-zinc-100 rounded-2xl p-4">
+                          <p className="text-xs font-semibold text-zinc-600 uppercase tracking-wider mb-2">Capability Tags</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {agent.capability_tags.map((tag: string) => <span key={tag} className="text-[11px] font-mono bg-zinc-50 border border-zinc-200 text-zinc-600 px-2 py-0.5 rounded-full">{tag}</span>)}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Reviews */}
+                  {activeDetailTab === "reviews" && (
+                    <div className="space-y-4">
+                      {user && <ReviewForm agentId={agent.id} userId={user.id} onReviewSubmitted={() => {}} />}
+                      {reviews.length === 0 ? (
+                        <div className="text-center py-10 text-zinc-400 text-sm bg-white border border-zinc-100 rounded-2xl">
+                          No approved reviews yet.
+                          {!user && <> <Link href="/login" className="text-primary hover:underline">Sign in</Link> to be the first.</>}
+                          {user && " Run this agent and leave the first review!"}
+                        </div>
+                      ) : (
+                        <>
+                          {reviews.map(r => (
+                            <div key={r.id} className="bg-white border border-zinc-100 rounded-2xl p-4">
+                              <div className="flex items-start gap-3">
+                                <Avatar className="h-8 w-8 flex-shrink-0">
+                                  <AvatarImage src={r.profiles?.avatar_url} />
+                                  <AvatarFallback className="text-xs bg-primary text-white">{getInitials(r.profiles?.full_name || "A")}</AvatarFallback>
+                                </Avatar>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-sm font-semibold text-zinc-900">{r.profiles?.full_name || "Anonymous"}</span>
+                                    <span className="text-xs text-zinc-400 flex-shrink-0">{formatDate(r.created_at)}</span>
+                                  </div>
+                                  <div className="flex gap-0.5 mb-2">
+                                    {[...Array(5)].map((_, i) => <Star key={i} className={cn("h-3 w-3", i < r.rating ? "fill-yellow-400 text-yellow-400" : "text-zinc-200")} />)}
+                                  </div>
+                                  {r.title && <p className="text-sm font-medium text-zinc-900 mb-1">{r.title}</p>}
+                                  {r.body  && <p className="text-sm text-zinc-500 leading-relaxed">{r.body}</p>}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                          {hasMore && (
+                            <div className="text-center">
+                              <Button variant="outline" onClick={loadMoreReviews} disabled={moreLoading} className="rounded-xl border-zinc-200 text-sm gap-2">
+                                {moreLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ChevronDown className="h-4 w-4" />}
+                                {moreLoading ? "Loading…" : "Load more reviews"}
+                              </Button>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  </motion.div>
+                </AnimatePresence>
+              </div>
+
 
                 {/* ── Playground — Bug 16 FIX: responsive layout ─────────── */}
                 <TabsContent value="playground" className="mt-4 space-y-4">
@@ -660,7 +806,7 @@ export function AgentDetailClient({ agent, reviews: initReviews, user, userSubsc
                     </>
                   )}
                 </TabsContent>
-              </Tabs>
+              </div>
             </div>
 
             {/* ── Sidebar ─────────────────────────────────────────────────── */}

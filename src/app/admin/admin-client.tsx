@@ -9,7 +9,8 @@ import {
   Star, ClipboardList, ExternalLink, ChevronDown, ChevronUp,
   Tag, Cpu, Hash, MessageSquare, Calendar, ArrowUpRight,
 } from "lucide-react"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { SlidingTabs }                               from "@/components/ui/sliding-tabs"
+import { AnimatePresence, motion as m }               from "framer-motion"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -381,6 +382,7 @@ export function AdminClient({
 
   const pendingCount    = pendingReviews.length
   const agentTabPending = agents.filter(a => a.status === "pending_review").length
+  const [activeAdminTab, setActiveAdminTab] = useState(pendingCount > 0 ? "reviews" : "agents")
 
   // ── Stats grid ─────────────────────────────────────────────────────────────
   const METRICS = [
