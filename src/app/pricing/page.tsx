@@ -6,6 +6,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Check, Zap, ArrowRight, HelpCircle, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { SlidingTabs } from "@/components/ui/sliding-tabs"
 import { Navbar } from "@/components/layout/navbar"
 import { Footer } from "@/components/layout/footer"
 import { useUser } from "@/hooks/use-user"
@@ -144,22 +145,17 @@ export default function PricingPage() {
             <p className="text-xl text-zinc-500 max-w-xl mx-auto mb-8">
               Start free. Scale as you grow. No hidden fees, no surprise charges.
             </p>
-            {/* Monthly / yearly toggle */}
-            <div className="inline-flex items-center gap-1 bg-white border border-zinc-200 rounded-xl p-1 shadow-sm">
-              <button onClick={() => setYearly(false)}
-                className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-all",
-                  !yearly ? "bg-zinc-900 text-white shadow-sm" : "text-zinc-500 hover:text-zinc-900")}>
-                Monthly
-              </button>
-              <button onClick={() => setYearly(true)}
-                className={cn("px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center gap-2",
-                  yearly ? "bg-zinc-900 text-white shadow-sm" : "text-zinc-500 hover:text-zinc-900")}>
-                Yearly
-                <span className="text-[10px] font-bold bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full">
-                  -20%
-                </span>
-              </button>
-            </div>
+            {/* Monthly / yearly toggle — DeepSeek sliding pill */}
+            <SlidingTabs
+              variant="pill"
+              bg="bg-white border border-zinc-200 shadow-sm"
+              tabs={[
+                { id: "monthly", label: "Monthly" },
+                { id: "yearly",  label: "Yearly · Save 20%" },
+              ]}
+              active={yearly ? "yearly" : "monthly"}
+              onChange={id => setYearly(id === "yearly")}
+            />
           </div>
         </section>
 

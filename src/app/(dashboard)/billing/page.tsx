@@ -2,6 +2,7 @@
 import { useEffect, useState, useRef, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useUser } from "@/hooks/use-user"
+import { createClient } from "@/lib/supabase/client"
 import { BillingClient } from "./billing-client"
 import { Loader2 } from "lucide-react"
 import toast from "react-hot-toast"
@@ -17,9 +18,8 @@ function BillingPageInner() {
   const canceledParam = searchParams.get("canceled")
   const { user, loading: authLoading } = useUser()
 
-  // Singleton Supabase client
-  const { createClient } = require("@/lib/supabase/client")
-  const supabaseRef = useRef<any>(null)
+  // Singleton Supabase client — import at top, not require() inside component
+  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null)
   if (!supabaseRef.current) supabaseRef.current = createClient()
   const supabase = supabaseRef.current
 

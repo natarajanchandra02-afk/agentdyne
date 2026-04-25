@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import Link from "next/link"
 import {
   Book, Code2, Zap, Key, Webhook,
@@ -428,6 +428,25 @@ function EndpointRow({ method, path, desc }: { method: string; path: string; des
 
 export default function DocsClient() {
   const [active, setActive] = useState("quickstart")
+
+  // Track active section via IntersectionObserver — updates as user scrolls
+  useEffect(() => {
+    const observers: IntersectionObserver[] = []
+    const sectionIds = SECTIONS.map(s => s.id)
+
+    sectionIds.forEach(id => {
+      const el = document.getElementById(id)
+      if (!el) return
+      const obs = new IntersectionObserver(
+        ([entry]) => { if (entry.isIntersecting) setActive(id) },
+        { rootMargin: "-20% 0px -70% 0px", threshold: 0 }
+      )
+      obs.observe(el)
+      observers.push(obs)
+    })
+
+    return () => observers.forEach(obs => obs.disconnect())
+  }, [])
 
   return (
     <div className="min-h-screen bg-white">

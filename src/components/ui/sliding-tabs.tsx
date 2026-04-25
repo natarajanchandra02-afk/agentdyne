@@ -1,0 +1,111 @@
+"use client"
+
+/**
+ * SlidingTabs — DeepSeek-style pill tab selector.
+ *
+ * Uses framer-motion layoutId to slide the active pill indicator
+ * smoothly between tabs. Drop-in replacement for shadcn Tabs.
+ *
+ * Usage:
+ *   <SlidingTabs
+ *     tabs={[{ id: "a", label: "Option A" }, { id: "b", label: "Option B" }]}
+ *     active={active}
+ *     onChange={setActive}
+ *   />
+ */
+
+import { motion } from "framer-motion"
+import { cn } from "@/lib/utils"
+
+export interface Tab {
+  id:       string
+  label:    string
+  icon?:    React.ElementType
+  badge?:   string
+  danger?:  boolean
+}
+
+interface SlidingTabsProps {
+  tabs:      Tab[]
+  active:    string
+  onChange:  (id: string) => void
+  className?: string
+  /** "pill" = compact rounded-full (DeepSeek style), "card" = larger rounded-xl */
+  variant?:  "pill" | "card"
+  /** container background — defaults to bg-zinc-100 */
+  bg?:       string
+}
+
+export function SlidingTabs({
+  tabs,
+  active,
+  onChange,
+  className,
+  variant = "pill",
+  bg = "bg-zinc-100",
+}: SlidingTabsProps) {
+  const isPill = variant === "pill"
+
+  return (
+    <div
+      className={cn(
+        "relative flex items-center gap-0.5 p-1 rounded-xl",
+        bg,
+        className
+      )}
+      role="tablist"
+    >
+      {tabs.map(tab => {
+        const Icon     = tab.icon
+        const isActive = tab.id === active
+
+        return (
+          <button
+            key={tab.id}
+            role="tab"
+            aria-selected={isActive}
+            onClick={() => onChange(tab.id)}
+            className={cn(
+              "relative flex items-center justify-center gap-1.5 transition-colors duration-150",
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1",
+              isPill
+                ? "px-4 py-1.5 rounded-full text-sm font-medium"
+                : "flex-1 px-3 py-2 rounded-lg text-sm font-medium",
+              isActive
+                ? tab.danger ? "text-red-500" : "text-zinc-900"
+                : tab.danger ? "text-red-400 hover:text-red-500" : "text-zinc-500 hover:text-zinc-800"
+            )}
+          >
+            {/* Sliding background indicator — uses layoutId for smooth animation */}
+            {isActive && (
+              <motion.span
+                layoutId="sliding-tab-bg"
+                className={cn(
+                  "absolute inset-0 z-0 bg-white shadow-sm",
+                  isPill ? "rounded-full" : "rounded-lg"
+                )}
+                transition={{
+                  type:      "spring",
+                  stiffness: 380,
+                  damping:   32,
+                  mass:      0.8,
+                }}
+              />
+            )}
+
+            {/* Content sits above the indicator */}
+            <span className="relative z-10 flex items-center gap-1.5">
+              {Icon && <Icon className="h-3.5 w-3.5 flex-shrink-0" />}
+              <span>{tab.label}</span>
+              {tab.badge && (
+                <span className="text-[9px] font-bold bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full leading-none">
+                  {tab.badge}
+                </span>
+              )}
+            </span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}

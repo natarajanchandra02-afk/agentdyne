@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { SlidingTabs } from "@/components/ui/sliding-tabs"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { createClient } from "@/lib/supabase/client"
 import { getInitials, cn } from "@/lib/utils"
@@ -424,28 +425,14 @@ export function SettingsClient({ user, profile }: Props) {
         <p className="text-zinc-500 text-sm mt-1">Manage your account preferences and security.</p>
       </div>
 
-      {/* Custom tab bar with smooth indicator animation */}
-      <div className="bg-zinc-50 border border-zinc-100 p-1 rounded-xl flex gap-0.5">
-        {TABS.map(tab => {
-          const Icon    = tab.icon
-          const isActive = activeTab === tab.id
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={cn(
-                "relative flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary",
-                isActive
-                  ? tab.danger ? "bg-white text-red-500 shadow-sm" : "bg-white text-zinc-900 shadow-sm"
-                  : tab.danger ? "text-red-400 hover:text-red-500" : "text-zinc-500 hover:text-zinc-900"
-              )}
-            >
-              <Icon className="h-3.5 w-3.5 flex-shrink-0" />
-              <span className="hidden sm:inline">{tab.label}</span>
-            </button>
-          )
-        })}
-      </div>
+      {/* DeepSeek-style sliding tab bar */}
+      <SlidingTabs
+        variant="card"
+        bg="bg-zinc-50 border border-zinc-100"
+        tabs={TABS.map(t => ({ id: t.id, label: t.label, icon: t.icon, danger: t.danger }))}
+        active={activeTab}
+        onChange={id => setActiveTab(id as TabId)}
+      />
 
       {/* Animated tab content */}
       <AnimatePresence mode="wait" initial={false}>
