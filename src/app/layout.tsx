@@ -1,8 +1,9 @@
 import type { Metadata } from "next"
 import { Inter, JetBrains_Mono } from "next/font/google"
 import "./globals.css"
-import { QueryProvider } from "@/components/providers/query-provider"
-import { validateEnv } from "@/lib/env"
+import { QueryProvider }   from "@/components/providers/query-provider"
+import { SupportWidget }  from "@/components/support/support-widget"
+import { validateEnv }    from "@/lib/env"
 
 const inter = Inter({
   subsets: ["latin"],
@@ -45,6 +46,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={`${inter.variable} ${jetbrainsMono.variable} font-sans bg-white text-zinc-900 antialiased`}>
         <QueryProvider>
           {children}
+          <SupportWidget />
         </QueryProvider>
       </body>
     </html>

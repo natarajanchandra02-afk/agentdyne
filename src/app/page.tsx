@@ -199,10 +199,10 @@ export default function HomePage() {
           </FadeUp>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
             {[
-              { name: "Free",       price: "$0",     period: "/mo", calls: "100 calls/mo",    features: ["All free agents", "Playground access", "Community support"], highlight: false, cta: "Get started free" },
-              { name: "Starter",    price: "$19",    period: "/mo", calls: "1,000 calls/mo", features: ["All free agents", "API access", "Basic analytics", "Email support"], highlight: false, cta: "Start free trial" },
-              { name: "Pro",        price: "$79",    period: "/mo", calls: "10,000 calls/mo", features: ["All agents", "Priority execution", "Advanced analytics", "API access"], highlight: true, cta: "Start Pro trial" },
-              { name: "Enterprise", price: "Custom", period: "",    calls: "Unlimited",        features: ["Custom SLA", "Dedicated infra", "SSO / SAML", "Custom contracts"], highlight: false, cta: "Contact sales" },
+              { name: "Free",       price: "$0",    period: "/mo", calls: "50 lifetime calls",  features: ["Platform agents only", "Playground access", "Community support", "No credit card needed"],  highlight: false, cta: "Get started free" },
+              { name: "Starter",    price: "$19",   period: "/mo", calls: "500 calls/month",    features: ["All free + premium agents", "API access", "Pipelines (5 steps)", "Email support"],           highlight: false, cta: "Start free trial" },
+              { name: "Pro",        price: "$79",   period: "/mo", calls: "5,000 calls/month",  features: ["All agents", "Priority execution", "Full pipelines", "Advanced analytics"],               highlight: true,  cta: "Start Pro trial" },
+              { name: "Enterprise", price: "Custom",period: "",    calls: "Unlimited",           features: ["Custom SLA", "Dedicated infra", "SSO / SAML", "Custom contracts"],                       highlight: false, cta: "Contact sales" },
             ].map((plan, i) => (
             <FadeUp key={plan.name} delay={i * 0.08}>
             <div className={`rounded-2xl p-7 text-left border relative ${
