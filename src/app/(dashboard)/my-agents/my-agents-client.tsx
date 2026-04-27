@@ -254,10 +254,44 @@ export function MyAgentsClient({ agents: init }: { agents: any[] }) {
   })
 
   const submitForReview = async (id: string) => {
-    const { error } = await supabase.from("agents").update({ status: "pending_review" }).eq("id", id)
-    if (error) { toast.error(error.message); return }
-    setAgents(prev => prev.map(a => a.id === id ? { ...a, status: "pending_review" } : a))
-    toast.success("Submitted for review — usually approved within 24h")
+    // Run the evaluation harness BEFORE submitting (non-negotiable gate)
+    const loadingToast = toast.loading("Running evaluation harness (5–15s)…")
+    try {
+      const evalRes = await fetch(`/api/agents/${id}/evaluate`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        // Pass agent's own description as a minimal test case so eval can run
+        body: JSON.stringify({
+          tests: [{ input: agents.find(a => a.id === id)?.description ?? "Test this agent." }],
+        }),
+      })
+      const evalData = await evalRes.json()
+      toast.dismiss(loadingToast)
+
+      if (!evalRes.ok) {
+        // Plan/email restriction — surface the exact message
+        toast.error(evalData.error || "Evaluation failed — check your plan or email verification.")
+        return
+      }
+
+      if (evalData.gate === "reject") {
+        toast.error(`Score ${evalData.score}/100 — below minimum 70. ${evalData.recommendation}`)
+        // Status is now 'rejected' (set by eval endpoint) — refresh UI
+        setAgents(prev => prev.map(a => a.id === id ? { ...a, status: "rejected" } : a))
+        return
+      }
+
+      // Score ≥ 70 → submitted (eval endpoint set status = pending_review)
+      setAgents(prev => prev.map(a => a.id === id ? { ...a, status: "pending_review" } : a))
+      if (evalData.gate === "fast_track") {
+        toast.success(`Score ${evalData.score}/100 — Fast-tracked! Under review in <2h.`)
+      } else {
+        toast.success(`Score ${evalData.score}/100 — Submitted for review (est. 24h).`)
+      }
+    } catch (err: any) {
+      toast.dismiss(loadingToast)
+      toast.error(err.message || "Evaluation failed. Please try again.")
+    }
   }
 
   const archiveAgent = async (id: string) => {

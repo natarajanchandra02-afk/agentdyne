@@ -344,20 +344,28 @@ const CREDITS_ENDPOINTS = [
 ]
 
 const RATE_ROWS = [
-  { plan: "Free",       monthly: "100",       rpm: "10",     c: "1" },
-  { plan: "Starter",    monthly: "1,000",     rpm: "30",     c: "3" },
-  { plan: "Pro",        monthly: "10,000",    rpm: "60",     c: "10" },
-  { plan: "Enterprise", monthly: "Unlimited", rpm: "Custom", c: "Custom" },
+  { plan: "Free",       monthly: "50 lifetime",  rpm: "3",      c: "1"      },
+  { plan: "Starter",    monthly: "500",          rpm: "10",     c: "3"      },
+  { plan: "Pro",        monthly: "5,000",        rpm: "30",     c: "10"     },
+  { plan: "Enterprise", monthly: "Unlimited",    rpm: "200",    c: "50"     },
 ]
 
 const ERROR_ROWS = [
-  { code: "400", title: "Bad Request",       cls: "ValidationError",             desc: "Missing or invalid parameters." },
-  { code: "401", title: "Unauthorized",      cls: "AuthenticationError",          desc: "Missing, invalid, or revoked API key." },
-  { code: "402", title: "Payment Required",  cls: "InsufficientCreditsError",     desc: "Credit balance below agent price (INSUFFICIENT_CREDITS)." },
-  { code: "403", title: "Forbidden",         cls: "SubscriptionRequiredError",    desc: "Agent requires subscription (SUBSCRIPTION_REQUIRED)." },
-  { code: "404", title: "Not Found",         cls: "NotFoundError",               desc: "Agent, pipeline, or resource does not exist." },
-  { code: "429", title: "Too Many Requests", cls: "RateLimitError",               desc: "Rate limit or monthly quota exhausted (QUOTA_EXCEEDED)." },
-  { code: "500", title: "Server Error",      cls: "InternalServerError",          desc: "AgentDyne error. Retry with exponential back-off." },
+  { code: "400", title: "Bad Request",           cls: "ValidationError",           desc: "Missing or invalid parameters. Check agentId format and body JSON." },
+  { code: "401", title: "Unauthorized",          cls: "AuthenticationError",        desc: "Missing, invalid, or revoked API key." },
+  { code: "402", title: "Payment Required",      cls: "InsufficientCreditsError",   desc: "Credit balance below agent price (INSUFFICIENT_CREDITS)." },
+  { code: "403", title: "Forbidden",             cls: "SubscriptionRequiredError",  desc: "Agent requires subscription (SUBSCRIPTION_REQUIRED) or PLAN_RESTRICTION." },
+  { code: "403", title: "Email Not Verified",    cls: "EMAIL_NOT_VERIFIED",         desc: "Verify your email before running agents." },
+  { code: "403", title: "Account Banned",        cls: "AccountBanned",             desc: "Account suspended — contact support@agentdyne.com." },
+  { code: "404", title: "Not Found",             cls: "NotFoundError",             desc: "Agent, pipeline, or resource does not exist." },
+  { code: "413", title: "Payload Too Large",     cls: "InputTooLarge",             desc: "Input exceeds 32KB limit for your plan." },
+  { code: "422", title: "Content Policy",        cls: "CONTENT_POLICY",            desc: "Input blocked by safety guardrails. See blocked_by field." },
+  { code: "429", title: "Quota Exceeded",        cls: "QUOTA_EXCEEDED",            desc: "Monthly execution quota reached. Upgrade or wait for next billing cycle." },
+  { code: "429", title: "Lifetime Limit",        cls: "LIFETIME_QUOTA_EXCEEDED",   desc: "Free plan 50-execution lifetime limit reached. Upgrade to Starter." },
+  { code: "429", title: "Compute Cap",           cls: "COMPUTE_CAP_EXCEEDED",      desc: "Monthly USD compute cap reached ($10 Starter / $50 Pro). Upgrade for higher cap." },
+  { code: "429", title: "Concurrency Limit",     cls: "CONCURRENCY_LIMIT",         desc: "Too many simultaneous executions. Free=1, Starter=3, Pro=10." },
+  { code: "429", title: "Rate Limit",            cls: "RateLimitError",            desc: "Too many requests per minute. Retry-After header contains wait seconds." },
+  { code: "500", title: "Server Error",          cls: "InternalServerError",       desc: "AgentDyne error. Retry with exponential back-off. ExecutionId is preserved for retry." },
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
