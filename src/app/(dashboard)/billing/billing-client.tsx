@@ -12,19 +12,24 @@ import toast from "react-hot-toast"
 
 interface Props { profile: any; transactions: any[] }
 
-// Plans — outcome-focused descriptions, not just call counts
+// Plans — ALIGNED with constants.ts + public pricing page
+// Free: 50 lifetime executions (not monthly) — growth lever, tightly controlled
+// Starter: $19/mo, 500/mo, $10 compute cap
+// Pro: $79/mo, 5,000/mo, $50 compute cap
 const PLANS = [
   {
     key:      "free",
     name:     "Free",
     price:    0,
-    calls:    100,
-    unitHint: "~$0 / run",
-    tagline:  "Try the platform, no card required",
+    calls:    50,
+    period:   "lifetime",
+    unitHint: "50 total calls, no card needed",
+    tagline:  "Explore the platform risk-free",
     features: [
-      "100 executions / month",
-      "Free marketplace agents",
+      "50 lifetime executions total",
+      "Platform-owned agents only",
       "Playground access",
+      "No pipelines or API access",
       "Community support",
     ],
   },
@@ -32,31 +37,34 @@ const PLANS = [
     key:      "starter",
     name:     "Starter",
     price:    19,
-    calls:    1_000,
-    unitHint: "~$0.019 / 100 runs",
-    tagline:  "For individuals & side projects",
+    calls:    500,
+    period:   "month",
+    unitHint: "~$0.038 / 100 runs · $10 compute cap",
+    tagline:  "For builders & side projects",
     features: [
-      "1,000 executions / month",
-      "All marketplace agents",
-      "API access",
-      "Email support",
-      "Cancel anytime",
+      "500 executions / month",
+      "$10 monthly compute cap",
+      "All agents + API access",
+      "Pipelines (up to 5 steps)",
+      "Marketplace publishing",
+      "Email support · Cancel anytime",
     ],
   },
   {
     key:      "pro",
     name:     "Pro",
     price:    79,
-    calls:    10_000,
-    unitHint: "~$0.0079 / 100 runs",
+    calls:    5_000,
+    period:   "month",
+    unitHint: "~$0.0158 / 100 runs · $50 compute cap",
     tagline:  "For production workloads",
     features: [
-      "10,000 executions / month",
+      "5,000 executions / month",
+      "$50 monthly compute cap",
       "All agents + priority execution",
-      "Advanced analytics",
-      "API access + webhooks",
-      "Priority support",
-      "Cancel anytime",
+      "Full pipelines (unlimited steps)",
+      "Advanced analytics + webhooks",
+      "Priority support · Cancel anytime",
     ],
     popular:  true,
   },
@@ -65,16 +73,16 @@ const PLANS = [
     name:     "Enterprise",
     price:    null,
     calls:    -1,
-    unitHint: "Volume discounts",
+    period:   "",
+    unitHint: "Volume discounts available",
     tagline:  "For teams that need more control",
     features: [
       "Unlimited executions",
-      "Dedicated compute",
-      "Custom SLA & uptime",
-      "SSO / SAML",
-      "Private agent hosting",
-      "Volume discounts",
-      "Custom contracts",
+      "Custom compute cap",
+      "Dedicated infrastructure",
+      "Custom SLA & uptime guarantees",
+      "SSO / SAML + private agents",
+      "Volume discounts + custom contracts",
     ],
   },
 ]
@@ -83,10 +91,17 @@ export function BillingClient({ profile, transactions }: Props) {
   const [loading, setLoading] = useState<string | null>(null)
 
   const currentPlan = profile?.subscription_plan || "free"
-  const used   = profile?.executions_used_this_month || 0
-  const quota  = profile?.monthly_execution_quota    || 100
+  const isFreePlan   = currentPlan === "free"
+  // Free plan tracks lifetime executions; paid plans track monthly
+  const used   = isFreePlan
+    ? (profile?.lifetime_executions_used || 0)
+    : (profile?.executions_used_this_month || 0)
+  const quota  = isFreePlan
+    ? 50
+    : (profile?.monthly_execution_quota || PLANS.find(p => p.key === currentPlan)?.calls || 500)
   const pct    = quota === -1 ? 0 : Math.min(Math.round((used / quota) * 100), 100)
   const isNearLimit = pct >= 80 && quota !== -1
+  const periodLabel = isFreePlan ? "lifetime" : "this month"
 
   const handleUpgrade = async (planKey: string) => {
     if (planKey === "enterprise") { window.location.href = "/contact"; return }
@@ -170,9 +185,9 @@ export function BillingClient({ profile, transactions }: Props) {
             <p className="text-2xl font-bold text-zinc-900 capitalize">{currentPlan} plan</p>
           </div>
           <div className="text-right">
-            <p className="text-xs text-zinc-400 mb-1">Usage this month</p>
+            <p className="text-xs text-zinc-400 mb-1">Usage {periodLabel}</p>
             <p className="text-base font-bold text-zinc-900 nums">
-              {used.toLocaleString()} / {quota === -1 ? "∞" : quota.toLocaleString()} calls
+              {used.toLocaleString()} / {quota === -1 ? "∞" : quota.toLocaleString()} {isFreePlan ? "lifetime" : "calls"}
             </p>
           </div>
         </div>
@@ -190,7 +205,7 @@ export function BillingClient({ profile, transactions }: Props) {
               />
             </div>
             <div className="flex items-center justify-between mt-2">
-              <p className="text-xs text-zinc-400">{pct}% used · resets monthly</p>
+              <p className="text-xs text-zinc-400">{pct}% used{isFreePlan ? " · lifetime limit" : " · resets monthly"}</p>
               {isNearLimit && (
                 <p className="text-xs font-semibold text-amber-600 flex items-center gap-1">
                   <AlertTriangle className="h-3.5 w-3.5" />
@@ -262,7 +277,7 @@ export function BillingClient({ profile, transactions }: Props) {
                       </>}
                 </div>
                 <p className={cn("text-xs mb-4", isPopular ? "text-zinc-500" : "text-zinc-400")}>
-                  {plan.calls === -1 ? "Unlimited executions" : `${plan.calls.toLocaleString()} executions/mo`}
+                  {plan.calls === -1 ? "Unlimited executions" : `${plan.calls.toLocaleString()} executions${plan.period === "lifetime" ? " (lifetime total)" : "/mo"}`}
                   {" · "}{plan.unitHint}
                 </p>
 

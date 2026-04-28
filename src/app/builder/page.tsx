@@ -12,7 +12,7 @@ import Link from "next/link"
 import {
   Bot, Loader2, ArrowRight, ArrowLeft, Wand2, Cpu, DollarSign,
   Zap, Activity, Gauge, Layers, Database, CheckCircle,
-  GitMerge, ChevronRight,
+  GitMerge, ChevronRight, AlertTriangle,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/select"
 import { CategoryIcon } from "@/components/ui/category-icon"
 import { DashboardSidebar } from "@/components/dashboard/sidebar"
+import { useUser } from "@/hooks/use-user"
 import { categoryLabel, cn } from "@/lib/utils"
 import {
   SUPPORTED_MODELS, MODEL_LABELS, MAX_SYSTEM_PROMPT_LENGTH,
@@ -106,6 +107,8 @@ const WIZARD_STEPS = [
 function BuilderInner() {
   const router       = useRouter()
   const searchParams = useSearchParams()
+  const { profile }  = useUser()
+  const userPlan     = profile?.subscription_plan ?? 'free'
   const [loading,   setLoading]   = useState(false)
   const [step,      setStep]      = useState(0)
   const [agentType, setAgentType] = useState<AgentType>("single")
@@ -525,21 +528,36 @@ function BuilderInner() {
                           Free agents are publicly accessible. Starts as a <strong className="text-zinc-600">draft</strong> — submit for review when ready.
                         </p>
                       )}
+                      {/* Plan gate — warn free plan users before they set paid pricing */}
+                      {userPlan === 'free' && (pricingModel === 'per_call' || pricingModel === 'subscription' || pricingModel === 'freemium') && (
+                        <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3">
+                          <AlertTriangle className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-sm font-semibold text-amber-800">Starter or Pro required to monetise</p>
+                            <p className="text-xs text-amber-700 mt-0.5 leading-relaxed">
+                              Free plan agents cannot be published with paid pricing.
+                              <a href="/pricing" className="underline font-semibold ml-1" target="_blank">View plans →</a>
+                            </p>
+                          </div>
+                        </div>
+                      )}
                       {(pricingModel === "per_call" || pricingModel === "freemium") && (
                         <div className="space-y-1.5">
-                          <Label className="text-sm font-medium text-zinc-700">Price per Call (USD)</Label>
-                          <Input type="number" step="0.001" min="0" placeholder="0.010"
-                            className="rounded-xl border-zinc-200 h-10 bg-white" {...register("price_per_call")} />
-                          <p className="text-xs text-zinc-400">You earn 80% — AgentDyne takes 20%</p>
-                        </div>
+                            <Label className="text-sm font-medium text-zinc-700">Price per Call (USD)</Label>
+                            <Input type="number" step="0.001" min="0" placeholder="0.010"
+                              className="rounded-xl border-zinc-200 h-10 bg-white" {...register("price_per_call")} />
+                            <p className="text-xs text-zinc-400">You earn 80% · AgentDyne takes 20%</p>
+                            <p className="text-[11px] text-primary/70">Suggested: $0.01–$0.05/call based on similar agents</p>
+                          </div>
                       )}
                       {pricingModel === "subscription" && (
                         <div className="space-y-1.5">
-                          <Label className="text-sm font-medium text-zinc-700">Monthly Price (USD)</Label>
-                          <Input type="number" step="0.01" min="0" placeholder="9.99"
-                            className="rounded-xl border-zinc-200 h-10 bg-white" {...register("subscription_price_monthly")} />
-                          <p className="text-xs text-zinc-400">You earn 80% — AgentDyne takes 20%</p>
-                        </div>
+                            <Label className="text-sm font-medium text-zinc-700">Monthly Price (USD)</Label>
+                            <Input type="number" step="0.01" min="0" placeholder="9.99"
+                              className="rounded-xl border-zinc-200 h-10 bg-white" {...register("subscription_price_monthly")} />
+                            <p className="text-xs text-zinc-400">You earn 80% · AgentDyne takes 20%</p>
+                            <p className="text-[11px] text-primary/70">Suggested: $4.99–$19.99/mo based on similar agents</p>
+                          </div>
                       )}
                       <div className="pt-3 border-t border-zinc-50 space-y-2">
                         <p className="text-xs font-semibold text-zinc-500">After creation you can also:</p>

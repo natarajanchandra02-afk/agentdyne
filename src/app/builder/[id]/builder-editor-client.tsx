@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback }                       from "react"
+import { useState, useCallback, useEffect, useRef }     from "react"
 import { useRouter }                                    from "next/navigation"
 import { useForm }                                      from "react-hook-form"
 import { zodResolver }                                  from "@hookform/resolvers/zod"
@@ -23,6 +23,7 @@ import { Badge }                                        from "@/components/ui/ba
 import { EditorTabBar, tabVariants, type EditorTabId }  from "./editor-tab-bar"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DashboardSidebar }                             from "@/components/dashboard/sidebar"
+import { useUser }                                      from "@/hooks/use-user"
 import { CategoryIcon }                                 from "@/components/ui/category-icon"
 import { createClient }                                 from "@/lib/supabase/client"
 import { MCP_SERVERS, MCP_CATEGORIES, type MCPCategory } from "@/lib/mcp-servers"
@@ -400,9 +401,127 @@ function KnowledgeSection({ items, onChange }: { items: KnowledgeItem[]; onChang
 // BuilderEditorClient — main export
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Quality Score Panel
+// ─────────────────────────────────────────────────────────────────────────────
+
+function QualityScorePanel({ agentId, agentStatus }: { agentId: string; agentStatus: string }) {
+  const [score, setScore] = useState<any>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!['active','pending_review','rejected'].includes(agentStatus)) return
+    setLoading(true)
+    fetch(`/api/agents/${agentId}/score`)
+      .then(r => r.json())
+      .then(setScore)
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [agentId, agentStatus])
+
+  if (loading) return (
+    <div className="mb-6 bg-zinc-50 border border-zinc-100 rounded-2xl px-5 py-4 animate-pulse h-24" />
+  )
+  if (!score) return null
+
+  const composite = Math.round(score.composite_score ?? 0)
+  const isVerified = composite >= 85 && score.badges?.top_rated
+  const statusColor =
+    composite >= 85 ? 'text-green-700 bg-green-50 border-green-200' :
+    composite >= 70 ? 'text-amber-700 bg-amber-50 border-amber-200' :
+                     'text-red-700 bg-red-50 border-red-200'
+
+  // Build human-readable component rows
+  const components = score.components ? Object.entries(score.components).map(([k, v]: [string, any]) => {
+    const s = Math.round(v.score ?? 0)
+    const ok = s >= 70
+    return { label: v.label, score: s, ok }
+  }) : []
+
+  // Generate actionable suggestions for low scores
+  const suggestions: string[] = []
+  if (composite < 85) {
+    const c = score.components
+    if (c?.latency?.score < 70)   suggestions.push('Reduce max_tokens — high token limits slow responses')
+    if (c?.cost?.score < 70)      suggestions.push('Lower max_tokens or use a lighter model (Haiku instead of Sonnet)')
+    if (c?.accuracy?.score < 70)  suggestions.push('Improve system prompt clarity — add explicit output format instructions')
+    if (c?.reliability?.score < 70) suggestions.push('Add more test cases to improve reliability signals')
+    if (!suggestions.length && composite < 85) suggestions.push('Run more test cases to improve your quality score')
+  }
+
+  return (
+    <div className={`mb-6 border rounded-2xl overflow-hidden`} style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+      <div className={`flex items-center justify-between px-5 py-3 border-b ${statusColor.includes('green') ? 'bg-green-50 border-green-100' : statusColor.includes('amber') ? 'bg-amber-50 border-amber-100' : 'bg-red-50 border-red-100'}`}>
+        <div className="flex items-center gap-2">
+          <span className="text-lg">{composite >= 85 ? '🏆' : composite >= 70 ? '🧠' : '⚠️'}</span>
+          <div>
+            <p className={`text-sm font-bold ${statusColor.includes('green') ? 'text-green-800' : statusColor.includes('amber') ? 'text-amber-800' : 'text-red-800'}`}>
+              Quality Score: {score.scored ? `${composite} / 100` : 'Not yet scored'}
+            </p>
+            <p className={`text-[11px] ${statusColor.includes('green') ? 'text-green-600' : statusColor.includes('amber') ? 'text-amber-600' : 'text-red-600'}`}>
+              {composite >= 85 ? 'Excellent — fast-tracked for approval' :
+               composite >= 70 ? 'Good — under human review' :
+               score.scored   ? 'Needs improvement before publishing' :
+                                score.reason ?? 'Run more tests to generate a score'}
+            </p>
+          </div>
+        </div>
+        {isVerified && (
+          <span className="text-[11px] font-black bg-white border border-green-200 text-green-700 px-2.5 py-1 rounded-full flex items-center gap-1">
+            ✓ Verified by AgentDyne
+          </span>
+        )}
+      </div>
+      {score.scored && (
+        <div className="bg-white px-5 py-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-3">
+            {components.map(c => (
+              <div key={c.label} className="flex items-center gap-2">
+                <span className={c.ok ? 'text-green-500' : 'text-amber-500'}>{c.ok ? '✔' : '⚠'}</span>
+                <div>
+                  <p className="text-xs font-medium text-zinc-700">{c.label}</p>
+                  <p className={`text-[10px] font-semibold ${c.ok ? 'text-green-600' : 'text-amber-600'}`}>
+                    {c.score >= 85 ? 'Excellent' : c.score >= 70 ? 'Good' : c.score >= 50 ? 'Fair' : 'Needs work'}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+          {suggestions.length > 0 && (
+            <div className="border-t border-zinc-50 pt-3">
+              <p className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5">Suggestions</p>
+              {suggestions.map((s, i) => (
+                <p key={i} className="text-xs text-zinc-600 flex items-start gap-1.5 mb-1">
+                  <span className="text-primary flex-shrink-0 mt-0.5">•</span>{s}
+                </p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent: any; defaultTab?: string }) {
   const router   = useRouter()
   const supabase = createClient()
+  const { profile } = useUser()
+  const userPlan    = profile?.subscription_plan ?? 'free'
+
+  // ── Autosave timestamp ─────────────────────────────────────────────────────
+  const [lastSavedAt, setLastSavedAt]  = useState<Date | null>(null)
+  const [savedAgoText, setSavedAgoText] = useState('')
+  useEffect(() => {
+    if (!lastSavedAt) return
+    const update = () => {
+      const s = Math.round((Date.now() - lastSavedAt.getTime()) / 1000)
+      setSavedAgoText(s < 5 ? 'Saved just now' : `Saved ${s}s ago`)
+    }
+    update()
+    const t = setInterval(update, 5000)
+    return () => clearInterval(t)
+  }, [lastSavedAt])
 
   // ── State ──────────────────────────────────────────────────────────────────
   const [saving,         setSaving]         = useState(false)
@@ -476,6 +595,7 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
       }).eq("id", agent.id)
       if (error) throw error
       toast.success("Saved!")
+      setLastSavedAt(new Date())
     } catch (e: any) { toast.error(e.message || "Save failed") }
     finally { setSaving(false) }
   }
@@ -666,6 +786,19 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
 
     monetization: (
       <div className="space-y-6">
+        {/* Plan gate — free plan cannot publish paid agents */}
+        {userPlan === 'free' && (pricingModel === 'per_call' || pricingModel === 'subscription' || pricingModel === 'freemium') && (
+          <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-2xl px-5 py-4">
+            <AlertTriangle className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-amber-800">Starter or Pro plan required to monetise</p>
+              <p className="text-xs text-amber-700 mt-0.5 leading-relaxed">
+                Free plan agents cannot be published to the marketplace with paid pricing.
+                <a href="/pricing" className="underline font-semibold ml-1" target="_blank">View plans →</a>
+              </p>
+            </div>
+          </div>
+        )}
         <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
           <SectionTitle icon={DollarSign} title="Pricing Model" subtitle="Choose how users pay to use your agent" />
           <div className="grid grid-cols-2 gap-3 mb-5">
@@ -688,7 +821,10 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium text-zinc-700">Price per Call (USD)</Label>
                 <Input type="number" step="0.0001" min="0" placeholder="0.0100" className="rounded-xl border-zinc-200 h-10" {...register("price_per_call")} />
-                <p className="text-xs text-zinc-400">You receive 80%</p>
+                <p className="text-xs text-zinc-400">You receive 80% · AgentDyne takes 20%</p>
+                <p className="text-[11px] text-primary/70 flex items-center gap-1">
+                  <Info className="h-3 w-3" /> Suggested: $0.01–$0.05/call based on similar agents
+                </p>
               </div>
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium text-zinc-700">Free calls/month</Label>
@@ -701,7 +837,10 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium text-zinc-700">Monthly Price (USD)</Label>
                 <Input type="number" step="0.01" min="0" placeholder="9.99" className="rounded-xl border-zinc-200 h-10" {...register("subscription_price_monthly")} />
-                <p className="text-xs text-zinc-400">You receive 80%</p>
+                <p className="text-xs text-zinc-400">You receive 80% · AgentDyne takes 20%</p>
+                <p className="text-[11px] text-primary/70 flex items-center gap-1">
+                  <Info className="h-3 w-3" /> Suggested: $4.99–$19.99/mo based on similar agents
+                </p>
               </div>
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium text-zinc-700">Free trial calls/month</Label>
@@ -779,6 +918,7 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
               </div>
             </div>
 
+            <QualityScorePanel agentId={agent.id} agentStatus={agent.status} />
             {agent.status === "rejected" && (
               <div className="mb-6 flex items-start gap-3 bg-red-50 border border-red-200 rounded-2xl px-5 py-4">
                 <AlertTriangle className="h-4 w-4 text-red-500 flex-shrink-0 mt-0.5" />
@@ -803,12 +943,14 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
               <AnimatePresence>
                 {isDirty && (
                   <motion.div
-                    initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 24 }}
-                    transition={{ type: "spring", stiffness: 400, damping: 30 }}
-                    className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50"
+                  initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 24 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                  className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50"
                   >
-                    <div className="bg-white/90 backdrop-blur-xl rounded-2xl border border-zinc-200 shadow-xl px-5 py-3 flex items-center gap-4">
-                      <p className="text-sm text-zinc-500 font-medium">Unsaved changes</p>
+                  <div className="bg-white/90 backdrop-blur-xl rounded-2xl border border-zinc-200 shadow-xl px-5 py-3 flex items-center gap-4">
+                  <p className="text-sm text-zinc-500 font-medium">
+                        {savedAgoText && !isDirty ? savedAgoText : 'Unsaved changes'}
+                      </p>
                       <Button type="submit" size="sm" disabled={saving}
                         className="gap-1.5 rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold">
                         {saving ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…</> : <><Check className="h-3.5 w-3.5" /> Save Changes</>}
