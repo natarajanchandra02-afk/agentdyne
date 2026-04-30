@@ -37,18 +37,17 @@ export type EvalContext = {
 /**
  * evaluateSafeCondition
  *
- * Evaluates a condition string against an output value and pipeline state.
- * Returns true if the condition is met (node should run).
- * Returns true on any parse error (fail-open = node runs by default).
- *
  * @param condition  Condition string (see supported syntax above)
  * @param output     Output from the upstream node
  * @param state      Shared pipeline state object
+ * @param mode       "open"  = return true on parse error (filter nodes — always run)
+ *                   "closed" = return false on parse error (branch nodes — skip on error)
  */
 export function evaluateSafeCondition(
   condition: string | undefined,
   output:    unknown,
-  state:     Record<string, unknown> = {}
+  state:     Record<string, unknown> = {},
+  mode:      "open" | "closed" = "open"
 ): boolean {
   // Empty condition → always run
   if (!condition || condition.trim().length === 0) return true
@@ -58,8 +57,8 @@ export function evaluateSafeCondition(
     const ctx: EvalContext = { output, state }
     return parseAndEval(cond, ctx)
   } catch {
-    // Any parse error → fail-open (run the node)
-    return true
+    // Parse error: fail-open for filters (node runs), fail-closed for branches (node skipped)
+    return mode === "open"
   }
 }
 

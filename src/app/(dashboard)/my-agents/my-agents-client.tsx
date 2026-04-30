@@ -302,8 +302,13 @@ export function MyAgentsClient({ agents: init }: { agents: any[] }) {
   }
 
   const deleteAgent = async (id: string) => {
-    const { error } = await supabase.from("agents").delete().eq("id", id)
-    if (error) { toast.error(error.message); return }
+    // Route through API — never delete directly from client (RLS-only is not enough)
+    const res = await fetch(`/api/agents/${id}`, { method: "DELETE" })
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}))
+      toast.error(d.error || "Delete failed")
+      return
+    }
     setAgents(prev => prev.filter(a => a.id !== id))
     toast.success("Deleted")
   }

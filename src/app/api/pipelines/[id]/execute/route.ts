@@ -45,6 +45,25 @@ export async function POST(
     const { data: { user } } = await supabase.auth.getUser()
     userId = user?.id
 
+    // ─ Share key internal call: x-share-owner-id + x-pipeline-share-key ───────────────
+    // This path is ONLY reachable from /api/run/[shareKey] which validates the share key
+    // against the DB before forwarding. We trust x-share-owner-id only if:
+    //   1. x-pipeline-share-key is present AND
+    //   2. x-internal-service matches SUPABASE_SERVICE_ROLE_KEY (server secret)
+    if (!userId) {
+      const internalKey   = req.headers.get("x-internal-service")
+      const shareOwnerId  = req.headers.get("x-share-owner-id")
+      const shareKeyHdr   = req.headers.get("x-pipeline-share-key")
+      if (
+        internalKey &&
+        shareOwnerId &&
+        shareKeyHdr &&
+        internalKey === process.env.SUPABASE_SERVICE_ROLE_KEY
+      ) {
+        userId = shareOwnerId
+      }
+    }
+
     if (!userId) {
       const rawKey =
         req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
@@ -114,10 +133,7 @@ export async function POST(
         code: "QUOTA_EXCEEDED",
       }, { status: 429 })
 
-    const { data: credits } = await supabase
-      .from("credits").select("balance_usd").eq("user_id", userId).single()
-
-    // ── Load agents (include input_schema / output_schema for strict mode) ────
+    // ── Load agents FIRST (needed for cost estimation) ───────────────────────
     const allAgentIds = [
       ...new Set([
         ...dag.nodes.map(n => n.agent_id),
@@ -129,6 +145,45 @@ export async function POST(
       .from("agents")
       .select("id, name, price_per_call, pricing_model, model_name, system_prompt, max_tokens, temperature, status, free_calls_per_month, knowledge_base_id, security_config, input_schema, output_schema")
       .in("id", allAgentIds)
+
+    // ── Credits + pre-flight reservation ─────────────────────────────────────
+    // Reserve credits BEFORE execution so $0-balance users can't run for free.
+    // Post-execution: commit with actual cost (releases diff) or release on failure.
+    const { data: credits } = await supabase
+      .from("credits").select("balance_usd").eq("user_id", userId).single()
+
+    const MODEL_COSTS: Record<string, { input: number; output: number }> = {
+      "claude-haiku-4-5-20251001": { input: 0.00025, output: 0.00125 },
+      "claude-sonnet-4-6":         { input: 0.003,   output: 0.015   },
+      "claude-opus-4-6":           { input: 0.015,   output: 0.075   },
+    }
+    const estimatedCost = (agentRows ?? []).reduce((sum: number, a: any) => {
+      const m   = MODEL_COSTS[a.model_name as string] ?? { input: 0.003, output: 0.015 }
+      const tok = Math.min((a.max_tokens as number || 4096), 4096)
+      return sum + (500 / 1000) * m.input + (tok * 0.7 / 1000) * m.output
+    }, 0) * 3.3  // 3.3× platform margin covers failure overhead + infra
+
+    const creditBalance = Number(credits?.balance_usd ?? 0)
+    let pipelineCreditReservationId: string | null = null
+
+    if (estimatedCost > 0.000_01) {
+      if (creditBalance < estimatedCost) {
+        return NextResponse.json({
+          error:    "Insufficient credits for pipeline execution.",
+          code:     "INSUFFICIENT_CREDITS",
+          balance:  creditBalance,
+          required: +estimatedCost.toFixed(6),
+        }, { status: 402 })
+      }
+      const { data: reservation } = await supabase.rpc("reserve_credits", {
+        user_id_param:      userId,
+        amount_param:       estimatedCost,
+        execution_id_param: null,
+      })
+      if (reservation?.success) {
+        pipelineCreditReservationId = reservation.reservation_id as string
+      }
+    }
 
     const agentMap = new Map<string, any>((agentRows ?? []).map((a: any) => [a.id, a]))
 
@@ -189,11 +244,13 @@ export async function POST(
         return NextResponse.json({ error: "Pipeline execution timed out", executionId: pipelineExec.id }, { status: 408 })
       }
 
-      // Credit kill switch
-      const creditBalance = Number(credits?.balance_usd ?? 0)
+      // Credit kill switch — abort if spend approaches available balance
       if (totalCost > 0 && totalCost >= creditBalance * 0.95) {
+        if (pipelineCreditReservationId) {
+          await supabase.rpc("release_credit_reservation", { reservation_id_param: pipelineCreditReservationId }).catch(() => {})
+        }
         await failPipelineExec(supabase, pipelineExec.id,
-          `Cost kill switch: $${totalCost.toFixed(6)} / $${creditBalance.toFixed(6)}`,
+          `Cost kill switch: ${totalCost.toFixed(6)} / ${creditBalance.toFixed(6)}`,
           nodeResults, totalCost, totalTokensIn, totalTokensOut, Date.now() - startTotal)
         return NextResponse.json({
           error: "Pipeline aborted: would exceed credit balance.", code: "COST_KILL_SWITCH",
@@ -289,6 +346,9 @@ export async function POST(
 
       if (levelFailed) {
         const failedResult = levelResults.find(r => r.status === "failed")
+        if (pipelineCreditReservationId) {
+          await supabase.rpc("release_credit_reservation", { reservation_id_param: pipelineCreditReservationId }).catch(() => {})
+        }
         await failPipelineExec(supabase, pipelineExec.id,
           `Node "${failedResult?.agent_name}" failed: ${failedResult?.error}`,
           nodeResults, totalCost, totalTokensIn, totalTokensOut, Date.now() - startTotal)
@@ -304,10 +364,24 @@ export async function POST(
     const totalLatency = Date.now() - startTotal
 
     if (totalCost > 0) {
-      await supabase.rpc("deduct_credits", {
-        user_id_param: userId, amount_param: totalCost,
-        description_param: `Pipeline: ${pipeline.name}`, reference_id_param: pipelineExec.id,
-      })
+      if (pipelineCreditReservationId) {
+        // Commit reservation with actual cost (refunds the difference)
+        await supabase.rpc("commit_credit_reservation", {
+          reservation_id_param: pipelineCreditReservationId,
+          actual_cost_param:    totalCost,
+        }).catch(() => {})
+      } else {
+        // Fallback: direct deduction (for free agents where no reservation was made)
+        await supabase.rpc("deduct_credits", {
+          user_id_param: userId, amount_param: totalCost,
+          description_param: `Pipeline: ${pipeline.name}`, reference_id_param: pipelineExec.id,
+        })
+      }
+    } else if (pipelineCreditReservationId) {
+      // Free run — release the reservation
+      await supabase.rpc("release_credit_reservation", {
+        reservation_id_param: pipelineCreditReservationId,
+      }).catch(() => {})
     }
 
     const outputObj = typeof lastOutput === "object" ? lastOutput : { text: String(lastOutput) }

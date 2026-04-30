@@ -33,7 +33,14 @@ export async function GET(req: NextRequest) {
       )
       .eq("status", "active")
 
-    if (q)        query = query.textSearch("name", q, { type: "websearch", config: "english" })
+    if (q) {
+      // Use ilike for name + description search.
+      // textSearch() requires a GIN/tsvector index that is NOT in the current schema —
+      // it would silently return empty results or error. ilike works on plain text columns
+      // and is fast enough for early-stage marketplace volumes (<100k agents).
+      const safe = q.trim().slice(0, 100).replace(/[%_\\]/g, "\\$&")
+      query = query.or(`name.ilike.%${safe}%,description.ilike.%${safe}%`)
+    }
     if (category) query = query.eq("category", category)
     if (pricing)  query = query.eq("pricing_model", pricing)
 
@@ -54,6 +61,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       agents: data ?? [],
+      data:   data ?? [],   // alias — some clients read .data, others .agents
       pagination: { total, page, limit, pages, hasNext: page < pages, hasPrev: page > 1 },
     })
   } catch (err: any) {

@@ -24,6 +24,7 @@ interface Execution {
   cost:          number | null
   tokens_input:  number | null
   tokens_output: number | null
+  error_message: string | null
   created_at:    string
   agents: {
     id:       string
@@ -147,14 +148,16 @@ function ExecutionRow({ exec, index }: { exec: Execution; index: number }) {
             ))}
           </div>
 
-          {/* Failed: show error hint */}
+          {/* Failed: show error message first, then hint */}
           {(exec.status === "failed" || exec.status === "timeout") && (
             <div className="flex items-start gap-2 text-xs text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2 mb-3">
               <AlertCircle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
               <span>
-                {exec.status === "timeout"
-                  ? "Execution timed out — the agent took too long to respond."
-                  : "Execution failed — check the full trace for the error message and stack."}
+                {exec.error_message
+                  ? exec.error_message.slice(0, 300)
+                  : exec.status === "timeout"
+                    ? "Execution timed out — the agent took too long to respond."
+                    : "Execution failed — check the full trace for details."}
               </span>
             </div>
           )}

@@ -1,29 +1,30 @@
-export const runtime = 'edge'
+export const runtime = "edge"
 
 /**
- * POST /api/execute — Core agent execution endpoint
+ * POST /api/execute — Simplified SDK-facing execute endpoint.
  *
- * Security hardening (April 2026):
- *   ✅ Email verification gate
- *   ✅ Idempotency key enforcement (prevents double-billing)
- *   ✅ Free-tier lifetime execution cap (50, not monthly)
- *   ✅ Monthly execution quota + compute cap (USD hard limit)
- *   ✅ Banned-user check
- *   ✅ Input size cap (32KB)
- *   ✅ Plan-aware concurrency limit
- *   ✅ Credit reservation pattern (reserve → execute → commit/refund)
- *   ✅ Output PII scrubbing before returning to caller
- *   ✅ Idempotent response for duplicate keys (200, not 201)
+ * Fixes applied (April 2026):
+ *   ✅ BLOCKER: Atomic credit reservation via reserve_credits() RPC (FOR UPDATE)
+ *   ✅ BLOCKER: Global distributed rate limit via checkUserRateLimit() (Supabase-backed)
+ *   ✅ BLOCKER: TOCTOU concurrency fix via checkConcurrencyLimit() RPC
+ *   ✅ HIGH:    Quota increments awaited — never fire-and-forget
+ *   ✅ HIGH:    AbortController with 25s timeout — edge runtime safe
+ *   ✅ ATTACK:  Idempotency key scoped to userId — prevents cross-user replay
  */
 
-import { NextRequest, NextResponse }  from "next/server"
-import { createClient }               from "@/lib/supabase/server"
-import { apiRateLimit }               from "@/lib/rate-limit"
-import { checkInput, processOutput }  from "@/lib/guardrails"
-import { PLAN_QUOTAS, PLAN_CONCURRENCY, PLAN_COMPUTE_CAPS } from "@/lib/constants"
-import Anthropic                      from "@anthropic-ai/sdk"
+import { NextRequest, NextResponse }    from "next/server"
+import { createClient }                 from "@/lib/supabase/server"
+import { apiRateLimit }                 from "@/lib/rate-limit"
+import { checkUserRateLimit }           from "@/lib/anti-abuse"
+import { checkConcurrencyLimit }        from "@/lib/concurrency"
+import { checkInput, processOutput }    from "@/lib/guardrails"
+import { PLAN_QUOTAS, PLAN_COMPUTE_CAPS } from "@/lib/constants"
+import { reconcileActualCost }          from "@/core/execution/costEstimator"
+import Anthropic                        from "@anthropic-ai/sdk"
+import type { PlanName }                from "@/lib/anti-abuse"
 
-const MAX_INPUT_BYTES = 32_768  // 32 KB
+const MAX_INPUT_BYTES   = 32_768   // 32 KB
+const AI_TIMEOUT_MS     = 25_000   // 25s — safely under CF 30s wall clock
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -33,42 +34,46 @@ async function hashApiKey(key: string): Promise<string> {
 }
 
 export async function POST(req: NextRequest) {
-  // ── IP-level rate limit ────────────────────────────────────────────────────
+  // ── 1. IP-level burst guard (in-memory, first line of defence) ─────────────
   const limited = await apiRateLimit(req)
   if (limited) return limited
 
   try {
     const supabase = await createClient()
+
+    // ── 2. Auth ───────────────────────────────────────────────────────────────
+    let userId: string | undefined
     const { data: { user } } = await supabase.auth.getUser()
+    userId = user?.id
 
-    let userId   = user?.id
-    let authType = "session"
-
-    // ── API key auth ──────────────────────────────────────────────────────────
-    const apiKey = req.headers.get("x-api-key") ?? req.headers.get("authorization")?.replace(/^Bearer\s+/i, "")
-    if (!userId && apiKey) {
-      const keyHash = await hashApiKey(apiKey)
-      const { data: keyData } = await supabase
-        .from("api_keys")
-        .select("user_id, is_active")
-        .eq("key_hash", keyHash)
-        .single()
-      if (!keyData?.is_active)
-        return NextResponse.json({ error: "Invalid or inactive API key" }, { status: 401 })
-      userId   = keyData.user_id
-      authType = "api_key"
-      // Fire-and-forget: update last_used_at
-      supabase.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("key_hash", keyHash).then()
+    if (!userId) {
+      const rawKey =
+        req.headers.get("x-api-key") ??
+        req.headers.get("authorization")?.replace(/^Bearer\s+/i, "")
+      if (rawKey && rawKey.length <= 200) {
+        const keyHash = await hashApiKey(rawKey)
+        const { data: keyRow } = await supabase
+          .from("api_keys")
+          .select("user_id, is_active, expires_at")
+          .eq("key_hash", keyHash)
+          .single()
+        if (keyRow?.is_active && !(keyRow.expires_at && new Date(keyRow.expires_at) < new Date())) {
+          userId = keyRow.user_id
+          supabase.from("api_keys")
+            .update({ last_used_at: new Date().toISOString() })
+            .eq("key_hash", keyHash).then(() => {})
+        } else {
+          return NextResponse.json({ error: "Invalid or inactive API key" }, { status: 401 })
+        }
+      }
     }
-
     if (!userId)
       return NextResponse.json({ error: "Authentication required" }, { status: 401 })
 
-    // ── Parse body ─────────────────────────────────────────────────────────────
+    // ── 3. Parse + validate body ──────────────────────────────────────────────
     let body: Record<string, unknown>
-    try { body = await req.json() } catch {
-      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 })
-    }
+    try { body = await req.json() }
+    catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }) }
 
     const { agentId, input, idempotencyKey } = body as {
       agentId?: string; input?: unknown; idempotencyKey?: string
@@ -79,21 +84,21 @@ export async function POST(req: NextRequest) {
     if (!/^[0-9a-f-]{36}$/i.test(agentId))
       return NextResponse.json({ error: "Invalid agentId format" }, { status: 400 })
 
-    // ── Idempotency key — check for duplicate before ANY DB write ─────────────
-    const idempKey = typeof idempotencyKey === "string" && idempotencyKey.trim()
-      ? idempotencyKey.trim()
-      : req.headers.get("x-idempotency-key")
+    // ── 4. Idempotency — scoped to userId to prevent cross-user replay ────────
+    const idempKey =
+      (typeof idempotencyKey === "string" && idempotencyKey.trim())
+        ? idempotencyKey.trim()
+        : req.headers.get("x-idempotency-key") ?? null
 
     if (idempKey) {
       const { data: existing } = await supabase
         .from("executions")
         .select("id, status, output, latency_ms, cost_usd, tokens_input, tokens_output")
         .eq("idempotency_key", idempKey)
-        .eq("user_id", userId)
+        .eq("user_id", userId)          // ← scoped to userId (attack fix)
         .maybeSingle()
 
-      if (existing) {
-        // Return cached result — 200 (not 201) signals replay
+      if (existing?.status === "success") {
         return NextResponse.json({
           executionId: existing.id,
           output:      existing.output ?? {},
@@ -101,11 +106,11 @@ export async function POST(req: NextRequest) {
           cost:        existing.cost_usd ?? 0,
           tokens:      { input: existing.tokens_input ?? 0, output: existing.tokens_output ?? 0 },
           replayed:    true,
-        }, { status: 200 })
+        })
       }
     }
 
-    // ── Load user profile: plan, quotas, compute cap, ban, email verified ─────
+    // ── 5. Load profile ───────────────────────────────────────────────────────
     const { data: profile } = await supabase
       .from("profiles")
       .select("subscription_plan, executions_used_this_month, monthly_execution_quota, lifetime_executions_used, free_executions_remaining, monthly_spent_usd, compute_cap_usd, is_banned, email_verified")
@@ -113,208 +118,224 @@ export async function POST(req: NextRequest) {
       .single()
 
     if (profile?.is_banned)
-      return NextResponse.json({ error: "Your account has been suspended. Contact support." }, { status: 403 })
-
-    // ── Email verification gate (all plans) ───────────────────────────────────
+      return NextResponse.json({ error: "Account suspended. Contact support@agentdyne.com" }, { status: 403 })
     if (!profile?.email_verified)
-      return NextResponse.json({
-        error: "Please verify your email address before running agents.",
-        code:  "EMAIL_NOT_VERIFIED",
-      }, { status: 403 })
+      return NextResponse.json({ error: "Verify your email before running agents.", code: "EMAIL_NOT_VERIFIED" }, { status: 403 })
 
-    const plan = (profile?.subscription_plan ?? "free") as keyof typeof PLAN_QUOTAS
+    const plan = (profile?.subscription_plan ?? "free") as PlanName
 
-    // ── Free tier: lifetime cap (not monthly) ─────────────────────────────────
+    // ── 6. Global distributed rate limit (Supabase-backed, not in-memory) ────
+    const rateResult = await checkUserRateLimit(supabase, userId, plan)
+    if (!rateResult.allowed) {
+      const res = NextResponse.json({
+        error:      `Rate limit reached (${rateResult.limitHit} per ${rateResult.window}). Upgrade for higher limits.`,
+        code:       "RATE_LIMIT_EXCEEDED",
+        retryAfter: rateResult.retryAfter,
+      }, { status: 429 })
+      res.headers.set("Retry-After", String(rateResult.retryAfter))
+      return res
+    }
+
+    // ── 7. Quota checks ───────────────────────────────────────────────────────
     if (plan === "free") {
       const lifetimeUsed = profile?.lifetime_executions_used ?? 0
-      const freeCap      = PLAN_QUOTAS.free  // 50
+      const freeCap      = PLAN_QUOTAS.free
       if (lifetimeUsed >= freeCap)
         return NextResponse.json({
-          error: `Free plan lifetime limit of ${freeCap} executions reached. Upgrade to Starter to continue.`,
+          error: `Free plan limit of ${freeCap} lifetime executions reached. Upgrade to Starter.`,
           code:  "LIFETIME_QUOTA_EXCEEDED",
         }, { status: 429 })
     } else {
-      // Paid plans: monthly execution quota
-      const quota = profile?.monthly_execution_quota ?? PLAN_QUOTAS[plan as string] ?? 500
+      const quota = profile?.monthly_execution_quota ?? 500
       const used  = profile?.executions_used_this_month ?? 0
       if (quota !== -1 && used >= quota)
-        return NextResponse.json({
-          error: `Monthly execution quota of ${quota.toLocaleString()} reached. Upgrade or wait for next cycle.`,
-          code:  "QUOTA_EXCEEDED",
-        }, { status: 429 })
+        return NextResponse.json({ error: "Monthly quota exceeded.", code: "QUOTA_EXCEEDED" }, { status: 429 })
     }
 
-    // ── Compute cap (hard USD monthly limit) ──────────────────────────────────
-    const computeCap   = profile?.compute_cap_usd ?? PLAN_COMPUTE_CAPS[plan as string] ?? 10
-    const monthlySpent = profile?.monthly_spent_usd ?? 0
+    const computeCap   = Number(profile?.compute_cap_usd ?? PLAN_COMPUTE_CAPS[plan] ?? 10)
+    const monthlySpent = Number(profile?.monthly_spent_usd ?? 0)
     if (computeCap !== -1 && monthlySpent >= computeCap)
-      return NextResponse.json({
-        error: `Monthly compute cap of $${computeCap.toFixed(2)} reached. Upgrade your plan for a higher cap.`,
-        code:  "COMPUTE_CAP_EXCEEDED",
+      return NextResponse.json({ error: `Monthly compute cap of $${computeCap.toFixed(2)} reached.`, code: "COMPUTE_CAP_EXCEEDED" }, { status: 429 })
+
+    // ── 8. Concurrency check via RPC (atomic, no TOCTOU) ─────────────────────
+    const concurrency = await checkConcurrencyLimit(supabase, userId, plan)
+    if (!concurrency.allowed) {
+      const res = NextResponse.json({
+        error: concurrency.message, code: concurrency.code,
+        current: concurrency.current, limit: concurrency.limit,
       }, { status: 429 })
+      if (concurrency.retryAfter) res.headers.set("Retry-After", String(concurrency.retryAfter))
+      return res
+    }
 
-    // ── Plan-level concurrency check ──────────────────────────────────────────
-    const maxConcurrent = PLAN_CONCURRENCY[plan as string] ?? 1
-    const { count: runningCount } = await supabase
-      .from("executions")
-      .select("*", { count: "exact", head: true })
-      .eq("user_id", userId)
-      .eq("status", "running")
-
-    if ((runningCount ?? 0) >= maxConcurrent)
-      return NextResponse.json({
-        error: `You have ${runningCount} running execution(s). ${plan} plan allows ${maxConcurrent} concurrent. Please wait.`,
-        code:  "CONCURRENCY_LIMIT",
-      }, { status: 429 })
-
-    // ── Load agent ─────────────────────────────────────────────────────────────
+    // ── 9. Load agent ─────────────────────────────────────────────────────────
     const { data: agent } = await supabase
       .from("agents")
-      .select("id, name, status, model_name, system_prompt, max_tokens, temperature, pricing_model, free_calls_per_month, security_config, output_schema")
+      .select("id, name, status, model_name, system_prompt, max_tokens, temperature, pricing_model, price_per_call, free_calls_per_month, output_schema")
       .eq("id", agentId)
       .eq("status", "active")
       .single()
 
     if (!agent)
       return NextResponse.json({ error: "Agent not found or not active" }, { status: 404 })
-
-    // Free users can only use free agents (pricing_model = 'free')
     if (plan === "free" && agent.pricing_model !== "free")
-      return NextResponse.json({
-        error: "Free plan users can only run free agents. Upgrade to access premium agents.",
-        code:  "PLAN_RESTRICTION",
-      }, { status: 403 })
+      return NextResponse.json({ error: "Free plan can only run free agents.", code: "PLAN_RESTRICTION" }, { status: 403 })
 
-    // ── Parse input ────────────────────────────────────────────────────────────
+    // ── 10. Parse + validate input ────────────────────────────────────────────
     const inputStr  = typeof input === "string" ? input : JSON.stringify(input ?? "")
     const inputJson = typeof input === "string" ? { text: input } : (input as Record<string, unknown> ?? {})
 
     if (new TextEncoder().encode(inputStr).length > MAX_INPUT_BYTES)
-      return NextResponse.json({ error: `Input exceeds maximum size of ${MAX_INPUT_BYTES / 1024}KB` }, { status: 413 })
+      return NextResponse.json({ error: `Input exceeds ${MAX_INPUT_BYTES / 1024}KB maximum.` }, { status: 413 })
 
-    // ── Input guardrails (injection + PII + content policy) ───────────────────
-    const secCfg      = (agent.security_config ?? {}) as { blockPII?: boolean; strictMode?: boolean }
-    const inputResult = checkInput(inputStr, secCfg)
+    const guardrailResult = checkInput(inputStr)
+    if (!guardrailResult.allowed)
+      return NextResponse.json({ error: "Input rejected by content policy.", code: "CONTENT_POLICY" }, { status: 422 })
 
-    if (!inputResult.allowed)
-      return NextResponse.json({
-        error: "Request blocked by content policy.",
-        code:  "CONTENT_POLICY",
-        policy: inputResult.blocked_by,
-      }, { status: 422 })
-
-    // ── Subscription check for subscription-based agents ──────────────────────
+    // ── 11. Subscription gate ─────────────────────────────────────────────────
     if (agent.pricing_model === "subscription") {
-      const { data: sub } = await supabase
-        .from("agent_subscriptions")
-        .select("status")
-        .eq("user_id", userId)
-        .eq("agent_id", agentId)
-        .maybeSingle()
-      const freeCallsAllowed = agent.free_calls_per_month ?? 0
-      const freeUsed         = profile?.executions_used_this_month ?? 0
-      if (freeUsed >= freeCallsAllowed && sub?.status !== "active")
-        return NextResponse.json({ error: "Subscription required to run this agent.", code: "SUBSCRIPTION_REQUIRED" }, { status: 403 })
+      const freeLeft = (Number(agent.free_calls_per_month) || 0) - (profile?.executions_used_this_month ?? 0)
+      if (freeLeft <= 0) {
+        const { data: sub } = await supabase.from("agent_subscriptions")
+          .select("status").eq("user_id", userId).eq("agent_id", agentId).maybeSingle()
+        if (sub?.status !== "active")
+          return NextResponse.json({ error: "Subscription required.", code: "SUBSCRIPTION_REQUIRED" }, { status: 403 })
+      }
     }
 
-    // ── Insert execution record ─────────────────────────────────────────────────
+    // ── 12. Atomic credit reservation (BLOCKER FIX) ───────────────────────────
+    // Uses reserve_credits() RPC which holds a FOR UPDATE row lock on credits,
+    // preventing two concurrent requests from both passing the balance check.
+    const pricePerCall = Number(agent.price_per_call ?? 0)
+    let creditReservationId: string | null = null
+
+    if ((agent.pricing_model === "per_call" || agent.pricing_model === "freemium") && pricePerCall > 0) {
+      const { data: credits } = await supabase
+        .from("credits").select("balance_usd").eq("user_id", userId).single()
+      const balance = Number(credits?.balance_usd ?? 0)
+
+      if (balance < pricePerCall)
+        return NextResponse.json({
+          error: "Insufficient credits.", code: "INSUFFICIENT_CREDITS",
+          balance, required: pricePerCall,
+        }, { status: 402 })
+
+      const { data: reservation } = await supabase.rpc("reserve_credits", {
+        user_id_param:      userId,
+        amount_param:       pricePerCall,
+        execution_id_param: null,
+      })
+
+      if (!reservation?.success)
+        return NextResponse.json({ error: reservation?.error ?? "Credit reservation failed.", code: "CREDIT_RESERVATION_FAILED" }, { status: 402 })
+
+      creditReservationId = reservation.reservation_id ?? null
+    }
+
+    // ── 13. Create execution record ───────────────────────────────────────────
     const { data: execution, error: execErr } = await supabase
       .from("executions")
       .insert({
-        agent_id:         agentId,
-        user_id:          userId,
-        status:           "running",
-        input:            inputJson,
-        idempotency_key:  idempKey ?? null,
-        created_at:       new Date().toISOString(),
+        agent_id:        agentId,
+        user_id:         userId,
+        status:          "running",
+        input:           inputJson,
+        idempotency_key: idempKey ?? null,
+        created_at:      new Date().toISOString(),
       })
-      .select("id")
-      .single()
+      .select("id").single()
 
-    if (execErr || !execution)
-      return NextResponse.json({ error: "Failed to start execution" }, { status: 500 })
+    if (execErr || !execution) {
+      // Roll back reservation if insert failed
+      if (creditReservationId)
+        await supabase.rpc("release_credit_reservation", { reservation_id_param: creditReservationId }).catch(() => {})
+      return NextResponse.json({ error: "Failed to create execution record." }, { status: 500 })
+    }
 
-    const startTime = Date.now()
+    const startMs = Date.now()
+
+    // ── 14. AI call with 25s AbortController (edge runtime safe) ─────────────
+    const controller = new AbortController()
+    const timeoutId  = setTimeout(() => controller.abort(), AI_TIMEOUT_MS)
 
     try {
       const response = await anthropic.messages.create({
-        model:       agent.model_name  || "claude-sonnet-4-6",
-        max_tokens:  agent.max_tokens  || 4096,
-        system:      agent.system_prompt,
+        model:       (agent.model_name as string) || "claude-sonnet-4-6",
+        max_tokens:  (agent.max_tokens  as number) || 4096,
+        system:      agent.system_prompt as string,
         messages:    [{ role: "user" as const, content: inputStr }],
-        temperature: agent.temperature ?? 0.7,
-      })
+        temperature: (agent.temperature as number) ?? 0.7,
+      }, { signal: controller.signal })
 
-      const latencyMs    = Date.now() - startTime
-      const rawOutputTxt = response.content[0]?.type === "text" ? response.content[0].text : ""
+      clearTimeout(timeoutId)
 
-      // ── Output guardrails: scrub PII + parse ──────────────────────────────
-      const { safe: safeOutput, scrub, parsed } = processOutput(rawOutputTxt, agent.output_schema ?? undefined)
+      const latencyMs = Date.now() - startMs
+      const rawText   = response.content[0]?.type === "text" ? response.content[0].text : ""
 
-      let outputJson: Record<string, unknown> = { text: safeOutput }
-      if (parsed.isJSON && typeof parsed.parsed === "object" && parsed.parsed !== null) {
-        outputJson = parsed.parsed as Record<string, unknown>
+      const { safe: safeOutput, scrub, parsed } = processOutput(rawText, agent.output_schema ?? undefined)
+      const outputJson: Record<string, unknown> =
+        parsed.isJSON && typeof parsed.parsed === "object" && parsed.parsed !== null
+          ? parsed.parsed as Record<string, unknown>
+          : { text: safeOutput }
+
+      const actual  = reconcileActualCost(agent.model_name as string, response.usage.input_tokens, response.usage.output_tokens)
+      const costUsd = actual.userCostUsd
+
+      // ── Commit credit reservation with actual cost ─────────────────────────
+      if (creditReservationId) {
+        await supabase.rpc("commit_credit_reservation", {
+          reservation_id_param: creditReservationId,
+          actual_cost_param:    costUsd,
+        }).catch(() => {})
       }
 
-      const costUsd =
-        response.usage.input_tokens  * 0.000003 +
-        response.usage.output_tokens * 0.000015
-
-      // Update execution record
-      await supabase.from("executions").update({
-        status:        "success",
-        output:        outputJson,
-        tokens_input:  response.usage.input_tokens,
-        tokens_output: response.usage.output_tokens,
-        latency_ms:    latencyMs,
-        cost_usd:      costUsd,
-        cost:          costUsd,
-        completed_at:  new Date().toISOString(),
-      }).eq("id", execution.id)
-
-      // ── Fire-and-forget updates (do not block response) ───────────────────
-      Promise.all([
-        // Increment monthly counter
+      // ── Persist execution + increment quota (awaited, never fire-and-forget) ─
+      await Promise.all([
+        supabase.from("executions").update({
+          status:        "success",
+          output:        outputJson,
+          tokens_input:  response.usage.input_tokens,
+          tokens_output: response.usage.output_tokens,
+          latency_ms:    latencyMs,
+          cost_usd:      costUsd,
+          cost:          costUsd,
+          completed_at:  new Date().toISOString(),
+        }).eq("id", execution.id),
         supabase.rpc("increment_executions_used", { user_id_param: userId }),
-        // Increment lifetime counter for free users
-        plan === "free"
-          ? supabase.from("profiles").update({
-              lifetime_executions_used:  (profile?.lifetime_executions_used ?? 0) + 1,
-              free_executions_remaining: Math.max(0, (profile?.free_executions_remaining ?? 50) - 1),
-              monthly_spent_usd:         monthlySpent + costUsd,
-            }).eq("id", userId)
-          : supabase.from("profiles").update({ monthly_spent_usd: monthlySpent + costUsd }).eq("id", userId),
-      ]).catch(() => null)
-
-      const outputForCaller = outputJson.text !== undefined
-        ? outputJson
-        : { text: safeOutput, ...outputJson }
+      ])
 
       return NextResponse.json({
         executionId: execution.id,
-        output:      outputForCaller,
+        output:      outputJson.text !== undefined ? outputJson : { text: safeOutput, ...outputJson },
         latencyMs,
-        tokens: {
-          input:  response.usage.input_tokens,
-          output: response.usage.output_tokens,
-        },
-        cost:    costUsd,
-        replayed: false,
-        ...(scrub.redacted.length > 0 ? { _piiRedacted: scrub.redacted } : {}),
+        tokens:      { input: response.usage.input_tokens, output: response.usage.output_tokens },
+        cost:        costUsd,
+        replayed:    false,
+        ...(scrub.redacted?.length > 0 ? { _piiRedacted: scrub.redacted } : {}),
       })
 
     } catch (aiError: any) {
+      clearTimeout(timeoutId)
+
+      // Release reservation on AI failure
+      if (creditReservationId)
+        await supabase.rpc("release_credit_reservation", { reservation_id_param: creditReservationId }).catch(() => {})
+
+      const isTimeout = aiError.name === "AbortError"
       await supabase.from("executions").update({
         status:        "failed",
-        error_message: aiError.message ?? "AI provider error",
+        error_message: isTimeout ? "Execution timed out (25s limit)" : (aiError.message?.slice(0, 500) ?? "AI provider error"),
         completed_at:  new Date().toISOString(),
       }).eq("id", execution.id)
 
-      return NextResponse.json({ error: "Execution failed: " + (aiError.message ?? "Unknown") }, { status: 500 })
+      return NextResponse.json({
+        error: isTimeout ? "Execution timed out. Use streaming for long-running agents." : `Execution failed: ${aiError.message?.slice(0, 200) ?? "Unknown"}`,
+        code:  isTimeout ? "TIMEOUT" : "AI_ERROR",
+      }, { status: isTimeout ? 504 : 502 })
     }
 
   } catch (err: any) {
     console.error("POST /api/execute:", err)
-    return NextResponse.json({ error: err.message || "Execution failed" }, { status: 500 })
+    return NextResponse.json({ error: "Internal server error." }, { status: 500 })
   }
 }

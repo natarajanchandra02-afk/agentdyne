@@ -23,10 +23,10 @@ export default function ExecutionsPage() {
     let cancelled = false
 
     Promise.all([
-      // Last 200 executions with agent info
+      // Last 200 executions with agent info + error message for debugging
       supabase
         .from("executions")
-        .select("id, agent_id, status, latency_ms, cost_usd, cost, tokens_input, tokens_output, created_at, agents(id, name, category, icon_url)")
+        .select("id, agent_id, status, latency_ms, cost_usd, cost, tokens_input, tokens_output, error_message, created_at, agents(id, name, category, icon_url)")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(200),

@@ -267,6 +267,8 @@ export async function executeGraph(config: GraphExecutorConfig): Promise<GraphEx
   let totalTokensIn   = 0
   let totalTokensOut  = 0
   let lastOutput:     unknown = pipelineInput
+  // Cumulative cost ceiling: enterprise = $10, others = per-plan max_cost_per_exec_usd
+  const PIPELINE_COST_CEILING = limits.max_cost_per_exec_usd * Math.max(1, dag.nodes.length * 0.5)
   const deadline      = Date.now() + timeoutMs
 
   for (const level of levels) {
@@ -284,9 +286,13 @@ export async function executeGraph(config: GraphExecutorConfig): Promise<GraphEx
       }
     }
 
-    // Run all nodes in this level concurrently
+    // Run all nodes in this level concurrently with jitter.
+    // Jitter spreads Anthropic API calls by 0–200ms per node to prevent
+    // thundering-herd 529s when many nodes fire at the same millisecond.
+    const withJitter = (i: number) => new Promise<void>(r => setTimeout(r, i * 50 + Math.random() * 150))
     const levelResults = await Promise.allSettled(
-      level.map(async (node): Promise<NodeExecutionResult> => {
+      level.map(async (node, i): Promise<NodeExecutionResult> => {
+        await withJitter(i)
         const nodeStart = Date.now()
         const nodeInput = resolveNodeInput(node, dag, nodeOutputs, pipelineInput, variables)
         const agentName = getAgentName?.(node.agent_id) ?? node.label ?? node.agent_id
@@ -346,6 +352,20 @@ export async function executeGraph(config: GraphExecutorConfig): Promise<GraphEx
         totalTokensIn   += result.tokens.input
         totalTokensOut  += result.tokens.output
         if (result.output != null) lastOutput = result.output
+
+        // Abort if cumulative cost exceeds ceiling (prevents cost bombs)
+        if (totalCostUsd > PIPELINE_COST_CEILING) {
+          return {
+            status:         "failed",
+            output:         lastOutput,
+            nodeResults,
+            totalCostUsd,
+            totalTokensIn,
+            totalTokensOut,
+            totalLatencyMs: Date.now() - startMs,
+            error:          `Pipeline cost ceiling (${PIPELINE_COST_CEILING.toFixed(2)}) exceeded at ${totalCostUsd.toFixed(4)}. Upgrade your plan for higher limits.`,
+          }
+        }
       } else {
         const node = dag.nodes.find(n => n.id === result.nodeId)
         if (node?.continue_on_failure) {

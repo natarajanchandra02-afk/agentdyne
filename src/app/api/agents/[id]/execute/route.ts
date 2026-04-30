@@ -78,24 +78,22 @@ export async function POST(
 
     // ── Profile + ban check ───────────────────────────────────────────────────
     const { data: profile } = await supabase.from("profiles")
-      .select("executions_used_this_month, monthly_execution_quota, subscription_plan, is_banned")
+      .select("executions_used_this_month, monthly_execution_quota, subscription_plan, is_banned, lifetime_executions_used, free_executions_remaining")
       .eq("id", userId).single()
 
     if (profile?.is_banned)
       return NextResponse.json({ error: "Account suspended. Contact support@agentdyne.com" }, { status: 403 })
 
-    // ── Email verification gate (free tier abuse prevention) ──────────────────
-    // DeepSeek audit: without this, attacker creates 1000 free accounts
-    // → each gets initial credits + 100 free executions → $2000+ loss/week.
-    // Only enforce for free plan (paid users already verified via Stripe).
-    const isFreePlan = !profile?.subscription_plan || profile.subscription_plan === "free"
+    const plan         = (profile?.subscription_plan ?? "free") as PlanName
+    const isFreePlan   = plan === "free"
+
+    // ── Email verification gate ───────────────────────────────────────────────
     if (isFreePlan) {
       const { data: authUser } = await supabase
         .from("profiles")
         .select("email_confirmed_at, email_verified")
         .eq("id", userId)
         .single()
-
       const isVerified = authUser?.email_confirmed_at || authUser?.email_verified
       if (!isVerified) {
         return NextResponse.json({
@@ -106,12 +104,32 @@ export async function POST(
       }
     }
 
-    const quota = profile?.monthly_execution_quota ?? 100
-    const used  = profile?.executions_used_this_month ?? 0
-    const plan  = (profile?.subscription_plan ?? "free") as PlanName
+    // ── Quota check ───────────────────────────────────────────────────────────
+    // FREE plan: 50 LIFETIME executions (not monthly) — single source of truth in constants.ts
+    // PAID plans: monthly quota from profile.monthly_execution_quota
+    const FREE_LIFETIME_LIMIT = 50  // mirrors PLAN_QUOTAS.free in constants.ts
+    const lifetimeUsed = Number(profile?.lifetime_executions_used ?? 0)
 
-    if (quota !== -1 && used >= quota)
-      return NextResponse.json({ error: "Monthly quota exceeded.", code: "QUOTA_EXCEEDED" }, { status: 429 })
+    if (isFreePlan) {
+      // For free users, enforce the lifetime cap
+      if (lifetimeUsed >= FREE_LIFETIME_LIMIT) {
+        return NextResponse.json({
+          error:   `Free plan limit reached (${FREE_LIFETIME_LIMIT} lifetime executions). Upgrade to Starter for 500/month.`,
+          code:    "LIFETIME_QUOTA_EXCEEDED",
+          used:    lifetimeUsed,
+          limit:   FREE_LIFETIME_LIMIT,
+          upgrade: "/pricing",
+        }, { status: 429 })
+      }
+    } else {
+      // Paid plans: monthly quota
+      const quota = profile?.monthly_execution_quota ?? 500
+      const used  = profile?.executions_used_this_month ?? 0
+      if (quota !== -1 && used >= quota)
+        return NextResponse.json({ error: "Monthly quota exceeded.", code: "QUOTA_EXCEEDED" }, { status: 429 })
+    }
+
+    const used = profile?.executions_used_this_month ?? 0
 
     // ── Concurrency limit ────────────────────────────────────────────────────
     const concurrency = await checkConcurrencyLimit(supabase, userId, plan)
@@ -447,7 +465,8 @@ export async function POST(
           latency_ms: latencyMs, cost: costUsd, cost_usd: costUsd,
           completed_at: new Date().toISOString(),
         }).eq("id", executionId),
-        supabase.rpc("increment_executions_used", { user_id_param: userId }),
+        supabase.rpc("increment_executions_used",    { user_id_param: userId }),
+        supabase.rpc("increment_lifetime_executions", { user_id_param: userId }),
       ])
 
       supabase.from("execution_traces").insert({

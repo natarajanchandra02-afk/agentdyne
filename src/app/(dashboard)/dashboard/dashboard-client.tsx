@@ -109,10 +109,18 @@ function AgentMiniCard({ agent }: { agent: any }) {
 // ─── Dashboard Client ─────────────────────────────────────────────────────────
 
 export function DashboardClient({ profile, recentExecutions, myAgents, totalExecutions }: Props) {
-  const plan  = profile?.subscription_plan || "free"
-  const quota = profile?.monthly_execution_quota || 100
-  const used  = profile?.executions_used_this_month || 0
-  const pct   = Math.min((used / quota) * 100, 100)
+  const plan       = profile?.subscription_plan || "free"
+  const isFreePlan = plan === "free"
+  // Free plan: 50 LIFETIME executions — mirrors PLAN_QUOTAS.free in constants.ts
+  // Paid plans: monthly_execution_quota from profile row
+  const FREE_LIFETIME_CAP = 50
+  const quota = isFreePlan
+    ? FREE_LIFETIME_CAP
+    : (profile?.monthly_execution_quota || 500)
+  const used = isFreePlan
+    ? (profile?.lifetime_executions_used || 0)
+    : (profile?.executions_used_this_month || 0)
+  const pct = Math.min((used / quota) * 100, 100)
 
   const isNewUser      = totalExecutions === 0 && myAgents.length === 0
   const hasAgentsNoRuns = myAgents.length > 0 && totalExecutions === 0
@@ -129,10 +137,10 @@ export function DashboardClient({ profile, recentExecutions, myAgents, totalExec
         : undefined,
     },
     {
-      label: "This Month", value: formatNumber(used),
+      label: isFreePlan ? "Lifetime Used" : "This Month", value: formatNumber(used),
       icon: TrendingUp, color: "text-green-600", bg: "bg-green-50",
       context: used === 0
-        ? { message: `${quota} calls available. Start executing.` }
+        ? { message: isFreePlan ? `${quota} lifetime calls available. Start executing.` : `${quota} calls available this month. Start executing.` }
         : undefined,
     },
     {
@@ -283,7 +291,7 @@ export function DashboardClient({ profile, recentExecutions, myAgents, totalExec
         {/* Usage */}
         <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold text-zinc-900">Monthly Usage</h2>
+            <h2 className="text-sm font-semibold text-zinc-900">{isFreePlan ? "Lifetime Usage" : "Monthly Usage"}</h2>
             <span className="text-xs bg-primary/8 text-primary px-2.5 py-0.5 rounded-full font-semibold capitalize">{plan}</span>
           </div>
           <div className="mb-3">
@@ -294,7 +302,9 @@ export function DashboardClient({ profile, recentExecutions, myAgents, totalExec
             <Progress value={pct} className="h-1.5" />
           </div>
           <p className="text-[11px] text-zinc-400">
-            Resets in ~{Math.max(0, Math.ceil((new Date(profile?.quota_reset_date || Date.now() + 86400000).getTime() - Date.now()) / 86400000))} days
+            {isFreePlan
+              ? `${Math.max(0, quota - used)} lifetime executions remaining`
+              : `Resets in ~${Math.max(0, Math.ceil((new Date(profile?.quota_reset_date || Date.now() + 86400000).getTime() - Date.now()) / 86400000))} days`}
           </p>
           {plan === "free" && (
             <Link href="/billing" className="block mt-4">

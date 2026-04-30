@@ -48,14 +48,15 @@ export default function AgentDetailPage() {
           return
         }
 
-        const [{ data: reviews }, { data: subscription }] = await Promise.all([
+        const [{ data: reviewsRaw }, { data: subscription }] = await Promise.all([
           supabase
             .from("reviews")
             .select("*, profiles!user_id(full_name, avatar_url)")
             .eq("agent_id", id)
             .eq("status", "approved")
             .order("created_at", { ascending: false })
-            .limit(10),
+            // Fetch 11 to detect hasMore without a separate COUNT query
+            .limit(11),
           user
             ? supabase
                 .from("agent_subscriptions")
@@ -66,10 +67,15 @@ export default function AgentDetailPage() {
             : Promise.resolve({ data: null }),
         ])
 
+        // Trim to 10, use the 11th result only to set hasMore
+        const hasMoreReviews = (reviewsRaw?.length ?? 0) > 10
+        const reviews = reviewsRaw?.slice(0, 10) ?? []
+
         if (!cancelled) {
           setData({
             agent,
-            reviews:          reviews ?? [],
+            reviews,
+            hasMoreReviews,
             user,
             userSubscription: subscription,
             isOwner,          // Bug 10 FIX: pass down so client can show draft banner

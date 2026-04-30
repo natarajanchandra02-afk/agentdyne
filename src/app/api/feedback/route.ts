@@ -45,7 +45,47 @@ export async function POST(req: NextRequest) {
     if (!user) return NextResponse.json({ error: "Authentication required" }, { status: 401 })
 
     const body = await req.json()
-    const { execution_id, rating, thumbs, comment, issue_type } = body
+    const { execution_id, rating, thumbs, comment, issue_type, type, reason, details } = body
+
+    // ── Report path: type="report" → governance_events (no execution needed) ─────────
+    if (type === "report") {
+      if (!body.agent_id || !UUID_RE.test(body.agent_id))
+        return NextResponse.json({ error: "Valid agent_id required for reports" }, { status: 400 })
+
+      const reportReason = reason ?? issue_type ?? "other"
+      await supabase.from("governance_events").insert({
+        user_id:     user.id,
+        event_type:  "agent_report",
+        severity:    "warning",
+        actor_id:    user.id,
+        resource:    "agents",
+        resource_id: body.agent_id,
+        details:     {
+          reporter_id: user.id,
+          agent_id:    body.agent_id,
+          reason:      String(reportReason).slice(0, 200),
+          details:     details ? String(details).slice(0, 2000) : null,
+          reported_at: new Date().toISOString(),
+        },
+      })
+
+      // Also notify admins via notifications (fire-and-forget)
+      supabase.from("profiles").select("id").eq("role", "admin")
+        .then(({ data: admins }) => {
+          if (!admins?.length) return
+          return supabase.from("notifications").insert(
+            admins.map(a => ({
+              user_id:    a.id,
+              title:      "Agent reported",
+              body:       `Agent ${body.agent_id} was reported: ${String(reportReason).slice(0, 100)}`,
+              type:       "admin_alert",
+              action_url: `/admin/agents/${body.agent_id}`,
+            }))
+          )
+        }).catch(() => {})
+
+      return NextResponse.json({ ok: true, message: "Report submitted. Our team will review it." })
+    }
 
     if (!execution_id || !UUID_RE.test(execution_id))
       return NextResponse.json({ error: "Valid execution_id required" }, { status: 400 })

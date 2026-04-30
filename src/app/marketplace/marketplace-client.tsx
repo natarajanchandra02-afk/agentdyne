@@ -382,7 +382,7 @@ export function MarketplaceLoader() {
               <div className="flex items-center gap-2 mb-3">
                 <div className="inline-flex items-center gap-1.5 bg-primary/8 text-primary border border-primary/20 text-xs px-3 py-1 rounded-full font-semibold">
                   <TrendingUp className="h-3 w-3" />
-                  {formatNumber(total)} agents available
+                  {loading ? "Loading agents…" : `${formatNumber(total)} agents available`}
                 </div>
               </div>
               <h1 className="text-3xl font-black tracking-tight text-zinc-900 mb-1.5">Agent Marketplace</h1>

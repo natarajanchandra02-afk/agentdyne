@@ -1,0 +1,10 @@
+// ── Builder page model name fix ─────────────────────────────────────────────
+// REPLACE the useForm defaultValues in builder/page.tsx:
+//
+//   OLD (broken — model not in SUPPORTED_MODELS, fails zod validation):
+//     model_name: "claude-sonnet-4-20250514"
+//
+//   NEW (correct — matches first entry of SUPPORTED_MODELS in constants.ts):
+//     model_name: "claude-sonnet-4-6"
+//
+// This is a PATCH NOTE only — see the actual fix applied in builder/page.tsx below.

@@ -122,7 +122,7 @@ function BuilderInner() {
     resolver: zodResolver(schema),
     defaultValues: {
       pricing_model: "free",
-      model_name:    "claude-sonnet-4-20250514",
+      model_name:    "claude-sonnet-4-6",  // ← must match SUPPORTED_MODELS in constants.ts
       temperature:   0.7,
       max_tokens:    4096,
     },

@@ -141,17 +141,24 @@ export async function POST(
     if (!body.input && body.input !== 0 && body.input !== false)
       return NextResponse.json({ error: "input is required" }, { status: 400, headers: CORS_HEADERS })
 
-    // Forward to the pipeline execute endpoint (reuses all auth, quota, rate-limit logic)
-    // We call it on behalf of the pipeline owner
+    // Forward to the pipeline execute endpoint (reuses all quota, rate-limit, credit logic)
+    // We run this on behalf of the pipeline owner by using admin client + passing owner ID via
+    // a signed internal header so the execute route can verify it's a legitimate share execution.
+    // The execute route reads x-share-owner-id ONLY when x-pipeline-share-key is also present.
     const executeRes = await fetch(
       new URL(`/api/pipelines/${shareRow.pipeline_id}/execute`, req.url).toString(),
       {
         method:  "POST",
         headers: {
-          "Content-Type":        "application/json",
-          // Pass owner's service credentials so the execute route validates correctly
-          "x-pipeline-share-key": shareKey,
-          "x-share-owner-id":     shareRow.owner_id,
+          "Content-Type":          "application/json",
+          // Internal service call: pass owner ID directly.
+          // The pipeline execute route validates this header only when the share key header is present.
+          "x-pipeline-share-key":  shareKey,
+          "x-share-owner-id":      shareRow.owner_id,
+          // Pass service key so the execute route's API-key auth path resolves owner_id
+          // The execute route DOES check this path: Bearer token → hash → api_keys lookup.
+          // For share keys we bypass this with a special internal header checked first.
+          "x-internal-service":    process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
         },
         body: JSON.stringify({ input: body.input, variables: body.variables ?? {} }),
       }

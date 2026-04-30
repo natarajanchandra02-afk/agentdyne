@@ -30,7 +30,7 @@ export async function GET(
     const { data: agent, error } = await supabase
     .from("agents")
     .select(
-      `*, profiles!seller_id(id, full_name, username, avatar_url, bio, is_verified, total_earned)`
+      `*, profiles!seller_id(id, full_name, username, avatar_url, bio, is_verified)`
     )
     .eq("id", id)
     .single()
@@ -155,6 +155,42 @@ export async function PATCH(
 
   } catch (err: any) {
     console.error("PATCH /api/agents/[id]:", err)
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+  }
+}
+
+// ── DELETE /api/agents/[id] ────────────────────────────────────────────
+// Seller only. Explicit ownership check server-side (never rely on RLS alone).
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const limited = await strictRateLimit(req)
+  if (limited) return limited
+  try {
+    const { id } = await params
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    if (!/^[0-9a-f-]{36}$/.test(id))
+      return NextResponse.json({ error: "Invalid agent id" }, { status: 400 })
+    // Explicit ownership check
+    const { data: existing } = await supabase
+      .from("agents").select("seller_id, status").eq("id", id).single()
+    if (!existing) return NextResponse.json({ error: "Agent not found" }, { status: 404 })
+    if (existing.seller_id !== user.id)
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+    // Prevent deletion of active agents (must archive first)
+    if (existing.status === "active")
+      return NextResponse.json(
+        { error: "Cannot delete an active agent. Archive it first to remove from marketplace." },
+        { status: 422 }
+      )
+    const { error } = await supabase.from("agents").delete().eq("id", id)
+    if (error) throw error
+    return NextResponse.json({ ok: true })
+  } catch (err: any) {
+    console.error("DELETE /api/agents/[id]:", err)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }
