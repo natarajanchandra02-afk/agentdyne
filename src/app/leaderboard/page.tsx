@@ -3,10 +3,10 @@ import LeaderboardClient from "./leaderboard-client"
 
 export const metadata: Metadata = {
   title:       "Agent Leaderboard — AgentDyne",
-  description: "Objective quality rankings for AI agents based on accuracy, reliability, speed, cost, and adoption. Updated every 24h.",
+  description: "Objective quality rankings for AI agents based on evaluation harness results, reliability, speed, cost efficiency, and adoption. Minimum 100 verified runs. Updated every 24h.",
   openGraph: {
     title:       "AgentDyne Agent Leaderboard",
-    description: "Objective AI agent quality rankings. Updated every 24h from live execution data.",
+    description: "Objective AI agent quality rankings from verified execution data. Updated every 24h.",
     url:         "https://agentdyne.com/leaderboard",
     siteName:    "AgentDyne",
     type:        "website",
@@ -14,7 +14,7 @@ export const metadata: Metadata = {
   twitter: {
     card:        "summary_large_image",
     title:       "AgentDyne Agent Leaderboard",
-    description: "Objective AI agent rankings based on accuracy, speed, cost, and reliability.",
+    description: "Objective AI agent rankings based on quality score, reliability, speed, and cost. Minimum 100 runs.",
   },
   alternates: { canonical: "https://agentdyne.com/leaderboard" },
 }

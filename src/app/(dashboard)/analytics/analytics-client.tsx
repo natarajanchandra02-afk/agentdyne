@@ -134,13 +134,29 @@ export function AnalyticsClient({
     const total   = executions.length
     const success = executions.filter(e => e.status === "success").length
     const failed  = executions.filter(e => e.status === "failed").length
-    const withLat = executions.filter(e => e.latency_ms)
-    const avgLat  = withLat.length
-      ? Math.round(withLat.reduce((s, e) => s + e.latency_ms, 0) / withLat.length)
-      : 0
-    const totalTok = executions.reduce((s, e) => s + (e.tokens_input || 0) + (e.tokens_output || 0), 0)
-    const totalCost = executions.reduce((s, e) => s + (e.cost_usd || 0), 0)
+    const withLat = executions.filter(e => e.latency_ms && e.latency_ms > 0).map(e => e.latency_ms as number).sort((a, b) => a - b)
+    const avgLat  = withLat.length ? Math.round(withLat.reduce((s, v) => s + v, 0) / withLat.length) : 0
+    const p95Lat  = withLat.length ? Math.round(withLat[Math.floor(withLat.length * 0.95)] ?? withLat[withLat.length - 1]!) : 0
+    const totalCost = executions.reduce((s, e) => s + (Number(e.cost_usd) || Number(e.cost) || 0), 0)
     const days = new Set(executions.map(e => e.created_at.slice(0, 10))).size
+
+    // Failure reason aggregation
+    const errorBuckets: Record<string, number> = {}
+    executions.filter(e => e.status === "failed" && e.error_message).forEach(e => {
+      const msg = String(e.error_message)
+      const key =
+        msg.includes("timeout")    ? "Timeout"          :
+        msg.includes("quota")      ? "Quota exceeded"   :
+        msg.includes("credit")     ? "Insufficient credits" :
+        msg.includes("rate limit") ? "Rate limited"     :
+        msg.includes("content")    ? "Content policy"   :
+        msg.includes("model") || msg.includes("AI") || msg.includes("LLM") ? "AI provider error" :
+        "Other"
+      errorBuckets[key] = (errorBuckets[key] ?? 0) + 1
+    })
+    const errorBreakdown = Object.entries(errorBuckets)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
 
     // Prev period
     const prevTotal   = prevExecs.length
@@ -149,12 +165,12 @@ export function AnalyticsClient({
     const currSuccessRate = total ? (success / total) * 100 : 0
 
     return {
-      total, success, failed, avgLat, totalTok, totalCost, days,
+      total, success, failed, avgLat, p95Lat, totalCost, days, errorBreakdown,
       successRate: total ? Math.round(currSuccessRate) : 0,
       trends: {
         total:   calcTrend(total, prevTotal),
         success: calcTrend(currSuccessRate, prevSuccessRate),
-        cost:    calcTrend(totalCost, prevExecs.reduce((s, e) => s + (e.cost_usd || 0), 0)),
+        cost:    calcTrend(totalCost, prevExecs.reduce((s, e) => s + (Number(e.cost_usd) || 0), 0)),
       },
     }
   }, [executions, prevExecs])
@@ -252,14 +268,15 @@ export function AnalyticsClient({
       trend: null,
     },
     {
-      label: "Avg Latency", value: `${formatNumber(stats.avgLat)}ms`,
-      icon: Clock, color: "text-amber-600", bg: "bg-amber-50",
-      trend: null,
+      label: "Avg Latency", value: stats.avgLat > 0 ? `${formatNumber(stats.avgLat)}ms` : "—",
+      sub: stats.p95Lat > 0 ? `p95: ${formatNumber(stats.p95Lat)}ms` : null,
+      icon: Clock, color: "text-amber-600", bg: "bg-amber-50", trend: null,
     },
     {
-      label: "Total Cost", value: stats.totalCost < 0.01 ? `$${stats.totalCost.toFixed(5)}` : `$${stats.totalCost.toFixed(3)}`,
-      icon: DollarSign, color: "text-violet-600", bg: "bg-violet-50",
-      trend: stats.trends.cost,
+      label: "Total Cost",
+      value: stats.totalCost === 0 ? "Free" : stats.totalCost < 0.0001 ? `${stats.totalCost.toFixed(5)}` : `${stats.totalCost.toFixed(3)}`,
+      sub: stats.totalCost === 0 ? "Free agents only" : null,
+      icon: DollarSign, color: "text-violet-600", bg: "bg-violet-50", trend: stats.trends.cost,
     },
     {
       label: "Active Days", value: formatNumber(stats.days),
@@ -308,6 +325,9 @@ export function AnalyticsClient({
               </div>
               <p className="text-2xl font-bold text-zinc-900 nums">{s.value}</p>
               <p className="text-xs font-medium text-zinc-600 mt-0.5">{s.label}</p>
+              {(s as any).sub && (
+                <p className="text-[10px] text-zinc-400 mt-0.5">{(s as any).sub}</p>
+              )}
               {s.trend !== null && (
                 <p className={cn("text-[11px] font-semibold mt-1 flex items-center gap-1", tr.color)}>
                   <TrIcon className="h-3 w-3" /> {tr.label} vs prev
@@ -387,6 +407,39 @@ export function AnalyticsClient({
           )}
         </div>
       </div>
+
+      {/* Failure reason breakdown — shows WHY executions failed */}
+      {stats.failed > 0 && stats.errorBreakdown.length > 0 && (
+        <div className="bg-white border border-red-100 rounded-2xl p-5"
+          style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <div className="flex items-center gap-2 mb-4">
+            <XCircle className="h-4 w-4 text-red-400" />
+            <h2 className="text-sm font-semibold text-zinc-900">Failure Reasons</h2>
+            <span className="text-[11px] text-zinc-400 ml-1">{stats.failed} failed execution{stats.failed !== 1 ? "s" : ""}</span>
+          </div>
+          <div className="space-y-2.5">
+            {stats.errorBreakdown.map(([reason, count]) => {
+              const pct = Math.round((count / stats.failed) * 100)
+              return (
+                <div key={reason}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-medium text-zinc-700">{reason}</span>
+                    <span className="text-xs text-zinc-400 nums">{count} ({pct}%)</span>
+                  </div>
+                  <div className="h-1.5 bg-zinc-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-red-300 rounded-full" style={{ width: `${pct}%` }} />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+          {stats.errorBreakdown.every(([r]) => r === "Other") && (
+            <p className="text-[11px] text-zinc-400 mt-3">
+              Check the <Link href="/executions" className="text-primary font-semibold hover:underline">Executions page</Link> for full error messages.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Per-agent breakdown */}
       {agentBreakdown.length > 0 && (

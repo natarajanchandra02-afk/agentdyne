@@ -15,14 +15,10 @@ import { checkIdempotency, commitIdempotency, failIdempotency } from "@/lib/idem
 import { checkExecutionCache, writeExecutionCache } from "@/lib/execution-cache"
 import { checkConcurrencyLimit } from "@/lib/concurrency"
 import type { PlanName } from "@/lib/anti-abuse"
+import { validateApiKey, extractRawKey } from "@/lib/api-key-auth"
 
 const UUID_RE        = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const MAX_INPUT_BYTES = 32_000
-
-async function hashApiKey(key: string): Promise<string> {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key))
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("")
-}
 
 export async function POST(
   req: NextRequest,
@@ -46,18 +42,32 @@ export async function POST(
     userId = user?.id
 
     if (!userId) {
-      const rawKey =
-        req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
-        req.headers.get("x-api-key")
-      if (rawKey && rawKey.length <= 200) {
-        const keyHash = await hashApiKey(rawKey)
-        const { data: keyRow } = await supabase
-          .from("api_keys").select("user_id, is_active, expires_at")
-          .eq("key_hash", keyHash).single()
-        if (keyRow?.is_active && !(keyRow.expires_at && new Date(keyRow.expires_at) < new Date())) {
-          userId = keyRow.user_id
-          supabase.from("api_keys").update({ last_used_at: new Date().toISOString() })
-            .eq("key_hash", keyHash).then(() => {})
+      const rawKey = extractRawKey(req)
+      if (rawKey) {
+        const ip = req.headers.get("cf-connecting-ip") ?? req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? undefined
+        const validation = await validateApiKey(supabase, rawKey, {
+          agentId,
+          ip,
+          required: ["execute"],
+        })
+        if (!validation.valid) {
+          return NextResponse.json({ error: validation.reason ?? "Invalid API key" }, { status: 401 })
+        }
+        userId = validation.userId!
+
+        // Per-key rate limit enforcement
+        const keyRow = validation.keyRow!
+        const perMinLimit = keyRow.rate_limit_per_minute ?? 60
+        const rlResult = await supabase.rpc("increment_rate_limit", {
+          key_param:        `apikey:${validation.keyId}:${Math.floor(Date.now() / 60000)}`,
+          window_end_param: new Date(Math.ceil(Date.now() / 60000) * 60000).toISOString(),
+          limit_param:      perMinLimit,
+        })
+        if (rlResult.data?.blocked) {
+          return NextResponse.json({
+            error: `Key rate limit exceeded (${perMinLimit}/min). Use a key with a higher limit.`,
+            code:  "KEY_RATE_LIMIT",
+          }, { status: 429 })
         }
       }
     }

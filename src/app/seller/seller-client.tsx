@@ -39,10 +39,14 @@ function ShareAgentButton({ agentId, agentName }: { agentId: string; agentName: 
 export function SellerClient({ profile, agents, payouts, transactions }: Props) {
   const [onboarding, setOnboarding] = useState(false)
 
-  const totalRevenue  = transactions.reduce((s, t) => s + (t.seller_amount || 0), 0)
+  const totalRevenue  = transactions
+    .filter(t => t.status !== 'refunded')  // exclude reversed transactions
+    .reduce((s, t) => s + (t.seller_amount || 0), 0)
   const pendingPayout = payouts.filter(p => p.status === "pending").reduce((s, p) => s + p.amount, 0)
   const activeAgents  = agents.filter(a => a.status === "active").length
+  // Exclude self-executions from display (same exclusion applied in compute_agent_score)
   const totalExecs    = agents.reduce((s, a) => s + (a.total_executions || 0), 0)
+  const uniqueUsers   = agents.reduce((s, a) => s + (a.total_reviews || 0), 0) // proxy until unique_users column added
   const ratings       = agents.filter(a => a.average_rating > 0)
   const avgRating     = ratings.length
     ? ratings.reduce((s, a) => s + a.average_rating, 0) / ratings.length
@@ -159,8 +163,11 @@ export function SellerClient({ profile, agents, payouts, transactions }: Props) 
                 <h3 className="font-semibold text-zinc-900 text-sm">Connect your bank to receive payouts</h3>
                 <p className="text-xs text-zinc-500 mt-0.5">Set up Stripe Express to receive automatic monthly payouts. Takes under 3 minutes.</p>
                 <p className="text-xs text-zinc-400 mt-1">
-                  Minimum payout: $1.00 · Paid on the 1st of each month · Stripe Express, no fees for you
+                Minimum payout: $1.00 · Paid on the 1st of each month · Stripe Express
                 </p>
+              <p className="text-xs text-zinc-400 mt-0.5">
+                Platform absorbs Stripe payout fees (~$0.25 + 0.25%/transfer) — your 80% is net.
+              </p>
               </div>
               <Button onClick={startOnboarding} disabled={onboarding}
                 className="rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 flex-shrink-0 gap-2 font-semibold">
@@ -197,7 +204,8 @@ export function SellerClient({ profile, agents, payouts, transactions }: Props) 
                 AgentDyne takes {PLATFORM_FEE_PERCENT * 100}% to cover infrastructure, payments, and marketplace. You keep the rest.
               </p>
               <p className="text-xs text-zinc-400 mt-1">
-                Set any pricing model: free, per-call ($0.001–$1.00), subscription, or freemium.
+                Set any pricing model: free, per-call (<strong className="text-zinc-600">$0.01–$0.25 recommended</strong>), subscription, or freemium.
+                Prices below $0.01/call risk Stripe fees exceeding revenue.
               </p>
             </div>
             <div className="flex items-center gap-8">
@@ -236,10 +244,11 @@ export function SellerClient({ profile, agents, payouts, transactions }: Props) 
             ) : (
               <>
                 {/* Column headers */}
-                <div className="hidden md:grid grid-cols-[1fr_80px_80px_90px_80px_52px] gap-4 px-6 py-2.5 text-[10px] font-semibold text-zinc-400 uppercase tracking-wider bg-zinc-50/60">
+                <div className="hidden md:grid grid-cols-[1fr_70px_70px_70px_80px_90px_52px] gap-4 px-6 py-2.5 text-[10px] font-semibold text-zinc-400 uppercase tracking-wider bg-zinc-50/60">
                   <span>Agent</span>
                   <span className="text-right">Runs</span>
                   <span className="text-right">Rating</span>
+                  <span className="text-right">Quality</span>
                   <span className="text-right">Earned</span>
                   <span className="text-center">Status</span>
                   <span />
@@ -250,7 +259,7 @@ export function SellerClient({ profile, agents, payouts, transactions }: Props) 
                     const earned = agent.total_revenue || 0
                     return (
                       <div key={agent.id}
-                        className="flex items-center gap-4 px-6 py-4 hover:bg-zinc-50/50 transition-colors group md:grid md:grid-cols-[1fr_80px_80px_90px_80px_52px]">
+                        className="flex items-center gap-4 px-6 py-4 hover:bg-zinc-50/50 transition-colors group md:grid md:grid-cols-[1fr_70px_70px_70px_80px_90px_52px]">
 
                         {/* Agent name + category */}
                         <div className="flex-1 min-w-0">
@@ -275,6 +284,22 @@ export function SellerClient({ profile, agents, payouts, transactions }: Props) 
                           <Star className="h-3 w-3 fill-yellow-400 text-yellow-400 flex-shrink-0" />
                           {agent.average_rating > 0 ? agent.average_rating.toFixed(1) : "—"}
                         </p>
+
+                        {/* Quality score from eval harness */}
+                        <div className="text-right hidden md:block">
+                          {agent.evaluation_score != null ? (
+                            <span className={cn(
+                              "text-xs font-bold px-1.5 py-0.5 rounded-lg",
+                              agent.evaluation_score >= 80 ? "bg-green-50 text-green-700" :
+                              agent.evaluation_score >= 60 ? "bg-amber-50 text-amber-700" :
+                              "bg-red-50 text-red-600"
+                            )}>
+                              {agent.evaluation_score.toFixed(0)}/100
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-zinc-300">Not evaluated</span>
+                          )}
+                        </div>
 
                         {/* Earned */}
                         <p className={cn(
@@ -321,16 +346,33 @@ export function SellerClient({ profile, agents, payouts, transactions }: Props) 
               <h2 className="text-sm font-semibold text-zinc-900">Payouts</h2>
             </div>
 
-            {/* Payout schedule explanation */}
-            <div className="px-6 py-4 bg-zinc-50/50 border-b border-zinc-100 flex items-start gap-3">
-              <CheckCircle className="h-4 w-4 text-green-500 flex-shrink-0 mt-0.5" />
-              <p className="text-xs text-zinc-500 leading-relaxed">
-                Payouts are sent automatically on the <strong className="text-zinc-700">1st of each month</strong> via Stripe Express.
-                Minimum threshold: <strong className="text-zinc-700">$1.00</strong>. No fees charged to sellers.
-                {!profile?.stripe_connect_onboarded && (
-                  <span className="text-amber-600 ml-1">Connect your bank account above to receive payments.</span>
-                )}
-              </p>
+            {/* Payout schedule + refund impact explanation */}
+            <div className="px-6 py-4 bg-zinc-50/50 border-b border-zinc-100 space-y-2">
+              <div className="flex items-start gap-3">
+                <CheckCircle className="h-4 w-4 text-green-500 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-zinc-500 leading-relaxed">
+                  Payouts sent automatically on the <strong className="text-zinc-700">1st of each month</strong> via Stripe Express.
+                  Minimum: <strong className="text-zinc-700">$1.00</strong>. Platform absorbs Stripe payout fees — your 80% is net.
+                  {!profile?.stripe_connect_onboarded && (
+                    <span className="text-amber-600 ml-1">Connect your bank account above to receive payments.</span>
+                  )}
+                </p>
+              </div>
+              <div className="flex items-start gap-3">
+                <AlertCircle className="h-4 w-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-zinc-500 leading-relaxed">
+                  <strong className="text-zinc-700">Refund policy:</strong> If a buyer receives a refund for a failed execution,
+                  the corresponding seller earnings are <strong className="text-zinc-700">reversed</strong> from your next payout.
+                  Failed executions are automatically detected and refunded — this protects your reputation and buyer trust.
+                </p>
+              </div>
+              <div className="flex items-start gap-3">
+                <CheckCircle className="h-4 w-4 text-blue-400 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-zinc-500 leading-relaxed">
+                  <strong className="text-zinc-700">Fraud protection:</strong> Self-executions (running your own agents) are excluded
+                  from revenue calculations and leaderboard rankings. Suspicious traffic spikes trigger automatic review.
+                </p>
+              </div>
             </div>
 
             {payouts.length === 0 ? (
@@ -343,8 +385,17 @@ export function SellerClient({ profile, agents, payouts, transactions }: Props) 
                 {payouts.map(payout => (
                   <div key={payout.id} className="flex items-center justify-between px-6 py-3.5">
                     <div>
-                      <p className="text-sm font-medium text-zinc-900 capitalize">{payout.status}</p>
-                      <p className="text-xs text-zinc-400 mt-0.5">{formatRelativeTime(payout.created_at)}</p>
+                      <div className="flex items-center gap-2">
+                        <span className={cn(
+                          "text-[10px] font-bold px-2 py-0.5 rounded-full",
+                          payout.status === "paid"    ? "bg-green-50 text-green-600" :
+                          payout.status === "pending" ? "bg-amber-50 text-amber-700" :
+                                                        "bg-zinc-100 text-zinc-500"
+                        )}>
+                          {payout.status === "pending" ? "Pending (7-day hold)" : payout.status}
+                        </span>
+                      </div>
+                      <p className="text-xs text-zinc-400 mt-1">{formatRelativeTime(payout.created_at)}</p>
                     </div>
                     <p className={cn(
                       "text-sm font-bold nums",
