@@ -47,11 +47,12 @@ export function Footer() {
           <div className="col-span-2 md:col-span-1">
             <Link href="/" className="inline-block mb-5">
               <Image
-                src="/logo.png"
+                src="/logo9.png"
                 alt="AgentDyne"
                 width={130}
                 height={36}
-                className="h-8 w-auto object-contain opacity-90 hover:opacity-100 transition-opacity"
+                className="h-8 w-auto object-contain"
+                style={{ filter: "brightness(0) opacity(0.85)" }}
               />
             </Link>
             <p className="text-xs text-zinc-500 leading-relaxed mb-5">
@@ -97,16 +98,6 @@ export function Footer() {
         </div>
 
         <div className="border-t border-zinc-100 mt-12 pt-8 flex flex-col md:flex-row items-center justify-between gap-4">
-          <Link href="/" className="inline-block">
-            <Image
-              src="/logo.png"
-              alt="AgentDyne"
-              width={110}
-              height={30}
-              className="h-7 w-auto object-contain"
-              style={{ filter: "brightness(0) opacity(0.75)" }}
-            />
-          </Link>
           <p className="text-xs text-zinc-400">
             © {new Date().getFullYear()} AgentDyne, Inc. All rights reserved.
           </p>
