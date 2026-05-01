@@ -97,6 +97,16 @@ export function Footer() {
         </div>
 
         <div className="border-t border-zinc-100 mt-12 pt-8 flex flex-col md:flex-row items-center justify-between gap-4">
+          <Link href="/" className="inline-block">
+            <Image
+              src="/logo-black.png"
+              alt="AgentDyne"
+              width={110}
+              height={30}
+              className="h-7 w-auto object-contain opacity-70 hover:opacity-100 transition-opacity"
+              style={{ filter: "brightness(0)" }} /* fallback: forces any logo to pure black */
+            />
+          </Link>
           <p className="text-xs text-zinc-400">
             © {new Date().getFullYear()} AgentDyne, Inc. All rights reserved.
           </p>

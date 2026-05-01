@@ -5,6 +5,7 @@ import { useRouter, usePathname, useSearchParams } from "next/navigation"
 import {
   Search, X, Star, Zap, CheckCircle, TrendingUp,
   ArrowRight, Filter, Grid3x3, List, AlertCircle, Sparkles,
+  ChevronLeft, ChevronRight,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -209,6 +210,111 @@ function SkeletonCard({ view }: { view: "grid" | "list" }) {
   )
 }
 
+// ─── Category carousel with arrow navigation ────────────────────────────────
+
+function CategoryCarousel({
+  categories, activeCategory, onSelect,
+}: {
+  categories: string[]
+  activeCategory: string
+  onSelect: (cat: string) => void
+}) {
+  const scrollRef  = useRef<HTMLDivElement>(null)
+  const [canLeft,  setCanLeft]  = useState(false)
+  const [canRight, setCanRight] = useState(true)
+
+  const updateArrows = () => {
+    const el = scrollRef.current
+    if (!el) return
+    setCanLeft(el.scrollLeft > 4)
+    setCanRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4)
+  }
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    updateArrows()
+    el.addEventListener("scroll", updateArrows, { passive: true })
+    const ro = new ResizeObserver(updateArrows)
+    ro.observe(el)
+    return () => { el.removeEventListener("scroll", updateArrows); ro.disconnect() }
+  }, [])
+
+  const scroll = (dir: "left" | "right") => {
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollBy({ left: dir === "left" ? -240 : 240, behavior: "smooth" })
+  }
+
+  return (
+    <div className="relative mb-6">
+      {/* Left fade + arrow */}
+      <div className={cn(
+        "absolute left-0 top-0 bottom-0 z-10 flex items-center pointer-events-none transition-opacity duration-200",
+        canLeft ? "opacity-100" : "opacity-0"
+      )}>
+        <div className="absolute inset-y-0 left-0 w-16 bg-gradient-to-r from-white to-transparent" />
+        <button
+          onClick={() => scroll("left")}
+          className="pointer-events-auto relative ml-0 w-8 h-8 rounded-full bg-white border border-zinc-200 shadow-md flex items-center justify-center text-zinc-600 hover:text-zinc-900 hover:border-zinc-300 hover:shadow-lg transition-all active:scale-95"
+          aria-label="Scroll categories left"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+      </div>
+
+      {/* Scrollable pill row */}
+      <div
+        ref={scrollRef}
+        className="flex items-center gap-2 overflow-x-auto scrollbar-hide pb-1 px-0"
+        style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+      >
+        {/* Left spacer so pills don't hide behind arrow */}
+        <div className={cn("flex-shrink-0 transition-all", canLeft ? "w-8" : "w-0")} />
+
+        {categories.map(cat => (
+          <button
+            key={cat}
+            onClick={() => onSelect(activeCategory === cat && cat !== "all" ? "all" : cat)}
+            className={cn(
+              "flex-shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold border transition-all whitespace-nowrap",
+              activeCategory === cat
+                ? "bg-zinc-900 border-zinc-900 text-white"
+                : "border-zinc-200 text-zinc-600 hover:border-zinc-400 bg-white"
+            )}
+          >
+            {cat !== "all" && (
+              <CategoryIcon
+                category={cat}
+                className={cn("h-3 w-3 flex-shrink-0", activeCategory === cat ? "text-white opacity-80" : "")}
+              />
+            )}
+            {cat === "all" ? "All" : categoryLabel(cat)}
+          </button>
+        ))}
+
+        {/* Right spacer */}
+        <div className={cn("flex-shrink-0 transition-all", canRight ? "w-8" : "w-0")} />
+      </div>
+
+      {/* Right fade + arrow */}
+      <div className={cn(
+        "absolute right-0 top-0 bottom-0 z-10 flex items-center justify-end pointer-events-none transition-opacity duration-200",
+        canRight ? "opacity-100" : "opacity-0"
+      )}>
+        <div className="absolute inset-y-0 right-0 w-16 bg-gradient-to-l from-white to-transparent" />
+        <button
+          onClick={() => scroll("right")}
+          className="pointer-events-auto relative mr-0 w-8 h-8 rounded-full bg-white border border-zinc-200 shadow-md flex items-center justify-center text-zinc-600 hover:text-zinc-900 hover:border-zinc-300 hover:shadow-lg transition-all active:scale-95"
+          aria-label="Scroll categories right"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ─── Featured hero section (Gap 4) ───────────────────────────────────────────
 
 function FeaturedHero({ agents }: { agents: any[] }) {
@@ -408,26 +514,12 @@ export function MarketplaceLoader() {
 
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
 
-          {/* ── Category pills ────────────────────────────────────────────── */}
-          <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide pb-1 mb-6">
-            {CATEGORIES.map(cat => (
-              <button key={cat}
-                // Bug 15 FIX: clicking active category deselects it (goes back to "all")
-                onClick={() => updateParams({ category: activeCategory === cat && cat !== "all" ? "all" : cat })}
-                className={cn(
-                  "flex-shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold border transition-all whitespace-nowrap",
-                  activeCategory === cat
-                    ? "bg-zinc-900 border-zinc-900 text-white"
-                    : "border-zinc-200 text-zinc-600 hover:border-zinc-400 bg-white"
-                )}>
-                {cat !== "all" && (
-                  <CategoryIcon category={cat}
-                    className={cn("h-3 w-3 flex-shrink-0", activeCategory === cat ? "text-white opacity-80" : "")} />
-                )}
-                {cat === "all" ? "All" : categoryLabel(cat)}
-              </button>
-            ))}
-          </div>
+          {/* ── Category carousel with arrow navigation ─────────────────── */}
+          <CategoryCarousel
+            categories={CATEGORIES}
+            activeCategory={activeCategory}
+            onSelect={cat => updateParams({ category: cat })}
+          />
 
           {/* ── Featured hero (Gap 4) — only when no filters active ───────── */}
           {!hasFilters && !loading && !error && <FeaturedHero agents={agents} />}
