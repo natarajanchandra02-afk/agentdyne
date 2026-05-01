@@ -192,7 +192,7 @@ export async function POST(req: NextRequest) {
         .single()
         .then(async ({ data: agent }) => {
           if ((agent?.total_executions ?? 0) >= 10) {
-            await supabase.rpc("compute_agent_score", { target_agent_id: agentId })
+            await supabase.rpc("compute_agent_score", { agent_id_param: agentId })
           }
         })
     }

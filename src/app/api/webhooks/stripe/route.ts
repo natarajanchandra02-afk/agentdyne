@@ -19,10 +19,13 @@ import { createAdminClient } from "@/lib/supabase/server"
 import { stripe } from "@/lib/stripe"
 import Stripe from "stripe"
 
+// Aligned with src/lib/constants.ts PLAN_QUOTAS — SINGLE SOURCE OF TRUTH
+// Free: 50 lifetime (handled separately — not monthly quota)
+// Starter: 500/month | Pro: 5,000/month | Enterprise: unlimited
 const PLAN_QUOTAS: Record<string, { quota: number; plan: string }> = {
-  starter:    { quota: 1_000,  plan: "starter"    },
-  pro:        { quota: 10_000, plan: "pro"         },
-  enterprise: { quota: -1,     plan: "enterprise"  },
+  starter:    { quota: 500,   plan: "starter"    },
+  pro:        { quota: 5_000, plan: "pro"         },
+  enterprise: { quota: -1,    plan: "enterprise"  },
 }
 
 export async function POST(req: NextRequest) {
@@ -162,7 +165,10 @@ async function handleStripeEvent(event: Stripe.Event, supabase: any): Promise<vo
         subscription_plan:       "free",
         subscription_status:     "canceled",
         subscription_id:         null,
-        monthly_execution_quota: 100,
+        // Free plan uses lifetime cap (50), not monthly quota.
+        // Set monthly_execution_quota=50 to keep the column consistent with
+        // any code that still reads it, but enforcement uses lifetime_executions_used.
+        monthly_execution_quota: 50,
         updated_at:              new Date().toISOString(),
       }).eq("id", userId)
 

@@ -96,7 +96,7 @@ export async function POST(
 
     // Trigger via Postgres RPC
     const { data: newScore, error } = await supabase
-      .rpc("compute_agent_score", { target_agent_id: id })
+      .rpc("compute_agent_score", { agent_id_param: id })
 
     if (error) throw error
 

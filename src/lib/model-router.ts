@@ -398,13 +398,13 @@ export function checkModelSupport(model: string): {
  */
 export function getSupportedModels(): string[] {
   const all = [
-    // Anthropic
-    { model: "claude-sonnet-4-20250514",  provider: "anthropic" as Provider },
-    { model: "claude-haiku-4-5-20251001", provider: "anthropic" as Provider },
-    { model: "claude-opus-4-6",           provider: "anthropic" as Provider },
+    // Anthropic — use exact model strings from constants.ts
+    { model: "claude-sonnet-4-6",           provider: "anthropic" as Provider },
+    { model: "claude-haiku-4-5-20251001",   provider: "anthropic" as Provider },
+    { model: "claude-opus-4-6",             provider: "anthropic" as Provider },
     // OpenAI
-    { model: "gpt-4o",     provider: "openai" as Provider },
-    { model: "gpt-4o-mini",provider: "openai" as Provider },
+    { model: "gpt-4o",      provider: "openai" as Provider },
+    { model: "gpt-4o-mini", provider: "openai" as Provider },
     // Google
     { model: "gemini-1.5-pro",   provider: "google" as Provider },
     { model: "gemini-1.5-flash", provider: "google" as Provider },

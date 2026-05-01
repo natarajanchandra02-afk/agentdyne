@@ -12,7 +12,7 @@ import Link from "next/link"
 function BuilderEditorInner() {
   const { id }       = useParams<{ id: string }>()
   const searchParams = useSearchParams()
-  const defaultTab   = searchParams.get("defaultTab") || "basics"
+  const defaultTab   = searchParams.get("defaultTab") || "overview"  // was "basics" — which is not a valid tab ID, caused blank editor
   const [agent,   setAgent]   = useState<any>(null)
   const [error,   setError]   = useState<string | null>(null)
   const [loading, setLoading] = useState(true)

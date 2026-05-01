@@ -413,6 +413,9 @@ export async function POST(
                 total_ms: latencyMs, tokens_input: inputTok, tokens_output: outputTok, cost_usd: costUsd,
                 status: scrub?.flagged ? "flagged" : "success", temperature: modelParams.temperature,
               }).then(() => {}).catch(() => {})
+
+            // Also increment lifetime counter for free plan users
+            supabase.rpc("increment_executions_used", { user_id_param: userId }).then(() => {}).catch(() => {})
             }
 
           } catch (err: any) {
@@ -476,7 +479,8 @@ export async function POST(
           completed_at: new Date().toISOString(),
         }).eq("id", executionId),
         supabase.rpc("increment_executions_used",    { user_id_param: userId }),
-        supabase.rpc("increment_lifetime_executions", { user_id_param: userId }),
+        // increment_executions_used() in migration 030 also handles lifetime_executions_used
+        // for free plan users — no separate RPC needed
       ])
 
       supabase.from("execution_traces").insert({

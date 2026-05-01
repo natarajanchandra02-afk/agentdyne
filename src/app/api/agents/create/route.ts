@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
     const cleanName   = sanitizeText(String(name   || ""))
     const cleanDesc   = sanitizeText(String(description || ""))
     const cleanPrompt = sanitizeText(String(system_prompt || ""))
-    const cleanModel  = String(model_name || "claude-sonnet-4-20250514")
+    const cleanModel  = String(model_name || SUPPORTED_MODELS[0])  // safe fallback to first supported model
 
     if (cleanName.length < 3 || cleanName.length > MAX_AGENT_NAME_LENGTH)
       errors.push(`Name must be 3–${MAX_AGENT_NAME_LENGTH} characters`)

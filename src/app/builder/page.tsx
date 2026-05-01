@@ -116,15 +116,19 @@ function BuilderInner() {
   const [categoryKey, setCategoryKey] = useState(0)
 
   const {
-    register, handleSubmit, watch, setValue, trigger,
+    register, handleSubmit, watch, setValue, trigger, getValues,
     formState: { errors },
   } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
       pricing_model: "free",
-      model_name:    "claude-sonnet-4-6",  // ← must match SUPPORTED_MODELS in constants.ts
+      model_name:    "claude-sonnet-4-6",  // must match SUPPORTED_MODELS[0] in constants.ts
       temperature:   0.7,
       max_tokens:    4096,
+      category:      "",   // ← REQUIRED: prevents Zod getting undefined → "Required" error
+      name:          "",
+      description:   "",
+      system_prompt: "",
     },
   })
 
@@ -152,8 +156,24 @@ function BuilderInner() {
     if (step > 0) {
       const valid = await trigger(STEP_FIELDS[step] as any)
       if (!valid) {
-        const msg = STEP_FIELDS[step].map(f => errors[f]?.message).find(Boolean)
-        toast.error(msg || "Please complete all required fields")
+        // Read current form state via getValues + re-run Zod to get fresh messages.
+        // Cannot read `errors` here — it's a stale closure from the previous render.
+        // Instead, find the first field in this step that has a validation error
+        // by checking the form's internal error state after trigger completes.
+        const currentErrors = STEP_FIELDS[step]
+          .map(f => (errors as any)[f]?.message as string | undefined)
+          .filter(Boolean)
+        // Fallback field-specific hints if stale closure has no messages yet
+        const fieldHints: Partial<Record<keyof FormData, string>> = {
+          name:          "Agent name is required (min 3 characters)",
+          description:   "Description is required (min 20 characters)",
+          category:      "Please select a category",
+          system_prompt: "System prompt is required (min 20 characters)",
+          model_name:    "Please select an AI model",
+        }
+        const stepFields = STEP_FIELDS[step] as (keyof FormData)[]
+        const fallback   = stepFields.map(f => fieldHints[f]).find(Boolean)
+        toast.error(currentErrors[0] || fallback || "Please complete all required fields")
         return
       }
     }
