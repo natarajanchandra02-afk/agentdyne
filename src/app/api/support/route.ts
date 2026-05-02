@@ -15,7 +15,8 @@ export const runtime = "edge"
 import { NextRequest, NextResponse }  from "next/server"
 import { createClient }               from "@/lib/supabase/server"
 import { apiRateLimit }               from "@/lib/rate-limit"
-import Anthropic                      from "@anthropic-ai/sdk"
+// NOTE: @anthropic-ai/sdk uses Node.js internals not available in
+// Cloudflare Workers edge runtime. Use native fetch() directly.
 
 // ─── Support agent system prompt ─────────────────────────────────────────────
 
@@ -124,12 +125,6 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Create client per-request — NOT at module level.
-    // Edge Runtime (Cloudflare Workers) resolves process.env at request time,
-    // not at module initialization. Creating the client at module level can
-    // cause "API key missing" errors even when the env var is set correctly.
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
 
@@ -181,23 +176,47 @@ export async function POST(req: NextRequest) {
       ? `${SUPPORT_SYSTEM_PROMPT}\n\n${userContext}`
       : SUPPORT_SYSTEM_PROMPT
 
-    const response = await anthropic.messages.create({
-      model:      "claude-haiku-4-5-20251001",  // fast + cheap for support
-      max_tokens: 800,
-      system:     systemPrompt,
-      messages:   [
-        ...trimmedHistory,
-        { role: "user", content: message.trim() },
-      ],
+    // Use native fetch — works on Cloudflare Workers edge runtime
+    // @anthropic-ai/sdk relies on Node.js internals not available on edge.
+    const apiRes = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type":      "application/json",
+        "x-api-key":         process.env.ANTHROPIC_API_KEY!,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model:      "claude-haiku-4-5-20251001",
+        max_tokens: 800,
+        system:     systemPrompt,
+        messages:   [
+          ...trimmedHistory,
+          { role: "user", content: message.trim() },
+        ],
+      }),
     })
 
-    const reply = response.content[0]?.type === "text" ? response.content[0].text : ""
+    if (!apiRes.ok) {
+      const errBody = await apiRes.text().catch(() => "")
+      console.error("Anthropic API error:", apiRes.status, errBody)
+      return NextResponse.json(
+        { error: "Support agent temporarily unavailable. Please email support@agentdyne.com" },
+        { status: 503 }
+      )
+    }
+
+    const anthropicData = await apiRes.json() as {
+      content: Array<{ type: string; text: string }>
+      usage:   { input_tokens: number; output_tokens: number }
+    }
+
+    const reply = anthropicData.content[0]?.type === "text" ? anthropicData.content[0].text : ""
 
     return NextResponse.json({
       reply,
       tokens: {
-        input:  response.usage.input_tokens,
-        output: response.usage.output_tokens,
+        input:  anthropicData.usage.input_tokens,
+        output: anthropicData.usage.output_tokens,
       },
     })
 
