@@ -152,7 +152,7 @@ export async function POST(req: NextRequest) {
     if (user) {
       const { data: profile } = await supabase
         .from("profiles")
-        .select("subscription_plan, email_verified, executions_used_this_month, monthly_spent_usd, free_executions_remaining")
+        .select("subscription_plan, email_verified, email_confirmed_at, executions_used_this_month, total_spent, lifetime_executions_used")
         .eq("id", user.id)
         .single()
 
@@ -160,11 +160,11 @@ export async function POST(req: NextRequest) {
         userContext = [
           `[Authenticated user context — use to personalise answers]`,
           `Plan: ${profile.subscription_plan}`,
-          `Email verified: ${profile.email_verified}`,
+          `Email verified: ${profile.email_verified ?? profile.email_confirmed_at != null}`,
           `Executions this month: ${profile.executions_used_this_month ?? 0}`,
-          `Monthly spend: $${(profile.monthly_spent_usd ?? 0).toFixed(4)}`,
+          `Total spend: ${(profile.total_spent ?? 0).toFixed(2)}`,
           profile.subscription_plan === "free"
-            ? `Free executions remaining: ${profile.free_executions_remaining ?? 50}`
+            ? `Lifetime executions used: ${profile.lifetime_executions_used ?? 0} / 50`
             : "",
         ].filter(Boolean).join("\n")
       }

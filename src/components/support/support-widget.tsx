@@ -135,21 +135,33 @@ export function SupportWidget() {
         body:    JSON.stringify({ message: trimmed, history }),
         signal:  abortRef.current.signal,
       })
-      const data = await res.json()
 
-      if (!res.ok) throw new Error(data.error || "Support agent unavailable")
+      let data: any
+      try { data = await res.json() } catch { data = {} }
+
+      if (!res.ok) {
+        // Surface the actual error from the API, not a generic fallback.
+        // Common cases: 503 (API key not set), 429 (rate limit), 500 (crash)
+        const apiMsg = data?.error || data?.message
+        const friendlyMsg =
+          res.status === 503 ? "Support is temporarily offline. Email support@agentdyne.com" :
+          res.status === 429 ? "Too many messages — wait a moment and try again" :
+          res.status === 413 ? "Message too long — please shorten it" :
+          apiMsg             || "Support agent unavailable. Email support@agentdyne.com"
+        throw new Error(friendlyMsg)
+      }
 
       const assistantMsg: Message = {
         id:      crypto.randomUUID(),
         role:    "assistant",
-        content: data.reply,
+        content: data.reply || "Sorry, I couldn't generate a response. Try again.",
         ts:      Date.now(),
       }
       setMessages(prev => [...prev, assistantMsg])
     } catch (err: any) {
       if (err.name === "AbortError") return
-      setError("Couldn't reach support. Try again.")
-      // Remove the user message on failure so user can retry
+      setError(err.message || "Couldn't reach support. Try again.")
+      // Remove the user message on failure so user can retry cleanly
       setMessages(prev => prev.filter(m => m.id !== userMsg.id))
       setInput(trimmed)
     } finally {
