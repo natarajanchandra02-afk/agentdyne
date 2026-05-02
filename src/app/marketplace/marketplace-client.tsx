@@ -46,7 +46,11 @@ const PAGE_SIZE = 24
 
 function getPricingLabel(agent: any) {
   if (agent.pricing_model === "free")         return "Free"
-  if (agent.pricing_model === "per_call")     return `${formatCurrency(agent.price_per_call)}/call`
+  if (agent.pricing_model === "per_call") {
+    // Show Free if price is 0 (seed data or promotional) rather than "$0.00/call"
+    if (!agent.price_per_call || Number(agent.price_per_call) === 0) return "Free"
+    return `${formatCurrency(agent.price_per_call)}/call`
+  }
   if (agent.pricing_model === "subscription") return `${formatCurrency(agent.subscription_price_monthly)}/mo`
   if (agent.pricing_model === "freemium")     return "Free tier"
   return "—"
@@ -352,10 +356,12 @@ function FeaturedHero({ agents }: { agents: any[] }) {
               </div>
               <p className="text-xs text-zinc-400 leading-relaxed line-clamp-2 mb-3 relative">{agent.description}</p>
               <div className="flex items-center justify-between relative">
-                <div className="flex items-center gap-3 text-xs text-zinc-500">
-                  <span className="flex items-center gap-1 nums"><Zap className="h-3 w-3" />{formatNumber(agent.total_executions || 0)}</span>
-                  {(agent.average_rating || 0) > 0 && (
-                    <span className="flex items-center gap-1 nums"><Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />{agent.average_rating?.toFixed(1)}</span>
+              <div className="flex items-center gap-3 text-xs text-zinc-500">
+              {(agent.total_executions || 0) > 0 && (
+                <span className="flex items-center gap-1 nums"><Zap className="h-3 w-3" />{formatNumber(agent.total_executions)}</span>
+              )}
+              {(agent.average_rating || 0) > 0 && (
+                  <span className="flex items-center gap-1 nums"><Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />{agent.average_rating?.toFixed(1)}</span>
                   )}
                 </div>
                 <span className="text-[10px] font-semibold text-white bg-white/10 px-2 py-0.5 rounded-full">

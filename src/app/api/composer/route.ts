@@ -45,13 +45,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 })
     }
 
-    const { goal, maxBudgetUsd, preferredPattern, saveAsPipeline = false } = body as any
+    const { goal, maxBudgetUsd, preferredPattern, saveAsPipeline = false, currentNodes } = body as any
 
     if (!goal || typeof goal !== "string" || goal.trim().length < 5)
       return NextResponse.json({ error: "goal must be a non-empty string (min 5 chars)" }, { status: 400 })
 
     if (goal.length > 2000)
       return NextResponse.json({ error: "goal must be 2000 characters or fewer" }, { status: 400 })
+
+    // When currentNodes is provided, this is an AI Edit request (from the pipeline AI Edit Panel).
+    // We inject the existing pipeline context into the goal so the composer can modify rather than
+    // create from scratch. Without this, "Add a sentiment step after X" generates a fresh pipeline.
+    const effectiveGoal = currentNodes?.length
+      ? `MODIFY this existing pipeline (do NOT change steps that are working, only apply the requested change):
+Current steps: ${(currentNodes as any[]).map((n: any, i: number) => `${i + 1}. "${n.label}" (${n.node_type ?? 'linear'})`).join(' → ')}
+
+Requested change: ${goal.trim()}`
+      : goal.trim()
 
     // Fetch available active agents for the composer
     const { data: agents } = await supabase
@@ -66,8 +76,8 @@ export async function POST(req: NextRequest) {
     const availableAgents = (agents && agents.length > 0) ? agents : PLATFORM_STARTER_AGENTS
 
     const result = await composeWorkflow({
-      goal:            goal.trim(),
-      availableAgents: agents as any[],
+      goal:            effectiveGoal,
+      availableAgents: availableAgents as any[],
       preferredPattern: preferredPattern as any,
       maxBudgetUsd:    typeof maxBudgetUsd === "number" ? maxBudgetUsd : undefined,
     })

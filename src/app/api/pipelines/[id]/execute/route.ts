@@ -45,22 +45,30 @@ export async function POST(
     const { data: { user } } = await supabase.auth.getUser()
     userId = user?.id
 
-    // ─ Share key internal call: x-share-owner-id + x-pipeline-share-key ───────────────
-    // This path is ONLY reachable from /api/run/[shareKey] which validates the share key
-    // against the DB before forwarding. We trust x-share-owner-id only if:
-    //   1. x-pipeline-share-key is present AND
-    //   2. x-internal-service matches SUPABASE_SERVICE_ROLE_KEY (server secret)
+    // ─ Share key internal call: verified via HMAC (replaces plain service key header) ───────
+    // /api/run/[shareKey] signs: shareKey.pipelineId.timestamp with SUPABASE_SERVICE_ROLE_KEY
+    // We verify the signature here. Timestamp must be < 30s old to prevent replay attacks.
     if (!userId) {
-      const internalKey   = req.headers.get("x-internal-service")
-      const shareOwnerId  = req.headers.get("x-share-owner-id")
-      const shareKeyHdr   = req.headers.get("x-pipeline-share-key")
-      if (
-        internalKey &&
-        shareOwnerId &&
-        shareKeyHdr &&
-        internalKey === process.env.SUPABASE_SERVICE_ROLE_KEY
-      ) {
-        userId = shareOwnerId
+      const hmacHeader   = req.headers.get("x-internal-hmac")
+      const shareOwnerId = req.headers.get("x-share-owner-id")
+      const shareKeyHdr  = req.headers.get("x-pipeline-share-key")
+
+      if (hmacHeader && shareOwnerId && shareKeyHdr) {
+        try {
+          const [tsStr, sig] = hmacHeader.split(".")
+          const ts           = parseInt(tsStr ?? "0")
+          // Reject if token is older than 30 seconds (prevents replay)
+          if (Date.now() - ts < 30_000) {
+            const secret      = process.env.SUPABASE_SERVICE_ROLE_KEY ?? ""
+            const sigPayload  = new TextEncoder().encode(`${shareKeyHdr}.${id}.${ts}`)
+            const keyMaterial = await crypto.subtle.importKey(
+              "raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]
+            )
+            const sigBytes = new Uint8Array((sig ?? "").match(/.{2}/g)?.map(h => parseInt(h, 16)) ?? [])
+            const valid    = await crypto.subtle.verify("HMAC", keyMaterial, sigBytes, sigPayload)
+            if (valid) userId = shareOwnerId
+          }
+        } catch { /* HMAC verify failed — fall through to 401 */ }
       }
     }
 

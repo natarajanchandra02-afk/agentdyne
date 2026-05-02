@@ -17,8 +17,6 @@ import { createClient }               from "@/lib/supabase/server"
 import { apiRateLimit }               from "@/lib/rate-limit"
 import Anthropic                      from "@anthropic-ai/sdk"
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-
 // ─── Support agent system prompt ─────────────────────────────────────────────
 
 const SUPPORT_SYSTEM_PROMPT = `
@@ -117,6 +115,21 @@ export async function POST(req: NextRequest) {
   if (limited) return limited
 
   try {
+    // Guard: fail fast with a clean 503 if API key is missing
+    // (happens on fresh deploys before env vars are set, or in CI)
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return NextResponse.json(
+        { error: "Support agent temporarily unavailable. Please email support@agentdyne.com" },
+        { status: 503 }
+      )
+    }
+
+    // Create client per-request — NOT at module level.
+    // Edge Runtime (Cloudflare Workers) resolves process.env at request time,
+    // not at module initialization. Creating the client at module level can
+    // cause "API key missing" errors even when the env var is set correctly.
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
 

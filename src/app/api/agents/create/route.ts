@@ -22,6 +22,8 @@ import {
   MAX_AGENT_NAME_LENGTH,
   MAX_AGENT_DESCRIPTION_LENGTH,
   SUPPORTED_MODELS,
+  MAX_AGENTS_PER_USER,
+  PLAN_QUOTAS,
 } from "@/lib/constants"
 
 const VALID_CATEGORIES = new Set([
@@ -61,7 +63,32 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Authentication required" }, { status: 401 })
     }
 
-    // ── 2. Parse body ─────────────────────────────────────────────────────────
+    // ── 2. Profile checks: ban, plan, and agent count limits ──────────────────
+    const { data: userProfile } = await authClient
+      .from("profiles")
+      .select("is_banned, subscription_plan")
+      .eq("id", user.id)
+      .single()
+
+    if (userProfile?.is_banned)
+      return NextResponse.json({ error: "Account suspended. Contact support@agentdyne.com" }, { status: 403 })
+
+    const userPlan = userProfile?.subscription_plan ?? "free"
+
+    // Max agents per user guard (prevents spam)
+    const { count: agentCount } = await authClient
+      .from("agents")
+      .select("id", { count: "exact", head: true })
+      .eq("seller_id", user.id)
+
+    const maxAgents = MAX_AGENTS_PER_USER ?? 50
+    if ((agentCount ?? 0) >= maxAgents)
+      return NextResponse.json(
+        { error: `Maximum ${maxAgents} agents per account. Delete unused agents to create more.` },
+        { status: 422 }
+      )
+
+    // ── 3. Parse body ─────────────────────────────────────────────────────────
     let body: Record<string, any>
     try { body = await req.json() }
     catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }) }
@@ -100,12 +127,39 @@ export async function POST(req: NextRequest) {
     if (errs.length > 0)
       return NextResponse.json({ error: errs[0], errors: errs }, { status: 400 })
 
-    const ppc = (pricing_model === "per_call" || pricing_model === "freemium")
+    const pricingModelStr = String(pricing_model)
+
+    // ── Server-side plan gate: free plan users cannot create paid agents ────────────
+    if (userPlan === "free" && pricingModelStr !== "free") {
+      return NextResponse.json(
+        { error: "Starter or Pro plan required to create paid agents. Free plan agents must use the Free pricing model.", code: "PLAN_RESTRICTION", upgrade: "/pricing" },
+        { status: 422 }
+      )
+    }
+
+    const ppc = (pricingModelStr === "per_call" || pricingModelStr === "freemium")
       ? Math.max(0, parseFloat(String(price_per_call ?? 0)))
       : 0
-    const spm = pricing_model === "subscription"
+    const spm = pricingModelStr === "subscription"
       ? Math.max(0, parseFloat(String(subscription_price_monthly ?? 0)))
       : 0
+
+    // Price range validation: protect marketplace from $0.001 races and $99 scams
+    if (ppc > 0.25)
+      return NextResponse.json(
+        { error: "Price per call cannot exceed $0.25. Maximum allowed is $0.25/call.", code: "PRICE_TOO_HIGH" },
+        { status: 422 }
+      )
+    if (ppc > 0 && ppc < 0.001)
+      return NextResponse.json(
+        { error: "Price per call must be at least $0.001 to cover Stripe fees.", code: "PRICE_TOO_LOW" },
+        { status: 422 }
+      )
+    if (spm > 999)
+      return NextResponse.json(
+        { error: "Subscription price cannot exceed $999/month.", code: "PRICE_TOO_HIGH" },
+        { status: 422 }
+      )
 
     // ── 4. Write with ADMIN client (bypasses RLS — auth already verified above) ─
     // This is the correct pattern. We've proven the user is authenticated.

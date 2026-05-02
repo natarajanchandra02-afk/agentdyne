@@ -141,24 +141,31 @@ export async function POST(
     if (!body.input && body.input !== 0 && body.input !== false)
       return NextResponse.json({ error: "input is required" }, { status: 400, headers: CORS_HEADERS })
 
-    // Forward to the pipeline execute endpoint (reuses all quota, rate-limit, credit logic)
-    // We run this on behalf of the pipeline owner by using admin client + passing owner ID via
-    // a signed internal header so the execute route can verify it's a legitimate share execution.
-    // The execute route reads x-share-owner-id ONLY when x-pipeline-share-key is also present.
+    // Sign the share key + pipeline ID with a short-lived HMAC so the pipeline
+    // execute route can verify this is a legitimate internal call.
+    // This replaces passing SUPABASE_SERVICE_ROLE_KEY as a plain HTTP header,
+    // which would expose it in Cloudflare's request logs.
+    const now    = Date.now()
+    const secret = process.env.SUPABASE_SERVICE_ROLE_KEY ?? ""
+    const sigPayload = new TextEncoder().encode(`${shareKey}.${shareRow.pipeline_id}.${now}`)
+    const keyMaterial = await crypto.subtle.importKey(
+      "raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+    )
+    const sig = Array.from(
+      new Uint8Array(await crypto.subtle.sign("HMAC", keyMaterial, sigPayload))
+    ).map(b => b.toString(16).padStart(2, "0")).join("")
+
     const executeRes = await fetch(
       new URL(`/api/pipelines/${shareRow.pipeline_id}/execute`, req.url).toString(),
       {
         method:  "POST",
         headers: {
           "Content-Type":          "application/json",
-          // Internal service call: pass owner ID directly.
-          // The pipeline execute route validates this header only when the share key header is present.
           "x-pipeline-share-key":  shareKey,
           "x-share-owner-id":      shareRow.owner_id,
-          // Pass service key so the execute route's API-key auth path resolves owner_id
-          // The execute route DOES check this path: Bearer token → hash → api_keys lookup.
-          // For share keys we bypass this with a special internal header checked first.
-          "x-internal-service":    process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+          // HMAC-signed header: timestamp.signature — verified in execute route
+          // Never contains the raw service key
+          "x-internal-hmac":       `${now}.${sig}`,
         },
         body: JSON.stringify({ input: body.input, variables: body.variables ?? {} }),
       }
