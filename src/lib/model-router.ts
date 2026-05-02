@@ -34,11 +34,15 @@ export type StreamChunkHandler = (chunk: string) => void
 // ── Cost tracking (USD per 1K tokens, April 2026) ─────────────────────────────
 
 const COST_PER_1K: Record<string, { input: number; output: number }> = {
+  // Anthropic — must match SUPPORTED_MODELS in constants.ts exactly
   "claude-opus-4-6":           { input: 0.015,    output: 0.075    },
-  "claude-sonnet-4-20250514":  { input: 0.003,    output: 0.015    },
+  "claude-sonnet-4-6":         { input: 0.003,    output: 0.015    },
+  "claude-sonnet-4-20250514":  { input: 0.003,    output: 0.015    }, // alias kept for backwards compat
   "claude-haiku-4-5-20251001": { input: 0.00025,  output: 0.00125  },
+  // OpenAI
   "gpt-4o":                    { input: 0.005,    output: 0.015    },
   "gpt-4o-mini":               { input: 0.00015,  output: 0.0006   },
+  // Google
   "gemini-1.5-pro":            { input: 0.00125,  output: 0.005    },
   "gemini-1.5-flash":          { input: 0.000075, output: 0.0003   },
   _default:                    { input: 0.003,    output: 0.015    },
