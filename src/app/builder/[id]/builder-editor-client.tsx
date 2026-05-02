@@ -509,6 +509,15 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
   const onSave = async (data: FormData) => {
     setSaving(true); setSaveState("saving")
     try {
+      // ── Price range validation (client-side pre-check, mirrors server-side in create route) ────────────────────
+      const ppc = (data.pricing_model === "per_call" || data.pricing_model === "freemium")
+        ? (data.price_per_call ?? 0) : 0
+      const spm = data.pricing_model === "subscription"
+        ? (data.subscription_price_monthly ?? 0) : 0
+      if (ppc > 0.25) { toast.error("Price per call cannot exceed $0.25"); setSaveState("idle"); setSaving(false); return }
+      if (ppc > 0 && ppc < 0.001) { toast.error("Price per call must be at least $0.001"); setSaveState("idle"); setSaving(false); return }
+      if (spm > 999) { toast.error("Subscription price cannot exceed $999/month"); setSaveState("idle"); setSaving(false); return }
+
       const { error } = await supabase.from("agents").update({
         name:                       sanitize(data.name),
         description:                sanitize(data.description),

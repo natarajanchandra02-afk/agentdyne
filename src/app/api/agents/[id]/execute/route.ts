@@ -141,6 +141,18 @@ export async function POST(
 
     const used = profile?.executions_used_this_month ?? 0
 
+    // ── Compute cap check ──────────────────────────────────────────────────
+    const { data: capCheck } = await supabase.rpc("check_compute_cap", { user_id_param: userId })
+    if (capCheck && capCheck.within_cap === false) {
+      return NextResponse.json({
+        error:   capCheck.error ?? "Monthly compute cap reached.",
+        code:    "COMPUTE_CAP_EXCEEDED",
+        spent:   capCheck.spent,
+        cap:     capCheck.cap,
+        upgrade: "/billing",
+      }, { status: 402 })
+    }
+
     // ── Concurrency limit ────────────────────────────────────────────────────
     const concurrency = await checkConcurrencyLimit(supabase, userId, plan)
     if (!concurrency.allowed) {
@@ -404,7 +416,8 @@ export async function POST(
                   status: "success", output: outputJson, tokens_input: inputTok, tokens_output: outputTok,
                   latency_ms: latencyMs, cost: costUsd, cost_usd: costUsd, completed_at: new Date().toISOString(),
                 }).eq("id", executionId),
-                supabase.rpc("increment_executions_used", { user_id_param: userId }),
+                supabase.rpc("increment_executions_used",    { user_id_param: userId }),
+                supabase.rpc("increment_lifetime_executions", { user_id_param: userId }),
               ])
 
               supabase.from("execution_traces").insert({
@@ -413,9 +426,10 @@ export async function POST(
                 total_ms: latencyMs, tokens_input: inputTok, tokens_output: outputTok, cost_usd: costUsd,
                 status: scrub?.flagged ? "flagged" : "success", temperature: modelParams.temperature,
               }).then(() => {}).catch(() => {})
-
-            // Also increment lifetime counter for free plan users
-            supabase.rpc("increment_executions_used", { user_id_param: userId }).then(() => {}).catch(() => {})
+            } else {
+              // No execution record — still increment counters
+              supabase.rpc("increment_executions_used",    { user_id_param: userId }).then(() => {})
+              supabase.rpc("increment_lifetime_executions", { user_id_param: userId }).then(() => {})
             }
 
           } catch (err: any) {
@@ -478,9 +492,10 @@ export async function POST(
           latency_ms: latencyMs, cost: costUsd, cost_usd: costUsd,
           completed_at: new Date().toISOString(),
         }).eq("id", executionId),
-        supabase.rpc("increment_executions_used",    { user_id_param: userId }),
-        // increment_executions_used() in migration 030 also handles lifetime_executions_used
-        // for free plan users — no separate RPC needed
+        supabase.rpc("increment_executions_used", { user_id_param: userId }),
+        // Record actual spend for compute cap enforcement
+        supabase.rpc("record_execution_spend", { user_id_param: userId, amount_usd: costUsd }),
+        // increment_executions_used() (migration 034) also handles lifetime_executions_used
       ])
 
       supabase.from("execution_traces").insert({
