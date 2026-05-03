@@ -725,7 +725,77 @@ function ExecutionTimeline({ runs, pipelineId, onReplay }: {
   )
 }
 
-// ─── Agent Picker ──────────────────────────────────────────────────────────────
+// ─── Preflight modal ─────────────────────────────────────────────────────────
+
+function PreflightModal({ nodes, agentMap, schemaIssues, hasNested, onConfirm, onCancel }: {
+  nodes:       DAGNode[]
+  agentMap:    Record<string, Agent>
+  schemaIssues: number
+  hasNested:   boolean
+  onConfirm:   () => void
+  onCancel:    () => void
+}) {
+  const canRun = schemaIssues === 0
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onCancel} />
+      <div className="relative bg-white rounded-2xl shadow-2xl border border-zinc-100 w-full max-w-md z-10 overflow-hidden">
+        <div className="px-5 py-4 border-b border-zinc-100 flex items-center gap-3">
+          <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center", canRun ? "bg-blue-50" : "bg-red-50")}>
+            {canRun ? <Play className="h-4 w-4 text-blue-600" /> : <AlertCircle className="h-4 w-4 text-red-500" />}
+          </div>
+          <div>
+            <p className="text-sm font-bold text-zinc-900">Preflight Check</p>
+            <p className="text-xs text-zinc-400">{canRun ? "All checks passed" : `${schemaIssues} issue${schemaIssues > 1 ? "s" : ""} found`}</p>
+          </div>
+        </div>
+        <div className="px-5 py-4 space-y-2.5">
+          {schemaIssues > 0 && (
+            <div className="flex items-start gap-2 text-xs bg-red-50 border border-red-100 rounded-xl px-3 py-2.5">
+              <X className="h-3.5 w-3.5 text-red-500 flex-shrink-0 mt-0.5" />
+              <span className="text-red-700 font-medium">{schemaIssues} schema mismatch{schemaIssues > 1 ? "es" : ""} — output of one step does not match what the next step expects. This pipeline will likely fail.</span>
+            </div>
+          )}
+          {hasNested && (
+            <div className="flex items-start gap-2 text-xs bg-amber-50 border border-amber-100 rounded-xl px-3 py-2.5">
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
+              <span className="text-amber-700">Nested pipeline cost is not included in the estimate above. Actual cost may be higher.</span>
+            </div>
+          )}
+          {nodes.some(n => (n.max_retries ?? 0) > 0) && (
+            <div className="flex items-start gap-2 text-xs bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5">
+              <RefreshCw className="h-3.5 w-3.5 text-blue-500 flex-shrink-0 mt-0.5" />
+              <span className="text-blue-700">Retry logic enabled — failed steps will retry. Worst-case cost may be 2–3× the estimate.</span>
+            </div>
+          )}
+          {canRun && !hasNested && (
+            <div className="flex items-start gap-2 text-xs bg-green-50 border border-green-100 rounded-xl px-3 py-2.5">
+              <Check className="h-3.5 w-3.5 text-green-500 flex-shrink-0 mt-0.5" />
+              <span className="text-green-700">All schema checks passed. Pipeline is safe to run.</span>
+            </div>
+          )}
+        </div>
+        <div className="px-5 pb-5 flex gap-2">
+          <Button variant="outline" onClick={onCancel} className="flex-1 rounded-xl border-zinc-200">
+            Cancel
+          </Button>
+          {canRun ? (
+            <Button onClick={onConfirm} className="flex-1 rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 gap-2 font-semibold">
+              <Play className="h-4 w-4" /> Run Pipeline
+            </Button>
+          ) : (
+            <Button onClick={onConfirm} className="flex-1 rounded-xl bg-amber-500 text-white hover:bg-amber-600 gap-2 font-semibold">
+              <AlertTriangle className="h-3.5 w-3.5" /> Run anyway
+            </Button>
+          )}
+        </div>
+        {!canRun && (
+          <p className="px-5 pb-4 text-[11px] text-zinc-400 text-center">Advanced users only. Fix schema issues first for reliable execution.</p>
+        )}
+      </div>
+    </div>
+  )
+}
 
 function AgentPicker({ onAdd, existingIds }: { onAdd: (a: Agent) => void; existingIds: string[] }) {
   const [q, setQ]       = useState("")
@@ -963,7 +1033,10 @@ function NodeCard({ node, index, total, agent, nextAgent, isParallelSelected, on
       {index < total - 1 && (
         <div className="flex items-center justify-center py-1.5 bg-zinc-50 gap-1.5">
           {!schemaCheck.compatible
-            ? <span className="flex items-center gap-1 text-[10px] text-amber-500"><AlertTriangle className="h-3 w-3" /> type mismatch — may fail</span>
+            ? <span className="flex items-center gap-1 text-[10px] text-red-600 font-semibold">
+                <X className="h-3 w-3" />
+                Output of step {index + 1} does not match input of step {index + 2} — will fail
+              </span>
             : node.output_field
               ? <span className="flex items-center gap-1 text-[10px] text-zinc-400 font-mono">↓ .{node.output_field}</span>
               : <ChevronRight className="h-4 w-4 text-zinc-300 rotate-90" />}
@@ -1096,6 +1169,8 @@ export default function PipelineEditPage() {
   const [runsLoading,      setRunsLoading]      = useState(false)
   const [replayInput,      setReplayInput]      = useState<string | null>(null)
   const [showShare,        setShowShare]        = useState(false)
+  const [showPreflight,    setShowPreflight]    = useState(false)
+  const [preflightTarget,  setPreflightTarget]  = useState<"run" | "deploy">("run")
   // Live execution status: maps nodeId → status
   const [nodeStatuses,     setNodeStatuses]     = useState<Record<string, NodeStatus>>({})
 
@@ -1194,11 +1269,16 @@ export default function PipelineEditPage() {
     return sum + estimateCost({ inputText: "average", systemPrompt: a.system_prompt ?? "", model: a.model_name ?? "claude-sonnet-4-20250514", maxTokens: a.max_tokens ?? 4096 }).userCostUsd
   }, 0)
 
+  const hasNested       = nodes.some(n => n.node_type === "subagent")
+  const hasRetries      = nodes.some(n => (n.max_retries ?? 0) > 0)
+  const worstCostMult   = hasRetries ? 2.5 : hasNested ? 1.8 : 1
+
   const patternLabel =
     nodes.some(n => n.node_type === "parallel") && nodes.some(n => n.node_type === "branch") ? "mixed" :
     nodes.some(n => n.node_type === "parallel") ? "parallel" :
-    nodes.some(n => n.node_type === "branch")   ? "branch" :
-    nodes.some(n => n.node_type === "subagent")  ? "subagent" : "linear"
+    nodes.some(n => n.node_type === "branch")   ? "conditional" :
+    nodes.some(n => n.node_type === "subagent")  ?
+      `${nodes.length}-step pipeline (includes nested workflow)` : "sequential"
 
   const schemaIssueCount = nodes.reduce((count, node, i) => {
     if (i === nodes.length - 1) return count
@@ -1245,6 +1325,22 @@ export default function PipelineEditPage() {
 
       {showShare && pipeline && <ShareModal pipeline={pipeline} onClose={() => setShowShare(false)} />}
 
+      {/* Preflight validation modal */}
+      {showPreflight && pipeline && (
+        <PreflightModal
+          nodes={nodes}
+          agentMap={agentMap}
+          schemaIssues={schemaIssueCount}
+          hasNested={hasNested}
+          onCancel={() => setShowPreflight(false)}
+          onConfirm={() => {
+            setShowPreflight(false)
+            if (preflightTarget === "deploy") setShowShare(true)
+            else setActiveTab("test")
+          }}
+        />
+      )}
+
       <div className="flex flex-col min-h-full">
 
         {/* Top bar */}
@@ -1273,7 +1369,10 @@ export default function PipelineEditPage() {
                 <Zap className="h-3.5 w-3.5" /> Group ({parallelSelected.size})
               </Button>
             )}
-            <Button size="sm" variant="outline" onClick={() => setShowShare(true)} className="rounded-xl border-zinc-200 gap-1.5">
+            <Button size="sm" variant="outline"
+              onClick={() => { setPreflightTarget("deploy"); setShowPreflight(true) }}
+              className={cn("rounded-xl gap-1.5", schemaIssueCount > 0 ? "border-red-200 text-red-600 hover:bg-red-50" : "border-zinc-200")}>
+              {schemaIssueCount > 0 && <AlertTriangle className="h-3.5 w-3.5" />}
               <Share2 className="h-3.5 w-3.5" /> Deploy API
             </Button>
             <Button size="sm" onClick={save} disabled={saving} className="rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 gap-1.5 font-semibold">
@@ -1389,9 +1488,22 @@ export default function PipelineEditPage() {
                 )}
 
                 {nodes.length > 0 && totalCost > 0 && (
-                  <div className="bg-white border border-zinc-100 rounded-xl px-4 py-3 flex items-center justify-between">
-                    <span className="text-xs text-zinc-500 flex items-center gap-2"><DollarSign className="h-3.5 w-3.5 text-zinc-400" /> Estimated cost per run</span>
-                    <span className="text-sm font-bold text-zinc-900 font-mono">~{formatCostForDisplay(totalCost)}</span>
+                  <div className="bg-white border border-zinc-100 rounded-xl px-4 py-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-zinc-500 flex items-center gap-2">
+                        <DollarSign className="h-3.5 w-3.5 text-zinc-400" /> Estimated cost per run
+                      </span>
+                      <span className="text-sm font-bold text-zinc-900 font-mono">~{formatCostForDisplay(totalCost)}</span>
+                    </div>
+                    {(hasNested || hasRetries) && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] text-amber-600 flex items-center gap-1.5">
+                          <AlertTriangle className="h-3 w-3" />
+                          Worst case {hasNested ? "(nested pipeline)" : "(with retries)"}
+                        </span>
+                        <span className="text-[11px] font-semibold text-amber-700 font-mono">~{formatCostForDisplay(totalCost * worstCostMult)}</span>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1420,14 +1532,29 @@ export default function PipelineEditPage() {
                 )}
               </div>
               {nodes.length === 0
-                ? <p className="text-center py-8 text-zinc-400 text-sm">Add and save agents first.</p>
-                : <FullPipelineTestPanel
-                    key={replayInput ?? "fresh"}
-                    pipelineId={pipeline.id}
-                    defaultInput={replayInput ?? undefined}
-                    onNewRun={run => { setRuns(prev => [run, ...prev]); setReplayInput(null) }}
-                    onNodeStatusChange={setNodeStatuses}
-                  />}
+              ? <p className="text-center py-8 text-zinc-400 text-sm">Add and save agents first.</p>
+              : <>
+              {/* Preflight trigger for test tab */}
+              <Button
+              onClick={() => { setPreflightTarget("run"); setShowPreflight(true) }}
+              className={cn(
+                "w-full rounded-xl font-semibold gap-2 mb-4",
+                  schemaIssueCount > 0
+                          ? "bg-red-50 text-red-700 border border-red-200 hover:bg-red-100"
+                          : "bg-zinc-900 text-white hover:bg-zinc-700"
+                      )}>
+                      {schemaIssueCount > 0
+                        ? <><AlertTriangle className="h-4 w-4" /> Fix {schemaIssueCount} issue{schemaIssueCount > 1 ? "s" : ""} before running</>
+                        : <><Play className="h-4 w-4" /> Run Pipeline</>}
+                    </Button>
+                    <FullPipelineTestPanel
+                      key={replayInput ?? "fresh"}
+                      pipelineId={pipeline.id}
+                      defaultInput={replayInput ?? undefined}
+                      onNewRun={run => { setRuns(prev => [run, ...prev]); setReplayInput(null) }}
+                      onNodeStatusChange={setNodeStatuses}
+                    />
+                  </>}
             </div>
           </div>
         )}

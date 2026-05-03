@@ -118,7 +118,11 @@ export async function POST(req: NextRequest) {
   try {
     // Guard: fail fast with a clean 503 if API key is missing
     // (happens on fresh deploys before env vars are set, or in CI)
-    if (!process.env.ANTHROPIC_API_KEY) {
+    // Check for API key — provide actionable message distinguishing
+    // "not set" (env var missing) from "set but invalid" (API error later)
+    const apiKey = process.env.ANTHROPIC_API_KEY
+    if (!apiKey || apiKey.trim() === "") {
+      console.error("[support] ANTHROPIC_API_KEY is not set. Set it in Cloudflare Pages → Settings → Environment variables → ANTHROPIC_API_KEY")
       return NextResponse.json(
         { error: "Support agent temporarily unavailable. Please email support@agentdyne.com" },
         { status: 503 }
@@ -182,7 +186,7 @@ export async function POST(req: NextRequest) {
       method: "POST",
       headers: {
         "Content-Type":      "application/json",
-        "x-api-key":         process.env.ANTHROPIC_API_KEY!,
+        "x-api-key":         apiKey,
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
