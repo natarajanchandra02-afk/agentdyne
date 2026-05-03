@@ -416,8 +416,10 @@ export async function POST(
                   status: "success", output: outputJson, tokens_input: inputTok, tokens_output: outputTok,
                   latency_ms: latencyMs, cost: costUsd, cost_usd: costUsd, completed_at: new Date().toISOString(),
                 }).eq("id", executionId),
-                supabase.rpc("increment_executions_used",    { user_id_param: userId }),
-                supabase.rpc("increment_lifetime_executions", { user_id_param: userId }),
+                supabase.rpc("increment_executions_used", { user_id_param: userId }),
+                supabase.rpc("record_execution_spend",   { user_id_param: userId, amount_usd: costUsd }),
+                // increment_executions_used() (migration 030) handles lifetime_executions_used internally
+                // for free plan users — no separate increment_lifetime_executions RPC needed
               ])
 
               supabase.from("execution_traces").insert({

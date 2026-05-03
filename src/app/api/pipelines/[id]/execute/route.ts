@@ -234,8 +234,32 @@ export async function POST(
       return NextResponse.json({ error: "Pipeline DAG contains a cycle" }, { status: 422 })
     }
 
-    // ── Execute ───────────────────────────────────────────────────────────────
-    const nodeOutputs:   Record<string, unknown> = {}
+    // ── WAL-lite: Load existing checkpoints for resume support ───────────
+    // If this execution_id already has completed checkpoints (e.g. retry after crash),
+    // skip those nodes and resume from where we left off.
+    const { data: existingCheckpoints } = await supabase
+      .rpc("get_resumable_execution", { execution_id_param: pipelineExec.id, pipeline_id_param: pipelineId })
+    const resumedOutputs: Record<string, unknown> = {}
+    const resumedNodeIds = new Set<string>()
+    if (existingCheckpoints && existingCheckpoints.length > 0) {
+      for (const cp of existingCheckpoints as any[]) {
+        resumedOutputs[cp.node_id] = cp.output ? (cp.output.value ?? cp.output) : null
+        resumedNodeIds.add(cp.node_id)
+        nodeResults.push({
+          node_id:    cp.node_id,
+          agent_id:   "",
+          agent_name: "(resumed)",
+          status:     cp.status === "skipped" ? "skipped" : "success",
+          input:      null,
+          output:     cp.output ? (cp.output.value ?? cp.output) : null,
+          latency_ms: 0,
+          cost:       0,
+          retry_count: 0,
+        })
+      }
+      // Seed nodeOutputs with resumed values
+      Object.assign(nodeOutputs, resumedOutputs)
+    }
     const nodeResults:   NodeResult[]            = []
     const pipelineState: Record<string, unknown> = { ...initialState }
     let totalCost = 0, totalTokensIn = 0, totalTokensOut = 0
@@ -321,12 +345,51 @@ export async function POST(
         }
       }
 
-      // Run level concurrently
+      // Run level concurrently — skip nodes already completed in a previous run
       const levelResults = await Promise.all(
-        nodesToRun.map(node =>
-          executeNodeWithRetry(node, dag.edges, agentMap, nodeOutputs, input, variables,
-            pipelineState, userId!, supabase)
-        )
+        nodesToRun
+          .filter(node => !resumedNodeIds.has(node.id))
+          .map(async (node, idx) => {
+            // WAL-lite: Write PRE-STEP checkpoint BEFORE executing
+            // If the edge function crashes during execution, this checkpoint
+            // lets us know which step was in-flight and resume from it.
+            const stepIndex = nodeResults.length + idx
+            await supabase.from("pipeline_step_checkpoints").upsert({
+              execution_id: pipelineExec.id,
+              pipeline_id:  pipelineId,
+              user_id:      userId,
+              node_id:      node.id,
+              agent_id:     node.agent_id,
+              step_index:   stepIndex,
+              status:       "started",
+              started_at:   new Date().toISOString(),
+            }, { onConflict: "execution_id,node_id" }).catch(() => {})
+
+            const result = await executeNodeWithRetry(node, dag.edges, agentMap, nodeOutputs, input, variables,
+              pipelineState, userId!, supabase)
+
+            // WAL-lite: Write POST-STEP checkpoint with result
+            supabase.from("pipeline_step_checkpoints").upsert({
+              execution_id:  pipelineExec.id,
+              pipeline_id:   pipelineId,
+              user_id:       userId,
+              node_id:       node.id,
+              agent_id:      node.agent_id,
+              step_index:    stepIndex,
+              status:        result.status,
+              input:         result.input !== null ? (typeof result.input === "object" ? result.input : { value: result.input }) : null,
+              output:        result.output !== null ? (typeof result.output === "object" ? result.output as any : { value: result.output }) : null,
+              error_message: result.error?.slice(0, 500),
+              latency_ms:    result.latency_ms,
+              cost_usd:      result.cost,
+              tokens_input:  result.tokens?.input  ?? 0,
+              tokens_output: result.tokens?.output ?? 0,
+              retry_count:   result.retry_count,
+              completed_at:  new Date().toISOString(),
+            }, { onConflict: "execution_id,node_id" }).catch(() => {})
+
+            return result
+          })
       )
 
       let levelFailed = false
