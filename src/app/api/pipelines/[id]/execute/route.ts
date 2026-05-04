@@ -8,6 +8,7 @@ import { runInjectionPipeline, sanitizeOutput } from "@/lib/injection-filter"
 import { retrieveRAGContext, buildRAGSystemPrompt } from "@/lib/rag-retriever"
 import { estimatePipelineCost, checkConcurrencyLimit } from "@/lib/concurrency"
 import { evaluateSafeCondition } from "@/lib/safe-condition-evaluator"
+import { buildIntentHash, buildStepEnvelope, extractConfidence, evaluateConfidenceGating } from "@/lib/trust-layer"
 
 /**
  * POST /api/pipelines/[id]/execute
@@ -209,6 +210,9 @@ export async function POST(
     const { input = "", variables = {}, state: initialState = {} } = body
     const inputStr = typeof input === "string" ? input : JSON.stringify(input)
 
+    // Build intent hash — constant across all steps (trust layer: drift detection)
+    const intentHash = await buildIntentHash(pipelineId, inputStr)
+
     const { filterResult } = runInjectionPipeline(inputStr, "user")
     if (!filterResult.allowed) {
       supabase.from("injection_attempts").insert({
@@ -234,36 +238,47 @@ export async function POST(
       return NextResponse.json({ error: "Pipeline DAG contains a cycle" }, { status: 422 })
     }
 
+    // ── Execute state + WAL-lite resume ──────────────────────────────────────
+    // nodeResults MUST be declared before the checkpoint loading block
+    // that pushes resumed nodes into it.
+    const nodeResults:   NodeResult[]            = []
+    const pipelineState: Record<string, unknown> = { ...initialState }
+    let totalCost = 0, totalTokensIn = 0, totalTokensOut = 0
+    let lastOutput: unknown = inputStr
+
     // ── WAL-lite: Load existing checkpoints for resume support ───────────
-    // If this execution_id already has completed checkpoints (e.g. retry after crash),
-    // skip those nodes and resume from where we left off.
+    // Support two resume paths:
+    //   1. Body contains resume_execution_id → retry a specific failed execution
+    //   2. Same execution_id has partial checkpoints (crash mid-run) → auto-resume
+    const resumeExecutionId: string | null = (body as any).resume_execution_id ?? null
+    const checkpointExecId = resumeExecutionId ?? pipelineExec.id
+
     const { data: existingCheckpoints } = await supabase
-      .rpc("get_resumable_execution", { execution_id_param: pipelineExec.id, pipeline_id_param: pipelineId })
+      .rpc("get_resumable_execution", { execution_id_param: checkpointExecId, pipeline_id_param: pipelineId })
     const resumedOutputs: Record<string, unknown> = {}
     const resumedNodeIds = new Set<string>()
     if (existingCheckpoints && existingCheckpoints.length > 0) {
       for (const cp of existingCheckpoints as any[]) {
-        resumedOutputs[cp.node_id] = cp.output ? (cp.output.value ?? cp.output) : null
+        const cpOutput = cp.output ? (cp.output.value ?? cp.output) : null
+        resumedOutputs[cp.node_id] = cpOutput
         resumedNodeIds.add(cp.node_id)
+        // Add to nodeResults so the final response shows all steps
         nodeResults.push({
           node_id:    cp.node_id,
           agent_id:   "",
           agent_name: "(resumed)",
           status:     cp.status === "skipped" ? "skipped" : "success",
           input:      null,
-          output:     cp.output ? (cp.output.value ?? cp.output) : null,
+          output:     cpOutput,
           latency_ms: 0,
           cost:       0,
           retry_count: 0,
         })
+        if (cpOutput !== null && cpOutput !== undefined) lastOutput = cpOutput
       }
       // Seed nodeOutputs with resumed values
       Object.assign(nodeOutputs, resumedOutputs)
     }
-    const nodeResults:   NodeResult[]            = []
-    const pipelineState: Record<string, unknown> = { ...initialState }
-    let totalCost = 0, totalTokensIn = 0, totalTokensOut = 0
-    let lastOutput: unknown = inputStr
 
     const timeoutMs = Math.min((pipeline.timeout_seconds ?? 300) * 1000, 600_000)
     const deadline  = Date.now() + timeoutMs

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useRef }               from "react"
+import { useState, useCallback, useRef, useEffect }             from "react"
 import { useRouter }                                    from "next/navigation"
 import { useForm }                                      from "react-hook-form"
 import { zodResolver }                                  from "@hookform/resolvers/zod"
@@ -475,6 +475,30 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
   const [evalTests,  setEvalTests]  = useState("")
 
   const saveTimer = useRef<ReturnType<typeof setTimeout>|null>(null)
+
+  // ── Keyboard shortcuts (Cmd+S = save, Cmd+Enter = test) ──────────────────────
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey
+      if (!mod) return
+      if (e.key === "s") {
+        e.preventDefault()
+        handleSubmit(onSave)()
+        return
+      }
+      if (e.key === "Enter") {
+        e.preventDefault()
+        if (agent.status === "active") runTest()
+        return
+      }
+      if (e.key === "1") { e.preventDefault(); setActiveTab("overview") }
+      if (e.key === "2") { e.preventDefault(); setActiveTab("behavior") }
+      if (e.key === "3") { e.preventDefault(); setActiveTab("security") }
+      if (e.key === "4") { e.preventDefault(); setActiveTab("monetization") }
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [agent.status, handleSubmit, onSave, runTest, setActiveTab])
 
   // Form
   const { register, handleSubmit, watch, setValue, formState: { errors, isDirty } } = useForm<FormData>({
