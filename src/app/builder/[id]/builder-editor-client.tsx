@@ -40,7 +40,6 @@ const CATEGORIES = [
 ]
 const MODELS = SUPPORTED_MODELS.map(v => ({ value: v, label: MODEL_LABELS[v] ?? v }))
 
-// Market price benchmarks per category ($/call) — shown in Monetization tab
 const PRICE_BENCH: Record<string, { low: number; mid: number; high: number }> = {
   coding:           { low: 0.01,  mid: 0.03,  high: 0.10 },
   finance:          { low: 0.02,  mid: 0.05,  high: 0.15 },
@@ -145,29 +144,26 @@ function Toggle({ label, sub, checked, onChange, recommended }: {
   )
 }
 
-// ─── EvalScorePanel — simplified, anti-gaming (hides formulas / hidden tests)
+// ─── EvalScorePanel ───────────────────────────────────────────────────────────
 
 function EvalScorePanel({ result, onDismiss }: { result: EvalResult; onDismiss(): void }) {
   const isGood   = result.score >= 85
   const isMid    = result.score >= 70 && result.score < 85
-  const isBad    = result.score < 70
   const bgBorder = isGood ? "bg-green-50 border-green-200" : isMid ? "bg-amber-50 border-amber-200" : "bg-red-50 border-red-200"
   const scoreClr = isGood ? "text-green-700" : isMid ? "text-amber-700" : "text-red-700"
 
-  // Human-readable dimension labels (NEVER expose raw numbers or formulas)
   function dimLabel(key: string, val: number) {
-    if (val >= 80) return { text: "Great ✓",    color: "text-green-700" }
-    if (val >= 55) return { text: "Acceptable", color: "text-amber-700" }
-    return               { text: "Needs work ✗", color: "text-red-600" }
+    if (val >= 80) return { text: "Great ✓",     color: "text-green-700" }
+    if (val >= 55) return { text: "Acceptable",  color: "text-amber-700" }
+    return               { text: "Needs work ✗", color: "text-red-600"   }
   }
 
-  // Actionable suggestions derived from breakdown — NOT from scoring formula
   const suggestions: string[] = []
   const b = result.breakdown
-  if ((b.latency    ?? 100) < 55) suggestions.push("Reduce max_tokens — lower limit speeds up responses")
-  if ((b.correctness?? 100) < 55) suggestions.push("Improve your system prompt with clearer output instructions")
-  if ((b.reliability?? 100) < 65) suggestions.push("Add more example inputs in your documentation")
-  if ((b.cost       ?? 100) < 55) suggestions.push("Consider a lighter model (Haiku) for simple tasks")
+  if ((b.latency     ?? 100) < 55) suggestions.push("Reduce max_tokens — lower limit speeds up responses")
+  if ((b.correctness ?? 100) < 55) suggestions.push("Improve your system prompt with clearer output instructions")
+  if ((b.reliability ?? 100) < 65) suggestions.push("Add more example inputs in your documentation")
+  if ((b.cost        ?? 100) < 55) suggestions.push("Consider a lighter model (Haiku) for simple tasks")
   if (result.stats.successRate < 0.8) suggestions.push("Some inputs produced empty or invalid outputs — add edge-case handling")
   if (result.stats.adversarialTotal && result.stats.adversarialPassed !== result.stats.adversarialTotal)
     suggestions.push("Strengthen your system prompt against unexpected or adversarial inputs")
@@ -177,9 +173,9 @@ function EvalScorePanel({ result, onDismiss }: { result: EvalResult; onDismiss()
       className={cn("rounded-2xl border p-5 mb-6", bgBorder)}>
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center gap-3">
-          {isGood && <Trophy   className="h-5 w-5 text-green-600 flex-shrink-0" />}
+          {isGood && <Trophy    className="h-5 w-5 text-green-600 flex-shrink-0" />}
           {isMid  && <BarChart3 className="h-5 w-5 text-amber-600 flex-shrink-0" />}
-          {isBad  && <AlertTriangle className="h-5 w-5 text-red-600 flex-shrink-0" />}
+          {!isGood && !isMid && <AlertTriangle className="h-5 w-5 text-red-600 flex-shrink-0" />}
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <span className={cn("text-2xl font-black nums", scoreClr)}>{result.score}</span>
@@ -196,7 +192,6 @@ function EvalScorePanel({ result, onDismiss }: { result: EvalResult; onDismiss()
         <button onClick={onDismiss} className="text-zinc-400 hover:text-zinc-700 p-1 rounded-lg"><X className="h-4 w-4" /></button>
       </div>
 
-      {/* Simplified dimension labels — NEVER show raw scores or formulas */}
       <div className="grid grid-cols-2 gap-2 mb-4">
         {Object.entries(result.breakdown).map(([key, val]) => {
           const { text, color } = dimLabel(key, val as number)
@@ -209,7 +204,6 @@ function EvalScorePanel({ result, onDismiss }: { result: EvalResult; onDismiss()
         })}
       </div>
 
-      {/* Actionable improvements — only shown when not perfect */}
       {suggestions.length > 0 && !isGood && (
         <div className="bg-white/70 rounded-xl px-4 py-3">
           <p className="text-xs font-semibold text-zinc-700 mb-2 flex items-center gap-1.5">
@@ -247,7 +241,6 @@ function GuardrailsSection({ cfg, onChange }: { cfg: GuardrailsCfg; onChange(c: 
 
   return (
     <div className="space-y-5">
-      {/* One-click presets */}
       <div className="flex gap-2">
         {([
           { k: "standard" as const, label: "🟢 Standard", sub: "Recommended" },
@@ -267,7 +260,6 @@ function GuardrailsSection({ cfg, onChange }: { cfg: GuardrailsCfg; onChange(c: 
         <span>{lbl} security level</span>
       </div>
 
-      {/* Input guardrails */}
       <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
         <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3 flex items-center gap-2"><Eye className="h-3.5 w-3.5" /> Input — Before LLM Call</p>
         <Toggle label="Block Harmful Content"  sub="Reject CBRN, CSAM, malware, credential-theft."                     checked={cfg.blockHarmful}     onChange={v => set("blockHarmful",     v)} recommended />
@@ -287,7 +279,6 @@ function GuardrailsSection({ cfg, onChange }: { cfg: GuardrailsCfg; onChange(c: 
         </div>
       </div>
 
-      {/* Output guardrails */}
       <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
         <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3 flex items-center gap-2"><EyeOff className="h-3.5 w-3.5" /> Output — After LLM Response</p>
         <Toggle label="Scrub PII from Output"   sub="Auto-redact emails, phones, API keys in responses." checked={cfg.outputScrubPII}     onChange={v => set("outputScrubPII",     v)} recommended />
@@ -454,14 +445,14 @@ function KnowledgeSection({ items, onChange }: { items: KnowledgeItem[]; onChang
 export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent: any; defaultTab?: string }) {
   const supabase = createClient()
 
-  // State
+  // ── State ─────────────────────────────────────────────────────────────────
   const [saving,      setSaving]      = useState(false)
   const [saveState,   setSaveState]   = useState<"idle"|"saving"|"saved">("idle")
   const [submitting,  setSubmitting]  = useState(false)
   const [activeTab,   setActiveTab]   = useState<EditorTabId>(
     defaultTab === "rag" ? "behavior" : (defaultTab as EditorTabId) || "overview"
   )
-  const [mcpSelected,   setMcpSelected]   = useState<string[]>(() => Array.isArray(agent.mcp_server_ids) ? agent.mcp_server_ids : [])
+  const [mcpSelected,    setMcpSelected]  = useState<string[]>(() => Array.isArray(agent.mcp_server_ids) ? agent.mcp_server_ids : [])
   const [knowledgeItems, setKnowledge]    = useState<KnowledgeItem[]>([])
   const [guardrails,     setGuardrails]   = useState<GuardrailsCfg>(() => {
     const s = agent.security_config ?? agent.guardrails_config
@@ -476,31 +467,7 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
 
   const saveTimer = useRef<ReturnType<typeof setTimeout>|null>(null)
 
-  // ── Keyboard shortcuts (Cmd+S = save, Cmd+Enter = test) ──────────────────────
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey
-      if (!mod) return
-      if (e.key === "s") {
-        e.preventDefault()
-        handleSubmit(onSave)()
-        return
-      }
-      if (e.key === "Enter") {
-        e.preventDefault()
-        if (agent.status === "active") runTest()
-        return
-      }
-      if (e.key === "1") { e.preventDefault(); setActiveTab("overview") }
-      if (e.key === "2") { e.preventDefault(); setActiveTab("behavior") }
-      if (e.key === "3") { e.preventDefault(); setActiveTab("security") }
-      if (e.key === "4") { e.preventDefault(); setActiveTab("monetization") }
-    }
-    window.addEventListener("keydown", handler)
-    return () => window.removeEventListener("keydown", handler)
-  }, [agent.status, handleSubmit, onSave, runTest, setActiveTab])
-
-  // Form
+  // ── Form ──────────────────────────────────────────────────────────────────
   const { register, handleSubmit, watch, setValue, formState: { errors, isDirty } } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -527,20 +494,21 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
   const isPublic     = watch("is_public")
   const pricePerCall = watch("price_per_call") || 0
   const subPrice     = watch("subscription_price_monthly") || 0
-  const bench        = PRICE_BENCH[category] ?? PRICE_BENCH.default
+  const bench        = PRICE_BENCH[category] ?? PRICE_BENCH.default!
 
-  // Save
-  const onSave = async (data: FormData) => {
+  // ── Save ──────────────────────────────────────────────────────────────────
+  // BUG FIX: onSave defined as useCallback BEFORE the keyboard-shortcut useEffect
+  // so it is initialized when the effect's dependency array is evaluated.
+  const onSave = useCallback(async (data: FormData) => {
     setSaving(true); setSaveState("saving")
     try {
-      // ── Price range validation (client-side pre-check, mirrors server-side in create route) ────────────────────
       const ppc = (data.pricing_model === "per_call" || data.pricing_model === "freemium")
         ? (data.price_per_call ?? 0) : 0
       const spm = data.pricing_model === "subscription"
         ? (data.subscription_price_monthly ?? 0) : 0
-      if (ppc > 0.25) { toast.error("Price per call cannot exceed $0.25"); setSaveState("idle"); setSaving(false); return }
-      if (ppc > 0 && ppc < 0.001) { toast.error("Price per call must be at least $0.001"); setSaveState("idle"); setSaving(false); return }
-      if (spm > 999) { toast.error("Subscription price cannot exceed $999/month"); setSaveState("idle"); setSaving(false); return }
+      if (ppc > 0.25)  { toast.error("Price per call cannot exceed $0.25"); setSaveState("idle"); setSaving(false); return }
+      if (ppc > 0 && ppc < 0.001) { toast.error("Min price: $0.001/call"); setSaveState("idle"); setSaving(false); return }
+      if (spm > 999)   { toast.error("Subscription price cannot exceed $999/month"); setSaveState("idle"); setSaving(false); return }
 
       const { error } = await supabase.from("agents").update({
         name:                       sanitize(data.name),
@@ -570,9 +538,48 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
       saveTimer.current = setTimeout(() => setSaveState("idle"), 3000)
     } catch (e: any) { toast.error(e.message || "Save failed"); setSaveState("idle") }
     finally { setSaving(false) }
-  }
+  }, [supabase, agent.id, agent.input_schema, mcpSelected, guardrails, knowledgeItems])
 
-  // Submit for review — eval harness first
+  // ── Test runner ───────────────────────────────────────────────────────────
+  // BUG FIX: runTest defined as useCallback BEFORE keyboard-shortcut useEffect
+  const runTest = useCallback(async () => {
+    setTesting(true); setTestOutput(""); setTestTrace(null)
+    try {
+      let parsed: unknown
+      try { parsed = JSON.parse(testInput) } catch { parsed = testInput }
+      const res  = await fetch(`/api/agents/${agent.id}/execute`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input: parsed }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
+      setTestOutput(typeof data.output === "string" ? data.output : JSON.stringify(data.output, null, 2))
+      setTestTrace({ latencyMs: data.latencyMs ?? 0, tokens: data.tokens ?? { input: 0, output: 0 }, cost: data.cost ?? 0 })
+      toast.success(`Done in ${data.latencyMs}ms`)
+    } catch (e: any) { toast.error(e.message); setTestOutput(`Error: ${e.message}`) }
+    finally { setTesting(false) }
+  }, [agent.id, testInput])
+
+  // ── Keyboard shortcuts ────────────────────────────────────────────────────
+  // BUG FIX: placed AFTER onSave and runTest are initialized as useCallbacks.
+  // Previously this useEffect was above onSave/runTest → TDZ error:
+  //   "Cannot access 'eq' before initialization" (Supabase .eq chained inside onSave).
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey
+      if (!mod) return
+      if (e.key === "s") { e.preventDefault(); handleSubmit(onSave)(); return }
+      if (e.key === "Enter") { e.preventDefault(); if (agent.status === "active") runTest(); return }
+      if (e.key === "1") { e.preventDefault(); setActiveTab("overview") }
+      if (e.key === "2") { e.preventDefault(); setActiveTab("behavior") }
+      if (e.key === "3") { e.preventDefault(); setActiveTab("security") }
+      if (e.key === "4") { e.preventDefault(); setActiveTab("monetization") }
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [agent.status, handleSubmit, onSave, runTest])
+
+  // ── Submit for review ─────────────────────────────────────────────────────
   const submitForReview = async () => {
     setSubmitting(true)
     const tid = toast.loading("Running quality evaluation (5–15s)…")
@@ -587,40 +594,19 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
       const data = await res.json()
       toast.dismiss(tid)
 
-      if (!res.ok) { toast.error(data.error || "Evaluation failed. Check plan or email verification."); return }
+      if (!res.ok) { toast.error(data.error || "Evaluation failed."); return }
 
-      // Show simplified score — internals always hidden
       setEvalResult({
         score: data.score, gate: data.gate, breakdown: data.breakdown,
         stats: data.stats, recommendation: data.recommendation,
       })
 
-      if (data.gate === "reject") {
-        toast.error(`Score ${data.score}/100 — below 70. See improvement tips below.`)
-      } else if (data.gate === "fast_track") {
-        toast.success(`Score ${data.score}/100 ⚡ Fast-tracked for review!`)
-      } else {
-        toast.success(`Score ${data.score}/100 — submitted for review (est. 24h).`)
-      }
+      if (data.gate === "reject")      toast.error(`Score ${data.score}/100 — below 70. See improvement tips.`)
+      else if (data.gate === "fast_track") toast.success(`Score ${data.score}/100 ⚡ Fast-tracked!`)
+      else                              toast.success(`Score ${data.score}/100 — submitted (est. 24h).`)
     } catch (e: any) { toast.dismiss(tid); toast.error(e.message || "Submission failed.") }
     finally { setSubmitting(false) }
   }
-
-  // Test runner
-  const runTest = useCallback(async () => {
-    setTesting(true); setTestOutput(""); setTestTrace(null)
-    try {
-      let parsed: unknown
-      try { parsed = JSON.parse(testInput) } catch { parsed = testInput }
-      const res  = await fetch(`/api/agents/${agent.id}/execute`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ input: parsed }) })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
-      setTestOutput(typeof data.output === "string" ? data.output : JSON.stringify(data.output, null, 2))
-      setTestTrace({ latencyMs: data.latencyMs ?? 0, tokens: data.tokens ?? { input: 0, output: 0 }, cost: data.cost ?? 0 })
-      toast.success(`Done in ${data.latencyMs}ms`)
-    } catch (e: any) { toast.error(e.message); setTestOutput(`Error: ${e.message}`) }
-    finally { setTesting(false) }
-  }, [agent.id, testInput])
 
   // ── Panels ────────────────────────────────────────────────────────────────
   const panels: Record<EditorTabId, React.ReactNode> = {
@@ -630,9 +616,9 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
         {/* Stats */}
         <div className="grid grid-cols-3 gap-3">
           {[
-            { label: "Total Runs",  value: agent.total_executions?.toLocaleString() || "0", icon: Zap },
-            { label: "Avg Rating",  value: agent.average_rating?.toFixed(1) || "—",          icon: Star },
-            { label: "Revenue",     value: `$${(agent.total_revenue || 0).toFixed(2)}`,      icon: TrendingUp },
+            { label: "Total Runs", value: agent.total_executions?.toLocaleString() || "0", icon: Zap },
+            { label: "Avg Rating", value: agent.average_rating?.toFixed(1) || "—",          icon: Star },
+            { label: "Revenue",    value: `$${(agent.total_revenue || 0).toFixed(2)}`,      icon: TrendingUp },
           ].map(s => (
             <div key={s.label} className="bg-zinc-50 border border-zinc-100 rounded-xl p-3.5 flex items-start gap-2.5">
               <div className="w-7 h-7 rounded-lg bg-white border border-zinc-100 flex items-center justify-center flex-shrink-0 mt-0.5">
@@ -651,16 +637,9 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
           <div className={cn("flex items-center gap-3 px-4 py-3 rounded-xl border",
             agent.evaluation_score >= 85 ? "bg-green-50 border-green-200" : agent.evaluation_score >= 70 ? "bg-amber-50 border-amber-200" : "bg-red-50 border-red-200")}>
             <Trophy className={cn("h-4 w-4", agent.evaluation_score >= 85 ? "text-green-600" : agent.evaluation_score >= 70 ? "text-amber-600" : "text-red-600")} />
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-sm font-semibold text-zinc-900">
-                Quality Score: <span className={agent.evaluation_score >= 85 ? "text-green-600" : agent.evaluation_score >= 70 ? "text-amber-700" : "text-red-600"}>{Math.round(agent.evaluation_score)}/100</span>
-              </span>
-              {agent.evaluation_score >= 85 && (
-                <span className="text-[10px] font-black bg-green-600 text-white px-2 py-0.5 rounded-full flex items-center gap-1">
-                  <Trophy className="h-2.5 w-2.5" /> Verified by AgentDyne
-                </span>
-              )}
-            </div>
+            <span className="text-sm font-semibold text-zinc-900">
+              Quality Score: <span className={agent.evaluation_score >= 85 ? "text-green-600" : agent.evaluation_score >= 70 ? "text-amber-700" : "text-red-600"}>{Math.round(agent.evaluation_score)}/100</span>
+            </span>
           </div>
         )}
 
@@ -728,14 +707,14 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
         </div>
 
         {/* Test inputs — only shown before submission */}
-        {["draft","rejected"].includes(agent.status) && (
+        {["draft", "suspended", "archived"].includes(agent.status) && (
           <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
             <SectionTitle icon={CheckSquare} title="Test Cases for Review" subtitle="One input per line (max 5). Used when you click Submit for Review." />
             <Textarea value={evalTests} onChange={e => setEvalTests(e.target.value)} rows={5}
               placeholder={"Summarise this article: ...\nTranslate to French: Hello\nWhat are the key points from: ..."}
               className="rounded-xl border-zinc-200 font-mono text-xs resize-none" />
             <p className="text-[11px] text-zinc-400 mt-2 flex items-center gap-1.5">
-              <Info className="h-3 w-3" /> We also run our own hidden tests — your agent must pass all of them.
+              <Info className="h-3 w-3" /> We also run hidden tests — your agent must pass all of them.
             </p>
           </div>
         )}
@@ -775,13 +754,12 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium text-zinc-700">Temperature</Label>
                 <Input type="number" step="0.1" min="0" max="2" className="rounded-xl border-zinc-200 h-10" {...register("temperature")} />
-                {/* Plain English helper — no jargon */}
-                <p className="text-[11px] text-zinc-400">0 = precise & deterministic · 2 = creative & varied</p>
+                <p className="text-[11px] text-zinc-400">0 = precise · 2 = creative</p>
               </div>
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium text-zinc-700">Max Tokens</Label>
                 <Input type="number" min="100" max="32000" className="rounded-xl border-zinc-200 h-10" {...register("max_tokens")} />
-                <p className="text-[11px] text-zinc-400">Max response length. Lower = faster + cheaper.</p>
+                <p className="text-[11px] text-zinc-400">Lower = faster + cheaper</p>
               </div>
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium text-zinc-700">Timeout (s)</Label>
@@ -815,7 +793,7 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
           <div>
             <p className="text-sm font-semibold text-zinc-900 mb-0.5">Guardrails & Security Policies</p>
             <p className="text-xs text-zinc-500 leading-relaxed">
-              Enforced server-side on every API call — callers cannot bypass them. Start with a preset or configure individually.
+              Enforced server-side on every API call — callers cannot bypass them.
             </p>
           </div>
         </div>
@@ -826,8 +804,7 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
     monetization: (
       <div className="space-y-6">
         <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-          <SectionTitle icon={DollarSign} title="Pricing Model" subtitle="Choose how users pay to use your agent" />
-
+          <SectionTitle icon={DollarSign} title="Pricing Model" />
           <div className="grid grid-cols-2 gap-3 mb-5">
             {([
               { key: "free",         label: "Free",         sub: "Platform covers inference" },
@@ -857,7 +834,6 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
                   <Input type="number" min="0" placeholder="10" className="rounded-xl border-zinc-200 h-10" {...register("free_calls_per_month")} />
                 </div>
               </div>
-              {/* Market pricing guidance — critical missing feature */}
               <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
                 <p className="text-xs font-semibold text-blue-800 mb-1.5 flex items-center gap-1.5">
                   <Banknote className="h-3.5 w-3.5" /> Market pricing for <span className="capitalize ml-1">{categoryLabel(category)}</span> agents
@@ -868,10 +844,10 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
                   <span className="text-blue-600">High: <strong>${bench.high.toFixed(2)}</strong></span>
                 </div>
                 <p className="text-[11px] text-blue-600">
-                  {!pricePerCall && `💡 Suggested: $${bench.mid.toFixed(3)}/call — aligns with similar agents in this category.`}
-                  {pricePerCall > 0 && pricePerCall < bench.low && "⚠ Below market — you may be undervaluing your agent."}
+                  {!pricePerCall && `💡 Suggested: $${bench.mid.toFixed(3)}/call`}
+                  {pricePerCall > 0 && pricePerCall < bench.low && "⚠ Below market — consider raising your price."}
                   {pricePerCall > 0 && pricePerCall >= bench.low && pricePerCall <= bench.high && "✓ Competitive range."}
-                  {pricePerCall > 0 && pricePerCall > bench.high && "ℹ Above market — justify with a high quality score (>85)."}
+                  {pricePerCall > 0 && pricePerCall > bench.high && "ℹ Above market — justify with high quality score (>85)."}
                 </p>
               </div>
             </div>
@@ -892,7 +868,6 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
           )}
         </div>
 
-        {/* Revenue projections */}
         {pricingModel !== "free" && (
           <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-5">
             <p className="text-sm font-semibold text-zinc-900 mb-3 flex items-center gap-2"><TrendingUp className="h-4 w-4 text-zinc-400" /> Revenue projections (80% share)</p>
@@ -915,11 +890,11 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
     ),
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col min-h-screen bg-white">
 
-      {/* ── Breadcrumb bar — Notion/Figma style ─────────────────────────── */}
+      {/* Breadcrumb bar */}
       <div className="sticky top-0 z-40 bg-white/90 backdrop-blur-xl border-b border-zinc-100 px-6 py-2.5 flex items-center justify-between">
         <nav className="flex items-center gap-1.5 text-xs text-zinc-400">
           <Link href="/dashboard" className="hover:text-zinc-700 flex items-center gap-1 transition-colors">
@@ -931,7 +906,6 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
           <span className="text-zinc-900 font-medium truncate max-w-[180px]">{agent.name}</span>
         </nav>
         <div className="flex items-center gap-3">
-          {/* Autosave indicator */}
           <AnimatePresence mode="wait">
             {saveState === "saving" && (
               <motion.span key="saving" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -947,9 +921,7 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
             )}
           </AnimatePresence>
           <Link href="/my-agents">
-            <Button variant="outline" size="sm" className="rounded-xl border-zinc-200 text-xs h-8 gap-1.5">
-              ← Back
-            </Button>
+            <Button variant="outline" size="sm" className="rounded-xl border-zinc-200 text-xs h-8 gap-1.5">← Back</Button>
           </Link>
         </div>
       </div>
@@ -975,7 +947,7 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
                     <Button variant="outline" size="sm" className="gap-1.5 rounded-xl border-zinc-200"><Globe className="h-3.5 w-3.5" /> View Live</Button>
                   </Link>
                 )}
-                {["draft","rejected"].includes(agent.status) && (
+                {["draft", "suspended", "archived"].includes(agent.status) && (
                   <Button size="sm" className="gap-1.5 rounded-xl bg-zinc-900 text-white hover:bg-zinc-700" onClick={submitForReview} disabled={submitting}>
                     {submitting ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Evaluating…</> : <><Send className="h-3.5 w-3.5" /> Submit for Review</>}
                   </Button>
@@ -988,23 +960,25 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
               </div>
             </div>
 
-            {/* Rejection banner */}
-            {agent.status === "rejected" && (
+            {/* Auto-disable / rejection banner */}
+            {(agent.status === "suspended" || agent.auto_disable_reason) && (
               <div className="mb-6 flex items-start gap-3 bg-red-50 border border-red-200 rounded-2xl px-5 py-4">
                 <AlertTriangle className="h-4 w-4 text-red-500 flex-shrink-0 mt-0.5" />
                 <div>
-                  <p className="text-sm font-semibold text-red-700">Agent rejected</p>
-                  <p className="text-xs text-red-600 mt-0.5">{agent.auto_disable_reason || "Review the quality score below and resubmit."}</p>
+                  <p className="text-sm font-semibold text-red-700">
+                    {agent.status === "suspended" ? "Agent suspended" : "Agent issue detected"}
+                  </p>
+                  <p className="text-xs text-red-600 mt-0.5">{agent.auto_disable_reason || "Review the quality score and resubmit."}</p>
                 </div>
               </div>
             )}
 
-            {/* Eval score panel — simplified, anti-gaming */}
+            {/* Eval score */}
             <AnimatePresence>
               {evalResult && <EvalScorePanel result={evalResult} onDismiss={() => setEvalResult(null)} />}
             </AnimatePresence>
 
-            {/* Form with tabs */}
+            {/* Form */}
             <form onSubmit={handleSubmit(onSave)}>
               <EditorTabBar active={activeTab} onChange={setActiveTab} />
               <AnimatePresence mode="wait" initial={false}>
@@ -1045,7 +1019,7 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
           <div className="flex-1 overflow-auto p-4 space-y-3">
             {agent.status !== "active" && (
               <div className="bg-amber-50 border border-amber-100 rounded-xl px-3 py-2 text-xs text-amber-700 flex items-center gap-2">
-                <Info className="h-3.5 w-3.5 flex-shrink-0" /> Must be active to test live.
+                <Info className="h-3.5 w-3.5 flex-shrink-0" /> Agent must be active to test live.
               </div>
             )}
             <div className="space-y-1.5">
@@ -1065,7 +1039,12 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
             {testTrace && (
               <div className="rounded-xl border border-zinc-100 bg-white px-3 py-2.5 space-y-1">
                 <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-2">Trace</p>
-                {[["Latency", `${testTrace.latencyMs}ms`], ["Tokens in", String(testTrace.tokens.input)], ["Tokens out", String(testTrace.tokens.output)], ["Est. cost", `$${testTrace.cost.toFixed(6)}`]].map(([k, v]) => (
+                {[
+                  ["Latency",    `${testTrace.latencyMs}ms`],
+                  ["Tokens in",  String(testTrace.tokens.input)],
+                  ["Tokens out", String(testTrace.tokens.output)],
+                  ["Est. cost",  `$${testTrace.cost.toFixed(6)}`],
+                ].map(([k, v]) => (
                   <div key={k} className="flex justify-between text-xs">
                     <span className="text-zinc-400">{k}</span>
                     <span className="font-mono font-semibold text-zinc-700">{v}</span>

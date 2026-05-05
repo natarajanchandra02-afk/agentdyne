@@ -539,7 +539,33 @@ export async function POST(
       commitIdempotency(supabase, idempotency.reservationId, executionId, responseBody).catch(() => {})
     }
 
-    return NextResponse.json(responseBody)
+    // ── X-RateLimit headers ─────────────────────────────────────────────────
+    // Added to every successful execution response so developers can see
+    // exactly how many calls they have remaining without guessing.
+    const PLAN_LIMITS: Record<string, number> = {
+      free:       50,
+      starter:    500,
+      pro:        5000,
+      enterprise: -1,
+    }
+    const planLimit   = PLAN_LIMITS[plan] ?? 500
+    const planUsed    = isFreePlan
+      ? Number(profile?.lifetime_executions_used ?? 0) + 1
+      : Number(profile?.executions_used_this_month ?? 0) + 1
+    const remaining   = planLimit === -1 ? 999999 : Math.max(0, planLimit - planUsed)
+    const windowReset = isFreePlan
+      ? Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 365   // lifetime — no reset
+      : Math.floor((new Date(profile?.quota_reset_date ?? Date.now() + 86400000).getTime()) / 1000)
+
+    const successResponse = NextResponse.json(responseBody)
+    successResponse.headers.set("X-RateLimit-Limit",     String(planLimit === -1 ? "unlimited" : planLimit))
+    successResponse.headers.set("X-RateLimit-Remaining",  String(remaining))
+    successResponse.headers.set("X-RateLimit-Reset",      String(windowReset))
+    successResponse.headers.set("X-RateLimit-Policy",     isFreePlan ? "lifetime" : "monthly")
+    successResponse.headers.set("X-Execution-Cost-USD",   costUsd.toFixed(6))
+    successResponse.headers.set("X-Model-Used",           resolvedModel)
+
+    return successResponse
 
   } catch (err: any) {
     console.error("POST /api/agents/[id]/execute:", err)

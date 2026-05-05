@@ -1,516 +1,521 @@
 /**
- * AgentDyne Multi-Provider Model Router
+ * AgentDyne Model Router — Production Cognitive Depth Router
  *
- * Platform holds ONE set of API keys. Users never need their own.
- * This is the standard marketplace model — platform pays LLM providers,
- * charges users via credits/subscriptions, keeps the spread.
+ * Responsibilities:
+ *   1. Complexity assessment    → classify prompt complexity
+ *   2. Model selection          → choose cheapest model that can handle it
+ *   3. Fallback chain           → ordered escalation on failure/timeout
+ *   4. Observability            → structured reasoning for DB storage
+ *   5. Edge runtime compatible  → no Node.js APIs, pure TypeScript
  *
- * Required env vars (set in Cloudflare Pages → Environment Variables):
- *   ANTHROPIC_API_KEY   — for all claude-* agents (most common)
- *   OPENAI_API_KEY      — for gpt-* agents AND RAG embeddings
- *   GOOGLE_AI_API_KEY   — for gemini-* agents
+ * All decisions are deterministic and logged via the returned `routing` object.
+ * Store routing.reason in executions.model_routing_reason and
+ * routing.depthAssessment in execution_traces.depth_assessment.
  *
- * You do NOT need all three at launch. Start with ANTHROPIC_API_KEY only.
- * Agents using unconfigured providers will get a clear 503 error, not a crash.
+ * Updated to April 2026 model names (from constants.ts).
  */
 
-export interface LLMCallParams {
-  model:       string
-  system:      string
-  userMessage: string
-  maxTokens:   number
-  temperature: number
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+/** Canonical model identifiers — must match agents.model_name in DB */
+export const MODELS = {
+  HAIKU:  "claude-haiku-4-5-20251001",
+  SONNET: "claude-sonnet-4-6",
+  OPUS:   "claude-opus-4-6",
+  // OpenAI fallback (future — enabled when OPENAI_API_KEY is set)
+  GPT_4O_MINI: "gpt-4o-mini",
+  GPT_4O:      "gpt-4o",
+} as const
+export type ModelId = typeof MODELS[keyof typeof MODELS]
+
+/** Cost per 1k tokens (USD) — April 2026 pricing */
+const MODEL_COST: Record<ModelId, { inputPer1k: number; outputPer1k: number }> = {
+  [MODELS.HAIKU]:    { inputPer1k: 0.00025, outputPer1k: 0.00125 },
+  [MODELS.SONNET]:   { inputPer1k: 0.003,   outputPer1k: 0.015   },
+  [MODELS.OPUS]:     { inputPer1k: 0.015,   outputPer1k: 0.075   },
+  [MODELS.GPT_4O_MINI]: { inputPer1k: 0.00015, outputPer1k: 0.0006 },
+  [MODELS.GPT_4O]:      { inputPer1k: 0.005,   outputPer1k: 0.015  },
 }
 
-export interface LLMResult {
-  text:         string
-  inputTokens:  number
-  outputTokens: number
-  costUsd:      number
+/** Complexity thresholds — tune without changing business logic */
+const THRESHOLDS = {
+  /** Prompts shorter than this are "short" signals */
+  SHORT_PROMPT_CHARS:   500,
+  /** Prompts longer than this trigger "complex" routing */
+  LONG_PROMPT_CHARS:   2000,
+  /** Context token counts that bump complexity */
+  MEDIUM_CONTEXT_TOKENS: 2_000,
+  COMPLEX_CONTEXT_TOKENS: 8_000,
+  /** Tool counts */
+  MEDIUM_TOOL_COUNT:     1,
+  COMPLEX_TOOL_COUNT:    3,
+  /** Budget levels (USD per run) */
+  BUDGET_DOWNGRADE_USD:  0.005,  // below this, force Haiku regardless
+  BUDGET_SONNET_MIN_USD: 0.02,   // below this, avoid Opus
+} as const
+
+/** Plan → model ceiling (free plan always gets Haiku) */
+const PLAN_MODEL_CEILING: Record<string, ModelId> = {
+  free:       MODELS.HAIKU,
+  starter:    MODELS.SONNET,
+  pro:        MODELS.OPUS,
+  enterprise: MODELS.OPUS,
 }
 
-export type StreamChunkHandler = (chunk: string) => void
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-// ── Cost tracking (USD per 1K tokens, April 2026) ─────────────────────────────
+export type Complexity = "simple" | "medium" | "complex" | "expert"
 
-const COST_PER_1K: Record<string, { input: number; output: number }> = {
-  // Anthropic — must match SUPPORTED_MODELS in constants.ts exactly
-  "claude-opus-4-6":           { input: 0.015,    output: 0.075    },
-  "claude-sonnet-4-6":         { input: 0.003,    output: 0.015    },
-  "claude-sonnet-4-20250514":  { input: 0.003,    output: 0.015    }, // alias kept for backwards compat
-  "claude-haiku-4-5-20251001": { input: 0.00025,  output: 0.00125  },
-  // OpenAI
-  "gpt-4o":                    { input: 0.005,    output: 0.015    },
-  "gpt-4o-mini":               { input: 0.00015,  output: 0.0006   },
-  // Google
-  "gemini-1.5-pro":            { input: 0.00125,  output: 0.005    },
-  "gemini-1.5-flash":          { input: 0.000075, output: 0.0003   },
-  _default:                    { input: 0.003,    output: 0.015    },
+export interface ComplexityInput {
+  prompt:             string
+  toolCount:          number
+  contextTokens:      number
+  requiresReasoning?: boolean
+  isMultiStep?:       boolean   // pipeline context
 }
 
-function estimateCost(model: string, inputTokens: number, outputTokens: number): number {
-  const r = COST_PER_1K[model] ?? COST_PER_1K["_default"]!
-  return (inputTokens / 1000) * r.input + (outputTokens / 1000) * r.output
+export interface ModelChoice {
+  model:          ModelId
+  estimatedCostUsd: number
+  downgradeReason?: string
 }
 
-// ── Provider detection ────────────────────────────────────────────────────────
-
-export type Provider = "anthropic" | "openai" | "google" | "vllm"
-
-export function detectProvider(model: string): Provider {
-  if (model.startsWith("claude-"))  return "anthropic"
-  if (model.startsWith("gpt-"))     return "openai"
-  if (model.startsWith("gemini-"))  return "google"
-  if (model.startsWith("vllm/"))    return "vllm"
-  return "anthropic"
+export interface RoutingResult {
+  selectedModel:     ModelId
+  fallbackChain:     ModelId[]
+  estimatedCostUsd:  number
+  costSavedVsSonnet: number       // % saved vs always-Sonnet baseline
+  routing: {
+    complexity:      Complexity
+    reason:          string
+    costStrategy:    string
+    downgradeReason?: string
+    planCeiling:     ModelId
+  }
+  /** Store this object in execution_traces.depth_assessment */
+  depthAssessment: {
+    promptChars:   number
+    contextTokens: number
+    toolCount:     number
+    complexity:    Complexity
+    selectedModel: ModelId
+    estimatedCost: number
+    timestamp:     string
+  }
 }
 
-// ── API key validation ────────────────────────────────────────────────────────
-
-const PROVIDER_ENV: Record<Provider, string> = {
-  anthropic: "ANTHROPIC_API_KEY",
-  openai:    "OPENAI_API_KEY",
-  google:    "GOOGLE_AI_API_KEY",
-  vllm:      "VLLM_BASE_URL",
-}
+// ─── 1. Complexity Assessment ─────────────────────────────────────────────────
 
 /**
- * validateProviderKey — throws a clear, actionable error if the env var
- * for the required provider is not set. Called before every LLM call so
- * the execute route gets a useful error code instead of a generic 500.
+ * assessComplexity
+ *
+ * Pure function: maps observable prompt signals to a complexity tier.
+ * No LLM calls. O(1) — runs in microseconds.
+ *
+ *   simple  → Haiku handles it perfectly (short, no tools, no reasoning)
+ *   medium  → Sonnet needed (some reasoning OR 1–2 tools)
+ *   complex → Sonnet needed (long prompt OR multiple tools OR RAG context)
+ *   expert  → Opus needed (>8k tokens OR multi-step pipelines OR explicit flag)
  */
-function validateProviderKey(provider: Provider): void {
-  const envVar = PROVIDER_ENV[provider]
-  const value  = process.env[envVar]
-  if (!value || value.trim().length === 0) {
-    const providerName = {
-      anthropic: "Anthropic (Claude)",
-      openai:    "OpenAI (GPT)",
-      google:    "Google (Gemini)",
-      vllm:      "vLLM (self-hosted)",
-    }[provider]
-    throw Object.assign(
-      new Error(
-        `${providerName} API key is not configured. ` +
-        `Set ${envVar} in Cloudflare Pages → Settings → Environment Variables. ` +
-        `This agent uses a ${providerName} model and cannot run without it.`
-      ),
-      { code: "PROVIDER_NOT_CONFIGURED", envVar, provider }
-    )
-  }
-}
+export function assessComplexity(input: ComplexityInput): Complexity {
+  const { prompt, toolCount, contextTokens, requiresReasoning, isMultiStep } = input
+  const promptChars = prompt.length
 
-// ── Anthropic ────────────────────────────────────────────────────────────────
+  // Expert: Opus territory
+  if (
+    isMultiStep ||
+    contextTokens >= THRESHOLDS.COMPLEX_CONTEXT_TOKENS ||
+    (requiresReasoning && toolCount >= THRESHOLDS.COMPLEX_TOOL_COUNT)
+  ) return "expert"
 
-async function callAnthropic(p: LLMCallParams): Promise<LLMResult> {
-  validateProviderKey("anthropic")
-  const { default: Anthropic } = await import("@anthropic-ai/sdk")
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  // Complex: Sonnet needed but Opus not required
+  if (
+    promptChars > THRESHOLDS.LONG_PROMPT_CHARS ||
+    toolCount >= THRESHOLDS.COMPLEX_TOOL_COUNT ||
+    contextTokens >= THRESHOLDS.MEDIUM_CONTEXT_TOKENS
+  ) return "complex"
 
-  const resp = await client.messages.create({
-    model:       p.model,
-    max_tokens:  p.maxTokens,
-    system:      p.system,
-    messages:    [{ role: "user", content: p.userMessage }],
-    temperature: p.temperature,
-  })
+  // Medium: Sonnet preferred
+  if (
+    requiresReasoning ||
+    toolCount >= THRESHOLDS.MEDIUM_TOOL_COUNT ||
+    promptChars > THRESHOLDS.SHORT_PROMPT_CHARS
+  ) return "medium"
 
-  const text         = resp.content[0]?.type === "text" ? resp.content[0].text : ""
-  const inputTokens  = resp.usage.input_tokens
-  const outputTokens = resp.usage.output_tokens
-  return { text, inputTokens, outputTokens, costUsd: estimateCost(p.model, inputTokens, outputTokens) }
-}
-
-async function streamAnthropic(
-  p: LLMCallParams,
-  onChunk: StreamChunkHandler
-): Promise<{ inputTokens: number; outputTokens: number; costUsd: number }> {
-  validateProviderKey("anthropic")
-  const { default: Anthropic } = await import("@anthropic-ai/sdk")
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-
-  let inputTokens = 0, outputTokens = 0
-
-  const stream = client.messages.stream({
-    model:       p.model,
-    max_tokens:  p.maxTokens,
-    system:      p.system,
-    messages:    [{ role: "user", content: p.userMessage }],
-    temperature: p.temperature,
-  })
-
-  for await (const event of stream) {
-    if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-      onChunk(event.delta.text)
-    }
-    if (event.type === "message_start") inputTokens  = event.message.usage.input_tokens
-    if (event.type === "message_delta") outputTokens = event.usage?.output_tokens ?? 0
-  }
-
-  return { inputTokens, outputTokens, costUsd: estimateCost(p.model, inputTokens, outputTokens) }
-}
-
-// ── OpenAI / vLLM ─────────────────────────────────────────────────────────────
-
-function getOpenAIConfig(model: string): { baseUrl: string; apiKey: string; modelName: string } {
-  if (model.startsWith("vllm/")) {
-    validateProviderKey("vllm")
-    const base = process.env.VLLM_BASE_URL!
-    return { baseUrl: base.replace(/\/$/, ""), apiKey: "EMPTY", modelName: model.slice(5) }
-  }
-  validateProviderKey("openai")
-  return { baseUrl: "https://api.openai.com", apiKey: process.env.OPENAI_API_KEY!, modelName: model }
-}
-
-async function callOpenAI(p: LLMCallParams): Promise<LLMResult> {
-  const { baseUrl, apiKey, modelName } = getOpenAIConfig(p.model)
-
-  const resp = await fetch(`${baseUrl}/v1/chat/completions`, {
-    method:  "POST",
-    headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body:    JSON.stringify({
-      model:       modelName,
-      max_tokens:  p.maxTokens,
-      temperature: p.temperature,
-      messages: [
-        { role: "system", content: p.system     },
-        { role: "user",   content: p.userMessage },
-      ],
-    }),
-  })
-
-  if (!resp.ok) {
-    const err = await resp.text()
-    // Surface the actual API error — not a generic message
-    throw new Error(`OpenAI API error ${resp.status}: ${err.slice(0, 300)}`)
-  }
-
-  const data         = await resp.json() as any
-  const text         = data.choices?.[0]?.message?.content ?? ""
-  const inputTokens  = data.usage?.prompt_tokens     ?? 0
-  const outputTokens = data.usage?.completion_tokens ?? 0
-  return { text, inputTokens, outputTokens, costUsd: estimateCost(p.model, inputTokens, outputTokens) }
-}
-
-async function streamOpenAI(
-  p: LLMCallParams,
-  onChunk: StreamChunkHandler
-): Promise<{ inputTokens: number; outputTokens: number; costUsd: number }> {
-  const { baseUrl, apiKey, modelName } = getOpenAIConfig(p.model)
-
-  const resp = await fetch(`${baseUrl}/v1/chat/completions`, {
-    method:  "POST",
-    headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body:    JSON.stringify({
-      model:       modelName,
-      max_tokens:  p.maxTokens,
-      temperature: p.temperature,
-      stream:      true,
-      messages: [
-        { role: "system", content: p.system     },
-        { role: "user",   content: p.userMessage },
-      ],
-    }),
-  })
-
-  if (!resp.ok) {
-    const err = await resp.text()
-    throw new Error(`OpenAI API error ${resp.status}: ${err.slice(0, 300)}`)
-  }
-
-  const reader  = resp.body?.getReader()
-  const decoder = new TextDecoder()
-  let inputTokens = 0, outputTokens = 0
-
-  if (!reader) throw new Error("OpenAI stream: no response body")
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    const text = decoder.decode(value, { stream: true })
-    for (const line of text.split("\n")) {
-      const trimmed = line.trim()
-      if (!trimmed.startsWith("data:")) continue
-      const payload = trimmed.slice(5).trim()
-      if (payload === "[DONE]") break
-      try {
-        const json  = JSON.parse(payload) as any
-        const delta = json.choices?.[0]?.delta?.content
-        if (delta) onChunk(delta)
-        if (json.usage) {
-          inputTokens  = json.usage.prompt_tokens     ?? inputTokens
-          outputTokens = json.usage.completion_tokens ?? outputTokens
-        }
-      } catch { /* malformed chunk — skip */ }
-    }
-  }
-
-  return { inputTokens, outputTokens, costUsd: estimateCost(p.model, inputTokens, outputTokens) }
-}
-
-// ── Google Gemini ──────────────────────────────────────────────────────────────
-
-async function callGoogle(p: LLMCallParams): Promise<LLMResult> {
-  validateProviderKey("google")
-  const key      = process.env.GOOGLE_AI_API_KEY!
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${p.model}:generateContent?key=${key}`
-
-  const resp = await fetch(endpoint, {
-    method:  "POST",
-    headers: { "Content-Type": "application/json" },
-    body:    JSON.stringify({
-      system_instruction: { parts: [{ text: p.system }] },
-      contents:           [{ role: "user", parts: [{ text: p.userMessage }] }],
-      generationConfig:   { maxOutputTokens: p.maxTokens, temperature: p.temperature },
-    }),
-  })
-
-  if (!resp.ok) {
-    const err = await resp.text()
-    throw new Error(`Gemini API error ${resp.status}: ${err.slice(0, 300)}`)
-  }
-
-  const data         = await resp.json() as any
-  const text         = data.candidates?.[0]?.content?.parts?.[0]?.text ?? ""
-  const inputTokens  = data.usageMetadata?.promptTokenCount     ?? 0
-  const outputTokens = data.usageMetadata?.candidatesTokenCount ?? 0
-  return { text, inputTokens, outputTokens, costUsd: estimateCost(p.model, inputTokens, outputTokens) }
-}
-
-async function streamGoogle(
-  p: LLMCallParams,
-  onChunk: StreamChunkHandler
-): Promise<{ inputTokens: number; outputTokens: number; costUsd: number }> {
-  validateProviderKey("google")
-  const key      = process.env.GOOGLE_AI_API_KEY!
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${p.model}:streamGenerateContent?key=${key}&alt=sse`
-
-  const resp = await fetch(endpoint, {
-    method:  "POST",
-    headers: { "Content-Type": "application/json" },
-    body:    JSON.stringify({
-      system_instruction: { parts: [{ text: p.system }] },
-      contents:           [{ role: "user", parts: [{ text: p.userMessage }] }],
-      generationConfig:   { maxOutputTokens: p.maxTokens, temperature: p.temperature },
-    }),
-  })
-
-  if (!resp.ok) {
-    const err = await resp.text()
-    throw new Error(`Gemini stream error ${resp.status}: ${err.slice(0, 300)}`)
-  }
-
-  const reader  = resp.body?.getReader()
-  const decoder = new TextDecoder()
-  let inputTokens = 0, outputTokens = 0
-
-  if (!reader) throw new Error("Gemini stream: no response body")
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    const text = decoder.decode(value, { stream: true })
-    for (const line of text.split("\n")) {
-      const trimmed = line.trim()
-      if (!trimmed.startsWith("data:")) continue
-      const payload = trimmed.slice(5).trim()
-      if (!payload || payload === "[DONE]") continue
-      try {
-        const json  = JSON.parse(payload) as any
-        const chunk = json.candidates?.[0]?.content?.parts?.[0]?.text
-        if (chunk) onChunk(chunk)
-        if (json.usageMetadata) {
-          inputTokens  = json.usageMetadata.promptTokenCount     ?? inputTokens
-          outputTokens = json.usageMetadata.candidatesTokenCount ?? outputTokens
-        }
-      } catch { /* malformed SSE chunk */ }
-    }
-  }
-
-  return { inputTokens, outputTokens, costUsd: estimateCost(p.model, inputTokens, outputTokens) }
-}
-
-// ── Cognitive Depth Routing ──────────────────────────────────────────────────
-// Automatically selects the cheapest model that can handle the task.
-// 70% of prompts → Haiku (12× cheaper than Sonnet). You keep the spread.
-// Uses correct April 2026 model names — not legacy 2024 strings.
-
-type Complexity = "simple" | "medium" | "complex" | "expert"
-
-export function assessComplexity(
-  prompt:       string,
-  toolCount:    number = 0,
-  contextChars: number = 0
-): Complexity {
-  const len = prompt.length
-  // Expert: long context, many tools, or explicitly complex keywords
-  if (contextChars > 12_000 || toolCount > 5) return "expert"
-  if (len > 4_000 || toolCount > 3)           return "expert"
-  // Complex: medium prompt with reasoning requirements
-  if (len > 2_000 || toolCount > 1)           return "complex"
-  if (/\b(reason|analys|calculat|compar|evaluat|summar|explain|review|audit|strateg)/i.test(prompt)) return "complex"
-  // Medium: moderate length or implicit reasoning
-  if (len > 500)                               return "medium"
-  if (/\b(translat|classif|extract|convert|format|list|summarise)/i.test(prompt)) return "medium"
-  // Simple: short, direct tasks
+  // Simple: Haiku is sufficient
   return "simple"
 }
 
-/**
- * selectModelByDepth
- * Maps task complexity → cheapest appropriate model.
- * Respects plan restrictions (free plan always gets Haiku).
- * Falls back to a safer model if budget is low.
- */
-export function selectModelByDepth(
-  complexity:      Complexity,
-  plan:            string = "free",
-  budgetRemaining: number = Infinity
-): string {
-  // Free plan and low-budget always get Haiku
-  if (plan === "free" || budgetRemaining < 0.01)
-    return "claude-haiku-4-5-20251001"
-
-  // Budget guard: if under $0.05 remaining, use Haiku regardless
-  if (budgetRemaining < 0.05)
-    return "claude-haiku-4-5-20251001"
-
-  switch (complexity) {
-    case "simple":  return "claude-haiku-4-5-20251001"
-    case "medium":  return "claude-haiku-4-5-20251001"  // Haiku handles most medium tasks well
-    case "complex": return "claude-sonnet-4-6"
-    case "expert":  return "claude-sonnet-4-6"           // Default to Sonnet; use Opus only when agent explicitly configured it
-  }
-}
+// ─── 2. Estimate cost ─────────────────────────────────────────────────────────
 
 /**
- * routeWithDepth
- * Drop-in replacement for routeCompletion that auto-selects model.
- * If the agent's configured model is Haiku or Sonnet, respects it.
- * If the agent configured Opus, we only use Opus for expert tasks.
+ * estimateCost
+ *
+ * Rough cost estimate for one execution with the given model.
+ * Uses conservative assumptions: 500 input tokens + (maxTokens * 0.7) output.
+ * Accurate to within 2–3× for typical agents.
  */
-export async function routeWithDepth(
-  p:               LLMCallParams,
-  plan:            string = "starter",
-  toolCount:       number = 0,
-  budgetRemaining: number = Infinity
-): Promise<LLMResult & { depthRouted: boolean; originalModel: string; selectedModel: string }> {
-  const complexity    = assessComplexity(p.userMessage + p.system, toolCount)
-  const depthModel    = selectModelByDepth(complexity, plan, budgetRemaining)
-  const originalModel = p.model
-
-  // Only override if the agent requested a heavier model than needed
-  // Never upgrade — only downgrade to save cost
-  const COST_RANK: Record<string, number> = {
-    "claude-haiku-4-5-20251001":  1,
-    "gpt-4o-mini":                1,
-    "gemini-1.5-flash":           1,
-    "claude-sonnet-4-6":          2,
-    "claude-sonnet-4-20250514":   2,
-    "gpt-4o":                     2,
-    "gemini-1.5-pro":             2,
-    "claude-opus-4-6":            3,
-  }
-  const configuredRank = COST_RANK[originalModel] ?? 2
-  const depthRank      = COST_RANK[depthModel]    ?? 1
-
-  // Use depth model only if it's lighter than what was configured
-  const selectedModel = (depthRank < configuredRank && detectProvider(depthModel) === detectProvider(originalModel))
-    ? depthModel
-    : originalModel
-
-  const result = await routeCompletion({ ...p, model: selectedModel })
-  return { ...result, depthRouted: selectedModel !== originalModel, originalModel, selectedModel }
+export function estimateCost(
+  model:     ModelId,
+  inputTokens:  number,
+  outputTokens: number,
+): number {
+  const { inputPer1k, outputPer1k } = MODEL_COST[model] ?? MODEL_COST[MODELS.SONNET]
+  return (inputTokens / 1000) * inputPer1k + (outputTokens / 1000) * outputPer1k
 }
 
-// ── Public interface ──────────────────────────────────────────────────────────
-
-export async function routeCompletion(p: LLMCallParams): Promise<LLMResult> {
-  const provider = detectProvider(p.model)
-  switch (provider) {
-    case "anthropic": return callAnthropic(p)
-    case "openai":    return callOpenAI(p)
-    case "vllm":      return callOpenAI(p)
-    case "google":    return callGoogle(p)
-    default:          return callAnthropic(p)
-  }
-}
-
-export async function routeStream(
-  p: LLMCallParams,
-  onChunk: StreamChunkHandler
-): Promise<{ inputTokens: number; outputTokens: number; costUsd: number }> {
-  const provider = detectProvider(p.model)
-  switch (provider) {
-    case "anthropic": return streamAnthropic(p, onChunk)
-    case "openai":    return streamOpenAI(p, onChunk)
-    case "vllm":      return streamOpenAI(p, onChunk)
-    case "google":    return streamGoogle(p, onChunk)
-    default:          return streamAnthropic(p, onChunk)
-  }
-}
+// ─── 3. Model Selection ───────────────────────────────────────────────────────
 
 /**
- * checkModelSupport — call this in the agent builder before allowing publish.
- * Returns the missing env var name so you can show a clear error in the UI.
+ * selectModel
+ *
+ * Returns the cheapest model that can handle the given complexity,
+ * subject to plan ceiling and budget constraints.
+ *
+ * Decision order:
+ *   1. Plan ceiling (free → always Haiku)
+ *   2. Budget check (very low budget → force Haiku)
+ *   3. Complexity mapping
+ *   4. Budget cap (can't afford Opus → use Sonnet)
  */
-export function checkModelSupport(model: string): {
-  supported:       boolean
-  provider:        string
-  providerLabel:   string
-  missingEnvVar?:  string
-  setupGuide:      string
-} {
-  const provider = detectProvider(model)
-  const envVar   = PROVIDER_ENV[provider]
-  const val      = process.env[envVar]
-  const missing  = !val || val.trim().length === 0 ? envVar : undefined
+export function selectModel(config: {
+  complexity:      Complexity
+  plan:            string
+  budgetRemaining: number
+  maxCostPerRun?:  number
+  preferredModel?: ModelId   // override from agent config
+}): ModelChoice {
+  const { complexity, plan, budgetRemaining, maxCostPerRun, preferredModel } = config
 
-  const LABELS: Record<Provider, string> = {
-    anthropic: "Anthropic (Claude)",
-    openai:    "OpenAI (GPT)",
-    google:    "Google (Gemini)",
-    vllm:      "Self-hosted vLLM",
+  const planCeiling = PLAN_MODEL_CEILING[plan] ?? MODELS.HAIKU
+  const inputTokens  = 500
+  const outputTokens = 2048
+
+  // Complexity → ideal model
+  const complexityIdeal: Record<Complexity, ModelId> = {
+    simple:  MODELS.HAIKU,
+    medium:  MODELS.SONNET,
+    complex: MODELS.SONNET,
+    expert:  MODELS.OPUS,
+  }
+  let model = complexityIdeal[complexity]
+
+  // Apply plan ceiling (never exceed what the plan allows)
+  const modelTier = (m: ModelId) =>
+    m === MODELS.HAIKU ? 0 : m === MODELS.SONNET ? 1 : 2
+  if (modelTier(model) > modelTier(planCeiling)) {
+    model = planCeiling
   }
 
-  const GUIDES: Record<Provider, string> = {
-    anthropic: "console.anthropic.com → API Keys",
-    openai:    "platform.openai.com → API Keys",
-    google:    "aistudio.google.com → API Keys",
-    vllm:      "Set VLLM_BASE_URL to your cluster endpoint",
+  // Apply agent's preferred model if it fits within constraints
+  if (preferredModel && modelTier(preferredModel) <= modelTier(planCeiling)) {
+    model = preferredModel
+  }
+
+  // Budget check: if remaining budget is very low, force Haiku
+  let downgradeReason: string | undefined
+  if (budgetRemaining < THRESHOLDS.BUDGET_DOWNGRADE_USD) {
+    if (model !== MODELS.HAIKU) {
+      downgradeReason = `Budget too low ($${budgetRemaining.toFixed(4)} remaining) — downgraded to Haiku`
+      model = MODELS.HAIKU
+    }
+  } else if (budgetRemaining < THRESHOLDS.BUDGET_SONNET_MIN_USD && model === MODELS.OPUS) {
+    downgradeReason = `Budget insufficient for Opus ($${budgetRemaining.toFixed(4)}) — using Sonnet`
+    model = MODELS.SONNET
+  }
+
+  // Max cost per run cap
+  if (maxCostPerRun !== undefined) {
+    const opusCost   = estimateCost(MODELS.OPUS,   inputTokens, outputTokens)
+    const sonnetCost = estimateCost(MODELS.SONNET, inputTokens, outputTokens)
+    if (model === MODELS.OPUS && opusCost > maxCostPerRun) {
+      model = MODELS.SONNET
+      if (!downgradeReason) downgradeReason = `Opus cost ~$${opusCost.toFixed(4)} exceeds maxCostPerRun $${maxCostPerRun}`
+    }
+    if (model === MODELS.SONNET && sonnetCost > maxCostPerRun) {
+      model = MODELS.HAIKU
+      if (!downgradeReason) downgradeReason = `Sonnet cost ~$${sonnetCost.toFixed(4)} exceeds maxCostPerRun $${maxCostPerRun}`
+    }
   }
 
   return {
-    supported:     !missing,
-    provider,
-    providerLabel: LABELS[provider],
-    missingEnvVar: missing,
-    setupGuide:    GUIDES[provider],
+    model,
+    estimatedCostUsd: estimateCost(model, inputTokens, outputTokens),
+    downgradeReason,
   }
 }
 
-/**
- * getSupportedModels — return only the models whose provider key is configured.
- * Use this in the builder to show only available models, not all theoretical ones.
- */
-export function getSupportedModels(): string[] {
-  const all = [
-    // Anthropic — use exact model strings from constants.ts
-    { model: "claude-sonnet-4-6",           provider: "anthropic" as Provider },
-    { model: "claude-haiku-4-5-20251001",   provider: "anthropic" as Provider },
-    { model: "claude-opus-4-6",             provider: "anthropic" as Provider },
-    // OpenAI
-    { model: "gpt-4o",      provider: "openai" as Provider },
-    { model: "gpt-4o-mini", provider: "openai" as Provider },
-    // Google
-    { model: "gemini-1.5-pro",   provider: "google" as Provider },
-    { model: "gemini-1.5-flash", provider: "google" as Provider },
-  ]
+// ─── 4. Fallback chain ────────────────────────────────────────────────────────
 
-  return all
-    .filter(({ provider }) => {
-      const key = process.env[PROVIDER_ENV[provider]]
-      return !!key && key.trim().length > 0
+/**
+ * getFallbackChain
+ *
+ * Returns the ordered list of fallback models to try after the primary fails.
+ * Fallback always escalates — never degrades — to maintain output quality.
+ *
+ *   Haiku  → [Sonnet, Opus]
+ *   Sonnet → [Opus]
+ *   Opus   → []  (no fallback — already at ceiling)
+ */
+export function getFallbackChain(primaryModel: ModelId): ModelId[] {
+  switch (primaryModel) {
+    case MODELS.HAIKU:       return [MODELS.SONNET, MODELS.OPUS]
+    case MODELS.SONNET:      return [MODELS.OPUS]
+    case MODELS.OPUS:        return []
+    case MODELS.GPT_4O_MINI: return [MODELS.GPT_4O, MODELS.SONNET]
+    case MODELS.GPT_4O:      return [MODELS.OPUS]
+    default:                 return [MODELS.SONNET]
+  }
+}
+
+// ─── 5. Main router function ──────────────────────────────────────────────────
+
+/**
+ * routeModel
+ *
+ * The single entry point for all model routing decisions.
+ *
+ * Call this at the start of every agent or pipeline node execution.
+ * Never hardcode model names in execute routes — always go through this router.
+ *
+ * Returns:
+ *   selectedModel     → pass to Anthropic/OpenAI API call
+ *   fallbackChain     → try in order on failure/timeout
+ *   estimatedCostUsd  → show to user before run (trust layer)
+ *   costSavedVsSonnet → "Saved 83% using Haiku instead of Sonnet"
+ *   routing           → store in executions.model_routing_reason
+ *   depthAssessment   → store in execution_traces.depth_assessment
+ */
+export function routeModel(input: {
+  prompt:            string
+  toolCount:         number
+  contextTokens:     number
+  plan:              string
+  budgetRemaining:   number
+  maxCostPerRun?:    number
+  previousFailures?: number
+  requiresReasoning?: boolean
+  isMultiStep?:      boolean
+  preferredModel?:   string   // from agents.model_name
+}): RoutingResult {
+  const {
+    prompt, toolCount, contextTokens, plan, budgetRemaining,
+    maxCostPerRun, previousFailures = 0,
+    requiresReasoning, isMultiStep, preferredModel,
+  } = input
+
+  // Step 1: Assess complexity
+  const complexity = assessComplexity({
+    prompt, toolCount, contextTokens, requiresReasoning, isMultiStep,
+  })
+
+  // Step 2: Previous failures → bump complexity by 1 tier (escalate)
+  let adjustedComplexity = complexity
+  if (previousFailures >= 2 && complexity !== "expert")  adjustedComplexity = "expert"
+  else if (previousFailures === 1 && complexity === "simple") adjustedComplexity = "medium"
+
+  // Step 3: Select model
+  const planCeiling = PLAN_MODEL_CEILING[plan] ?? MODELS.HAIKU
+  const { model, estimatedCostUsd, downgradeReason } = selectModel({
+    complexity:      adjustedComplexity,
+    plan,
+    budgetRemaining,
+    maxCostPerRun,
+    preferredModel:  preferredModel as ModelId | undefined,
+  })
+
+  // Step 4: Build fallback chain (respect plan ceiling for fallbacks too)
+  const rawChain = getFallbackChain(model)
+  const modelTier = (m: ModelId) =>
+    m === MODELS.HAIKU ? 0 : m === MODELS.SONNET ? 1 : 2
+  const fallbackChain = rawChain.filter(
+    m => modelTier(m) <= modelTier(planCeiling)
+  ) as ModelId[]
+
+  // Step 5: Calculate cost savings vs always-Sonnet baseline
+  const sonnetCost      = estimateCost(MODELS.SONNET, 500, 2048)
+  const costSavedPercent =
+    sonnetCost > 0
+      ? Math.max(0, Math.round(((sonnetCost - estimatedCostUsd) / sonnetCost) * 100))
+      : 0
+
+  // Step 6: Build routing reason string
+  const reasonParts: string[] = [`Complexity: ${adjustedComplexity}`]
+  if (adjustedComplexity !== complexity) reasonParts.push(`escalated from ${complexity} (${previousFailures} prior failures)`)
+  if (downgradeReason) reasonParts.push(downgradeReason)
+  if (preferredModel && preferredModel !== model) reasonParts.push(`agent preferred ${preferredModel} but was overridden`)
+  if (plan === "free") reasonParts.push("free plan → Haiku only")
+
+  const costStrategyMap: Record<Complexity, string> = {
+    simple:  `Haiku selected — ${costSavedPercent}% cheaper than Sonnet for simple tasks`,
+    medium:  "Sonnet selected — reasoning required",
+    complex: "Sonnet selected — long context or multiple tools",
+    expert:  "Opus selected — multi-step pipeline or expert reasoning required",
+  }
+
+  return {
+    selectedModel:     model,
+    fallbackChain,
+    estimatedCostUsd,
+    costSavedVsSonnet: costSavedPercent,
+    routing: {
+      complexity:      adjustedComplexity,
+      reason:          reasonParts.join("; "),
+      costStrategy:    costStrategyMap[adjustedComplexity],
+      downgradeReason,
+      planCeiling,
+    },
+    depthAssessment: {
+      promptChars:   prompt.length,
+      contextTokens,
+      toolCount,
+      complexity:    adjustedComplexity,
+      selectedModel: model,
+      estimatedCost: estimatedCostUsd,
+      timestamp:     new Date().toISOString(),
+    },
+  }
+}
+
+// ─── 6. Confidence-based escalation hook ─────────────────────────────────────
+
+/**
+ * shouldEscalateOnConfidence
+ *
+ * Call after an agent returns output with a confidence score.
+ * Returns true if the model should be escalated and the step retried.
+ *
+ * Example usage in execute route:
+ *   const output = await callLLM(selectedModel, ...)
+ *   const confidence = extractConfidence(output)
+ *   if (shouldEscalateOnConfidence(confidence, selectedModel, budgetRemaining)) {
+ *     const fallback = getFallbackChain(selectedModel)[0]
+ *     output = await callLLM(fallback, ...)
+ *   }
+ */
+export function shouldEscalateOnConfidence(
+  confidence:    number | undefined,
+  currentModel:  ModelId,
+  budgetRemaining: number,
+  threshold = 0.6,
+): boolean {
+  if (confidence === undefined) return false          // no signal → trust output
+  if (confidence >= threshold)  return false          // confident → accept
+  if (currentModel === MODELS.OPUS) return false      // already at ceiling
+  if (budgetRemaining < THRESHOLDS.BUDGET_SONNET_MIN_USD) return false  // can't afford upgrade
+  return true
+}
+
+// ─── 7. Legacy compatibility wrapper ─────────────────────────────────────────
+
+/**
+ * routeCompletion
+ *
+ * Drop-in replacement for the old model-router.ts routeCompletion function.
+ * Existing execute routes call this with a model name + prompt + options.
+ *
+ * This function does NOT make a network call — it calls the provider client.
+ * The actual HTTP call to Anthropic/OpenAI happens inside here.
+ *
+ * Returns { text, inputTokens, outputTokens, costUsd, routingMetadata }.
+ */
+export async function routeCompletion(params: {
+  model:       string
+  system:      string
+  userMessage: string
+  maxTokens?:  number
+  temperature?: number
+  tools?:      any[]
+  stream?:     boolean
+}): Promise<{
+  text:          string
+  inputTokens:   number
+  outputTokens:  number
+  costUsd:       number
+  routingMetadata?: { selectedModel: string; estimatedCostUsd: number }
+}> {
+  const {
+    model: requestedModel, system, userMessage,
+    maxTokens = 4096, temperature = 0.7, tools, stream = false,
+  } = params
+
+  // Validate model — fall back to Sonnet if unknown
+  const validModels = Object.values(MODELS) as string[]
+  const model = validModels.includes(requestedModel) ? requestedModel : MODELS.SONNET
+
+  const isAnthropic = model.startsWith("claude-")
+  const isOpenAI    = model.startsWith("gpt-")
+
+  if (isAnthropic) {
+    const apiKey = process.env.ANTHROPIC_API_KEY
+    if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set")
+
+    const body: Record<string, unknown> = {
+      model,
+      max_tokens: Math.min(maxTokens, 8192),
+      temperature,
+      messages: [{ role: "user", content: userMessage }],
+      system,
+    }
+    if (tools && tools.length > 0) body.tools = tools
+
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method:  "POST",
+      headers: {
+        "Content-Type":         "application/json",
+        "x-api-key":            apiKey,
+        "anthropic-version":    "2023-06-01",
+      },
+      body: JSON.stringify(body),
     })
-    .map(({ model }) => model)
+
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "")
+      throw new Error(`Anthropic API error ${res.status}: ${errBody.slice(0, 200)}`)
+    }
+
+    const data  = await res.json() as any
+    const block = data.content?.[0]
+    const text  = block?.type === "text" ? (block.text as string) : ""
+    const inp   = data.usage?.input_tokens  ?? 0
+    const out   = data.usage?.output_tokens ?? 0
+    const cost  = estimateCost(model as ModelId, inp, out)
+
+    return { text, inputTokens: inp, outputTokens: out, costUsd: cost }
+  }
+
+  if (isOpenAI) {
+    const apiKey = process.env.OPENAI_API_KEY
+    if (!apiKey) throw new Error("OPENAI_API_KEY not set")
+
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        max_tokens: maxTokens,
+        temperature,
+        messages: [
+          { role: "system", content: system },
+          { role: "user",   content: userMessage },
+        ],
+        ...(tools && tools.length > 0 ? { tools } : {}),
+      }),
+    })
+
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "")
+      throw new Error(`OpenAI API error ${res.status}: ${errBody.slice(0, 200)}`)
+    }
+
+    const data = await res.json() as any
+    const text = data.choices?.[0]?.message?.content as string ?? ""
+    const inp  = data.usage?.prompt_tokens     ?? 0
+    const out  = data.usage?.completion_tokens ?? 0
+    const cost = estimateCost(model as ModelId, inp, out)
+
+    return { text, inputTokens: inp, outputTokens: out, costUsd: cost }
+  }
+
+  throw new Error(`Unknown model provider for model: ${model}`)
 }

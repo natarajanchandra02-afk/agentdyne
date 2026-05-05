@@ -2,6 +2,7 @@
 export const runtime = 'edge'
 
 import { useState, useEffect, useCallback, useRef } from "react"
+import { motion, AnimatePresence } from "framer-motion"
 import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import {
@@ -1381,16 +1382,38 @@ export default function PipelineEditPage() {
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="flex items-center gap-1 bg-white border border-zinc-100 rounded-xl p-1 w-fit shadow-xs mb-5">
-          {(["builder","test","history"] as const).map(k => (
-            <button key={k} onClick={() => setActiveTab(k)}
-              className={cn("px-4 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5",
-                activeTab === k ? "bg-zinc-900 text-white shadow-sm" : "text-zinc-500 hover:text-zinc-900")}>
-              {k === "builder" ? <><Workflow className="h-3.5 w-3.5" /> Builder</> : k === "test" ? <><Play className="h-3.5 w-3.5" /> Test</> : <><History className="h-3.5 w-3.5" /> History</>}
-              {k === "history" && runs.length > 0 && (
-                <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full", activeTab === k ? "bg-white/20" : "bg-zinc-100 text-zinc-500")}>{runs.length}</span>
+        {/* Sliding tabs — same spring animation as builder/settings page */}
+        <div className="flex items-center gap-1 bg-white border border-zinc-100 rounded-xl p-1 w-fit mb-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          {([
+            { k: "builder" as const, label: "Builder", Icon: Workflow },
+            { k: "test"    as const, label: "Test Run", Icon: Play    },
+            { k: "history" as const, label: "History",  Icon: History  },
+          ]).map(tab => (
+            <button
+              key={tab.k}
+              onClick={() => setActiveTab(tab.k)}
+              className={cn(
+                "relative px-4 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 z-10",
+                activeTab === tab.k ? "text-white" : "text-zinc-500 hover:text-zinc-900"
               )}
+            >
+              {activeTab === tab.k && (
+                <motion.span
+                  layoutId="pipeline-tab-pill"
+                  className="absolute inset-0 bg-zinc-900 rounded-lg z-0"
+                  transition={{ type: "spring", stiffness: 400, damping: 34, mass: 0.8 }}
+                />
+              )}
+              <span className="relative z-10 flex items-center gap-1.5">
+                <tab.Icon className="h-3.5 w-3.5" />
+                {tab.label}
+                {tab.k === "history" && runs.length > 0 && (
+                  <span className={cn(
+                    "text-[10px] font-bold px-1.5 py-0.5 rounded-full",
+                    activeTab === tab.k ? "bg-white/20 text-white" : "bg-zinc-100 text-zinc-500"
+                  )}>{runs.length}</span>
+                )}
+              </span>
             </button>
           ))}
         </div>

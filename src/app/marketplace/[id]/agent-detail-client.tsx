@@ -392,6 +392,9 @@ export function AgentDetailClient({ agent, reviews: initReviews, user, userSubsc
   const [hasMore,     setHasMore]     = useState(initReviews.length === 10)
   const [showReport,  setShowReport]  = useState(false)
   const [showCollect, setShowCollect] = useState(false)
+  // Anonymous try state
+  const [anonTriesLeft, setAnonTriesLeft] = useState<number | null>(null)
+  const [showSignUpCta, setShowSignUpCta] = useState(false)
 
   // Bug 12 FIX: count approved reviews from actual query, not denormalized counter
   const approvedReviewCount = reviews.length
@@ -400,28 +403,56 @@ export function AgentDetailClient({ agent, reviews: initReviews, user, userSubsc
   const testInFlightRef = useRef(false)
 
   const handleTest = async (inputOverride?: string) => {
-    if (!user) { router.push("/login"); return }
     if (testInFlightRef.current) return
     testInFlightRef.current = true
     setTesting(true)
     setTestOutput("")
     setTraceInfo(null)
+    setShowSignUpCta(false)
     try {
       const raw = inputOverride ?? testInput
       if (inputOverride) setTestInput(inputOverride)
       let parsed: unknown
       try { parsed = JSON.parse(raw) } catch { parsed = raw }
 
-      const res  = await fetch(`/api/agents/${agent.id}/execute`, {
+      // Anonymous users: use the /try endpoint for free agents (no login required)
+      const isAnon     = !user
+      const isFreeAgent = agent.pricing_model === "free"
+      const endpoint   = isAnon && isFreeAgent
+        ? `/api/agents/${agent.id}/try`
+        : `/api/agents/${agent.id}/execute`
+
+      if (isAnon && !isFreeAgent) {
+        router.push("/login")
+        return
+      }
+
+      const res  = await fetch(endpoint, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ input: parsed }),
       })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
+
+      if (!res.ok) {
+        if (data.code === "ANON_LIMIT_REACHED") {
+          setTestOutput(`You've used your free tries for today. Sign up free to run more agents — no credit card required.`)
+          setShowSignUpCta(true)
+          return
+        }
+        throw new Error(data.error ?? `HTTP ${res.status}`)
+      }
+
       setTestOutput(typeof data.output === "string" ? data.output : JSON.stringify(data.output, null, 2))
       setTraceInfo({ latencyMs: data.latencyMs, cost: data.cost ?? 0, tokens: data.tokens })
-      toast.success(`Done in ${data.latencyMs}ms · $${(data.cost ?? 0).toFixed(5)}`)
+
+      if (data.anonymous && data.triesLeft !== undefined) {
+        setAnonTriesLeft(data.triesLeft)
+        if (data.triesLeft <= 0) setShowSignUpCta(true)
+      }
+
+      const costLabel = (data.cost ?? 0) === 0 ? "free" : `${(data.cost ?? 0).toFixed(5)}`
+      toast.success(`Done in ${data.latencyMs}ms · ${costLabel}`)
     } catch (err: any) {
       toast.error(err.message)
       setTestOutput(`Error: ${err.message}`)
@@ -678,13 +709,40 @@ export function AgentDetailClient({ agent, reviews: initReviews, user, userSubsc
                         ? <><Loader2 className="h-4 w-4 animate-spin" /> Running…</>
                         : <><Play className="h-4 w-4" /> Run Agent</>}
                     </Button>
-                    {!user && (
+
+                    {/* Anonymous try info banner */}
+                    {!user && agent.pricing_model === "free" && (
+                      <div className="flex items-center gap-2 text-xs text-zinc-500">
+                        <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+                        {anonTriesLeft !== null
+                          ? `${anonTriesLeft} free tr${anonTriesLeft === 1 ? "y" : "ies"} left today`
+                          : "No login needed — try it free"}
+                      </div>
+                    )}
+
+                    {!user && agent.pricing_model !== "free" && (
                       <p className="text-xs text-zinc-400">
                         <Link href="/login" className="text-primary hover:underline">Sign in</Link>{" "}
-                        to test this agent
+                        to use this agent
                       </p>
                     )}
                   </div>
+
+                  {/* Sign up CTA after anon tries are exhausted */}
+                  {showSignUpCta && !user && (
+                    <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 flex items-center gap-3">
+                      <Sparkles className="h-4 w-4 text-amber-500 flex-shrink-0" />
+                      <div className="flex-1">
+                        <p className="text-sm font-semibold text-zinc-900">You’ve used your free tries</p>
+                        <p className="text-xs text-zinc-500 mt-0.5">Create a free account to keep going. No credit card required.</p>
+                      </div>
+                      <Link href="/signup">
+                        <Button size="sm" className="rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold flex-shrink-0">
+                          Sign up free
+                        </Button>
+                      </Link>
+                    </div>
+                  )}
                 </TabsContent>
 
                 {/* ── Docs — Bug 13 FIX: long_description rendered */}

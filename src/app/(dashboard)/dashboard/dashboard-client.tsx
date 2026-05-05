@@ -392,7 +392,7 @@ export function DashboardClient({ profile, recentExecutions, myAgents, totalExec
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {[
             { href: "/pipelines/new", icon: Layers,    color: "bg-primary/8 text-primary",   title: "Build a Pipeline", desc: "Chain agents into multi-step workflows.",    cta: "Create pipeline" },
-            { href: "/marketplace",   icon: Zap,       color: "bg-amber-50 text-amber-600",   title: "Explore Marketplace", desc: "12,400+ production-ready agents.",         cta: "Browse agents"   },
+            { href: "/marketplace",   icon: Zap,       color: "bg-amber-50 text-amber-600",   title: "Explore Marketplace", desc: "Production-ready agents for every use case.",  cta: "Browse agents"   },
             { href: "/analytics",     icon: TrendingUp, color: "bg-green-50 text-green-600",  title: "View Analytics",   desc: "Track executions, costs, and earnings.",     cta: "Open analytics"  },
           ].map(card => (
             <Link key={card.href} href={card.href}>
