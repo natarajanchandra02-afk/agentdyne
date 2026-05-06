@@ -16,6 +16,8 @@ import { checkExecutionCache, writeExecutionCache } from "@/lib/execution-cache"
 import { checkConcurrencyLimit } from "@/lib/concurrency"
 import type { PlanName } from "@/lib/anti-abuse"
 import { validateApiKey, extractRawKey } from "@/lib/api-key-auth"
+import { routeModel, shouldEscalateOnConfidence, MODELS } from "@/lib/model-router"
+import type { ModelId } from "@/lib/model-router"
 
 const UUID_RE        = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const MAX_INPUT_BYTES = 32_000
@@ -274,11 +276,30 @@ export async function POST(
     }
 
     const guardrails    = preflight.guardrails!
-    const resolvedModel = guardrails.modelAllowed
-      ? (agent.model_name as string)
-      : (guardrails.fallbackModel ?? "claude-haiku-4-5-20251001")
+
+    // ── Cognitive Depth Routing ────────────────────────────────────────────────
+    // replaces the old "just use agent.model_name" approach.
+    // Automatically downgrades Sonnet→Haiku for simple tasks (12× cheaper).
+    // Only overrides if the depth router picks a lighter model.
+    const mcpCount = Array.isArray(agent.mcp_server_ids) ? (agent.mcp_server_ids as string[]).length : 0
+    const routing  = routeModel({
+      prompt:          userMessage,
+      toolCount:       mcpCount,
+      contextTokens:   Math.round(userMessage.length / 4),  // rough token estimate
+      plan,
+      budgetRemaining: credits?.balance_usd ?? Infinity,
+      requiresReasoning: /\b(reason|analys|calculat|compar|evaluat|strateg|audit|review)\b/i.test(userMessage),
+      isMultiStep:       false,
+      preferredModel:    agent.model_name as string,
+    })
+
+    // Use depth-routed model — but never exceed what preflight guardrails allow
+    const resolvedModel  = guardrails.modelAllowed
+      ? routing.selectedModel as string
+      : (guardrails.fallbackModel ?? MODELS.HAIKU)
     const resolvedTokens = guardrails.clampedTokens
     const resolvedInput  = guardrails.clampedInput
+    const costSavedPct   = routing.costSavedVsSonnet
 
     // ── Subscription gate ─────────────────────────────────────────────────────
     if (agent.pricing_model === "subscription") {
@@ -507,6 +528,30 @@ export async function POST(
         status: scrub.flagged ? "flagged" : "success",
         error_message: scrub.flagged ? scrub.redacted?.join(",") : null,
         temperature: modelParams.temperature,
+        // Store routing metadata for observability + analytics
+        depth_assessment: routing.depthAssessment,
+      }).then(() => {}).catch(() => {})
+
+      // ── Write to WAL (execution audit log) ────────────────────────────────────────
+      // Every execution gets one WAL entry (non-pipeline = single step).
+      // Pipeline execute route writes one entry PER STEP.
+      supabase.from("execution_wal").insert({
+        execution_id:  executionId,
+        sequence_num:  1,
+        event_type:    "llm_call",
+        model_used:    resolvedModel,
+        tokens_input:  inputTok,
+        tokens_output: outputTok,
+        latency_ms:    latencyMs,
+        cost_usd:      costUsd,
+        status:        scrub.flagged ? "error" : "success",
+        error_message: scrub.flagged ? "Output flagged by guardrails" : null,
+        event_payload: {
+          complexity:    routing.routing.complexity,
+          routing_reason: routing.routing.reason,
+          rag_used:      ragUsed,
+          mcp_tools:     toolCalls > 0 ? toolCalls : 0,
+        },
       }).then(() => {}).catch(() => {})
     } else {
       supabase.rpc("increment_executions_used", { user_id_param: userId }).then(() => {})
@@ -525,13 +570,17 @@ export async function POST(
       executionId,
       output,
       latencyMs,
-      tokens:      { input: inputTok, output: outputTok },
-      cost:        costUsd,
-      model:       resolvedModel,
-      modelChanged: resolvedModel !== agent.model_name,
-      toolCalls:   toolCalls > 0 ? toolCalls : undefined,
-      ragUsed:     ragUsed ? true : undefined,
-      flagged:     scrub.flagged ? true : undefined,
+      tokens:         { input: inputTok, output: outputTok },
+      cost:           costUsd,
+      model:          resolvedModel,
+      modelChanged:   resolvedModel !== agent.model_name,
+      // Cost visibility — "Saved 83% using Haiku instead of Sonnet"
+      costSavedPct:   costSavedPct > 0 ? costSavedPct : undefined,
+      routingReason:  routing.routing.reason,
+      complexity:     routing.routing.complexity,
+      toolCalls:      toolCalls > 0 ? toolCalls : undefined,
+      ragUsed:        ragUsed ? true : undefined,
+      flagged:        scrub.flagged ? true : undefined,
     }
 
     // ── Commit idempotency key ────────────────────────────────────────────────
