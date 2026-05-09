@@ -219,7 +219,7 @@ function SignupForm() {
           <div className="space-y-3 mb-8">
             {[
               "Publish your first agent in under 10 minutes",
-              "Reach 89,000+ developers worldwide",
+              "Grow your audience across a global developer community",
               "Earn 80% of every transaction — we take 20%",
               "40+ MCP integrations, zero infrastructure headaches",
             ].map(item => (
@@ -238,9 +238,9 @@ function SignupForm() {
               ))}
             </div>
             <p className="text-sm text-zinc-600 italic">
-              "Made $12K in my first month as a seller. AgentDyne handles everything."
+              &ldquo;Finally a platform where building and monetising agents is actually simple. Deployed in under 10 minutes.&rdquo;
             </p>
-            <p className="text-xs text-zinc-400 mt-2 font-medium">— Priya S., Agent Creator</p>
+            <p className="text-xs text-zinc-400 mt-2 font-medium">— Beta tester, April 2026</p>
           </div>
         </div>
       </div>

@@ -2,7 +2,7 @@ export const runtime = 'edge'
 
 import { NextRequest, NextResponse } from "next/server"
 import { createClient }      from "@/lib/supabase/server"
-import { createAdminClient } from "@/lib/supabase/admin"
+import { createAdminClient } from "@/lib/supabase/server"
 import { getRBAC }           from "@/lib/rbac"
 import { sendAgentApprovedEmail, sendAgentRejectedEmail } from "@/lib/email"
 
@@ -66,9 +66,9 @@ export async function GET(req: NextRequest) {
  */
 const ACTION_MAP = {
   approve: { status: "active",         log: "agent.approved" },
-  reject:  { status: "draft",          log: "agent.rejected" },
-  suspend: { status: "suspended",      log: "agent.suspended" },
-  restore: { status: "pending_review", log: "agent.restored" },
+  reject:  { status: "rejected",        log: "agent.rejected" },  // was "draft" — wrong
+  suspend: { status: "suspended",       log: "agent.suspended" },
+  restore: { status: "pending_review",  log: "agent.restored" },
 } as const
 
 export async function PATCH(req: NextRequest) {

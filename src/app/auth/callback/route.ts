@@ -10,6 +10,7 @@ function isSafePath(next: string): boolean {
     next.startsWith("/") &&
     !next.startsWith("//") &&
     !next.includes("://") &&
+    !next.includes("@") &&     // prevents /@attacker open-redirect
     !next.includes("\n") &&
     !next.includes("\r")
   )

@@ -61,7 +61,7 @@ export async function POST(
           // Reject if token is older than 30 seconds (prevents replay)
           if (Date.now() - ts < 30_000) {
             const secret      = process.env.SUPABASE_SERVICE_ROLE_KEY ?? ""
-            const sigPayload  = new TextEncoder().encode(`${shareKeyHdr}.${id}.${ts}`)
+            const sigPayload  = new TextEncoder().encode(`${shareKeyHdr}.${pipelineId}.${ts}`)
             const keyMaterial = await crypto.subtle.importKey(
               "raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]
             )
@@ -241,8 +241,9 @@ export async function POST(
     // ── Execute state + WAL-lite resume ──────────────────────────────────────
     // nodeResults MUST be declared before the checkpoint loading block
     // that pushes resumed nodes into it.
-    const nodeResults:   NodeResult[]            = []
-    const pipelineState: Record<string, unknown> = { ...initialState }
+    const nodeResults:    NodeResult[]            = []
+    const nodeOutputs:    Record<string, unknown>  = {}   // ← MUST be declared before WAL resume block
+    const pipelineState:  Record<string, unknown>  = { ...initialState }
     let totalCost = 0, totalTokensIn = 0, totalTokensOut = 0
     let lastOutput: unknown = inputStr
 

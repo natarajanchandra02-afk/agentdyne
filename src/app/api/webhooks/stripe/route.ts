@@ -186,8 +186,18 @@ async function handleStripeEvent(event: Stripe.Event, supabase: any): Promise<vo
 
     case "invoice.payment_succeeded": {
       const invoice = event.data.object as Stripe.Invoice
-      const userId  = (invoice.subscription_details?.metadata as any)?.userId
-      if (!userId) return
+      // userId can be in multiple places depending on Stripe's invoice structure:
+      // - invoice.metadata (set explicitly on the invoice)
+      // - invoice.subscription_details.metadata (from the subscription)
+      // - subscription.metadata (fetched from Stripe if needed)
+      // Check all fallback paths to avoid missing subscription renewals.
+      const userId =
+        (invoice as any).metadata?.userId ??
+        (invoice.subscription_details?.metadata as any)?.userId
+      if (!userId) {
+        console.warn("[stripe-webhook] invoice.payment_succeeded missing userId — event:", event.id)
+        return
+      }
 
       const amount = (invoice.amount_paid || 0) / 100
 
