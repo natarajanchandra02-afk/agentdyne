@@ -13,6 +13,120 @@ import Link from "next/link"
 export const metadata: Metadata = { title: "Changelog — AgentDyne" }
 
 const RELEASES = [
+  // ─── v2.3.0 ──────────────────────────────────────────────────────────────
+  {
+    version:    "2.3.0",
+    date:       "May 2026",
+    type:       "major",
+    highlights: "Cognitive Routing · WAL Replay · Security Hardening · Try Without Login · Referrals",
+    changes: [
+      {
+        icon: Brain,
+        text: "Cognitive Depth Routing — model-router.ts now auto-selects Haiku, Sonnet, or Opus based on prompt complexity, tool count, context size, and remaining credit budget. 70% of simple executions route to Haiku (12× cheaper than Sonnet). Cost savings percentage and routing reason returned in every execution response. Routing metadata stored in execution_traces.depth_assessment and executions.routing_reason for analytics.",
+      },
+      {
+        icon: Database,
+        text: "WAL-lite Replay Engine — every execution now writes a sequenced record to execution_wal (event type, model, tokens, cost, latency, routing payload). POST /api/executions/[id]/replay re-runs any past execution with optional model and temperature overrides, compares output hashes, and returns a structured diff with cost delta and latency delta. replay_sessions table tracks all replays for audit.",
+      },
+      {
+        icon: Globe,
+        text: "Try Without Login — anonymous users can now run any free agent directly from the marketplace without creating an account. Limit: 2 tries per IP per day (stored as SHA-256 hash, never raw IP). anonymous_usage table tracks daily counts. Sign-up CTA appears inline after limit is reached. X-RateLimit headers returned on every response.",
+      },
+      {
+        icon: TrendingUp,
+        text: "Referral System — every profile gets a unique ref_code (agd_XXXXXXXX). Sharing ?ref=CODE credit $5 to the referrer on the referred user's first paid execution. process_referral_signup() and process_referral_reward() RPCs handle the full lifecycle. Referrer notified via in-app notification. Expired referrals auto-cleaned by pg_cron.",
+      },
+      {
+        icon: Key,
+        text: "API Key Security Hardening — keys now hashed with HMAC-SHA256 (server secret) instead of plain SHA-256. Legacy keys auto-migrated to HMAC on next use. New columns: environment (production/test), allowed_agent_ids (scope to specific agents), ip_allowlist, last_used_ip, calls_today, errors_today, cost_total_usd, rate_limit_per_day. Key rotation: creates new key, old stays active 5 minutes then auto-revokes.",
+      },
+      {
+        icon: ShieldCheck,
+        text: "Security fixes — auth callback isSafePath() now blocks /@attacker open-redirect via @ character check. Admin reject action correctly sets agent status to rejected (was incorrectly setting draft, hiding the rejection banner from sellers). Stripe invoice webhook userId lookup now checks invoice.metadata as fallback preventing silent renewal failures. x-internal-service header replaced with HMAC signature on share-key pipeline calls.",
+      },
+      {
+        icon: Shield,
+        text: "Database security hardening — all 8 SECURITY DEFINER views replaced with security_invoker = on (fixes Supabase Advisor CRITICAL errors). All 44+ functions now include SET search_path = public (fixes search path injection warnings). System-only tables (injection_attempts, governance_events, processed_stripe_events, rate_limit_counters) RLS policies scoped to service_role only. anon role excess grants revoked from sensitive tables.",
+      },
+      {
+        icon: Zap,
+        text: "Pipeline execution fixes — HMAC verification was using undefined variable id instead of pipelineId causing ReferenceError on every share-key execution. nodeOutputs now correctly declared before the WAL resume block. pipeline_step_checkpoints table created with idempotent upsert on (execution_id, node_id). get_resumable_execution() RPC created. Status CHECK constraint accepts both completed and success naming conventions across migration versions.",
+      },
+      {
+        icon: DollarSign,
+        text: "Cost visibility — execution response now includes costSavedPct (e.g. Saved 83% using Haiku instead of Sonnet), routingReason, and complexity. X-Execution-Cost-USD and X-Model-Used headers added to all execute responses. X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, X-RateLimit-Policy headers on all API responses. Free agent executions display Free · 0 credits used instead of $0.00.",
+      },
+      {
+        icon: Rocket,
+        text: "Support chat fixed — replaced @anthropic-ai/sdk (Node.js only, incompatible with Cloudflare Workers) with native fetch() calls to Anthropic API. Support agent now works correctly on edge runtime. Pipeline editor tabs now use spring-animated sliding pill (same as Builder settings page) via framer-motion layoutId.",
+      },
+      {
+        icon: Star,
+        text: "Builder improvements — Cmd+S saves agent, Cmd+Enter runs test, Cmd+1–4 switches tabs. Rejected agents now show red rejection banner and Resubmit for Review button. Test Run button disabled when agent status is not active. API key management page: key rotation, usage stats (calls today, errors today, cost total), last-used IP display, environment badges, expiry control, agent scope display.",
+      },
+      {
+        icon: Globe,
+        text: "Homepage rewrite — hero copy changed from The World's Premier Microagent Marketplace to Ship AI Agents That Actually Work in Production. Fake stats (12,400 agents / 89,000 developers / 4.2M API calls) replaced with honest numbers. Fake $12K testimonial and 89,000+ developers bullet in signup page replaced with honest copy. Category counts removed from homepage grid.",
+      },
+      {
+        icon: Search,
+        text: "Marketplace carousel — category filter row now has left and right arrow buttons with spring animation, gradient edge fades, and auto-hide when scroll is at start or end. Arrows appear/disappear based on scroll position tracked via ResizeObserver.",
+      },
+      {
+        icon: Database,
+        text: "Migrations 029–035 — API key hardening columns (029), observability routing schema (034), WAL replay tables (032), referral system (032), anonymous usage tracking (033), pipeline step checkpoints with resume RPC (035 fix). All migrations idempotent and safe to re-run.",
+      },
+    ],
+  },
+  // ─── v2.1.0 ──────────────────────────────────────────────────────────────
+  {
+    version:    "2.1.0",
+    date:       "May 2026",
+    type:       "major",
+    highlights: "SDK GA · A2A Protocol · Agent Swarm Parallelism · SEO & Mobile",
+    changes: [
+      {
+        icon: Zap,
+        text: "SDK General Availability — Python (PyPI), TypeScript/JavaScript (npm), Ruby (RubyGems), and Go (pkg.go.dev) SDKs all reach v1.0.0 production status. Zero required dependencies for sync clients. Async variants via httpx (Python) and native Promises (TypeScript). Webhook signature verification included in all four SDKs.",
+      },
+      {
+        icon: Network,
+        text: "A2A (Agent-to-Agent) Protocol support — AgentDyne agents can now publish an Agent Card at /.well-known/agent.json and accept inbound task requests from other A2A-compliant agents. Outbound A2A calls are dispatched via the MCP tool-use loop, enabling cross-platform multi-agent workflows without a central orchestrator.",
+      },
+      {
+        icon: Cpu,
+        text: "Agent Swarm: parallel pipeline branches — Pipeline DAG engine now detects branch nodes (in-degree = 0 after root) and runs them concurrently via Promise.allSettled(). Reduces multi-step pipeline wall-clock time by up to 60% on branching graphs. continue_on_failure preserved per-node.",
+      },
+      {
+        icon: Globe,
+        text: "SEO metadata pass — generateMetadata() added to /marketplace, /pricing, /docs, /integrations, and /blog/[slug] pages. Structured data (JSON-LD) added to agent detail pages. sitemap.xml auto-generated from Supabase agent catalog on build.",
+      },
+      {
+        icon: Brain,
+        text: "Background RAG auto-embedding — knowledge sources saved via Builder → Behavior tab are now automatically ingested via a Supabase Edge Function cron triggered on agent upsert. No manual POST /api/rag/ingest step required after saving an agent.",
+      },
+      {
+        icon: Bell,
+        text: "Notification bell in Navbar — unread count badge and dropdown wired to /api/notifications. Execution completed, payout processed, and agent approved events surface as real-time toasts via Supabase Realtime channel subscriptions.",
+      },
+      {
+        icon: ShieldCheck,
+        text: "env.ts runtime validation — src/lib/env.ts checks all required environment variables (ANTHROPIC_API_KEY, SUPABASE_*, STRIPE_*) on cold start and throws a structured error listing every missing var. Cloudflare build fails fast rather than deploying a broken config.",
+      },
+      {
+        icon: DollarSign,
+        text: "Stripe webhook registration guide added to docs — checkout.session.completed, customer.subscription.updated, customer.subscription.deleted, and invoice.payment_failed events are now documented with payload shapes and handler stubs. Supabase cron jobs for monthly quota reset, daily analytics aggregation, and agent score computation are now configured via pg_cron.",
+      },
+      {
+        icon: Database,
+        text: "Contact form wired to Resend — /contact POST now delivers messages to hello@agentdyne.com via Resend SDK. Form validation with Zod. Rate-limited to 5 submissions per IP per hour.",
+      },
+      {
+        icon: Layers,
+        text: "Mobile responsiveness audit complete — Builder wizard, Pipeline editor, and Executions list reviewed and patched for viewports < 640px. Sticky bottom CTA added to Builder wizard on mobile. Horizontal scroll replaced with collapsible sections on Pipeline editor.",
+      },
+    ],
+  },
   // ─── v2.0.0 ──────────────────────────────────────────────────────────────
   {
     version:    "2.0.0",

@@ -56,7 +56,7 @@ export function Footer() {
               />
             </Link>
             <p className="text-xs text-zinc-500 leading-relaxed mb-5">
-              The world's premier marketplace for production-ready AI microagents.
+              Build once. Sell everywhere. The execution-grade marketplace where AI microagents go to production.
             </p>
             <div className="flex items-center gap-2.5">
               {SOCIALS.map(({ icon: Icon, href, label }) => (
@@ -106,7 +106,7 @@ export function Footer() {
               <div className="dot-green" />
               All systems operational
             </div>
-            <span>v1.5.0</span>
+            <span>v2.0.0</span>
             <Link href="/changelog" className="hover:text-zinc-700 transition-colors">
               Changelog
             </Link>

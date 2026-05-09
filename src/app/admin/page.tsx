@@ -37,7 +37,6 @@ export default function AdminPage() {
     if (!user) { router.push("/login?next=/admin"); return }
 
     // Always query role fresh — never trust the hook's module-level cache
-    // (fixes "access denied" after running UPDATE profiles SET role='admin')
     supabase
       .from("profiles")
       .select("role")
@@ -55,13 +54,15 @@ export default function AdminPage() {
 
     async function loadAdminData() {
       try {
-        // All requests use service-role on the server → RLS bypassed
-        const [statsRes, pendingRes, allAgentsRes, usersRes, secRes] = await Promise.all([
+        const [statsRes, pendingRes, allAgentsRes, usersRes, secRes, econRes, routingRes, execHealthRes] = await Promise.all([
           fetch("/api/admin/stats"),
           fetch("/api/admin/agents?status=pending_review&limit=100"),
           fetch("/api/admin/agents?status=all&limit=100"),
           fetch("/api/admin/users?limit=100"),
           fetch("/api/admin/security?limit=50"),
+          fetch("/api/admin/economics"),
+          fetch("/api/admin/routing"),
+          fetch("/api/admin/execution-health"),
         ])
 
         const check = async (r: Response, label: string) => {
@@ -72,12 +73,15 @@ export default function AdminPage() {
           return r.json()
         }
 
-        const [stats, pending, allAgents, users, sec] = await Promise.all([
-          check(statsRes,     "Stats"),
-          check(pendingRes,   "Pending agents"),
-          check(allAgentsRes, "All agents"),
-          check(usersRes,     "Users"),
-          check(secRes,       "Security"),
+        const [stats, pending, allAgents, users, sec, econ, routing, execHealth] = await Promise.all([
+          check(statsRes,       "Stats"),
+          check(pendingRes,     "Pending agents"),
+          check(allAgentsRes,   "All agents"),
+          check(usersRes,       "Users"),
+          check(secRes,         "Security"),
+          check(econRes,        "Economics").catch(() => null),
+          check(routingRes,     "Routing").catch(() => null),
+          check(execHealthRes,  "Exec health").catch(() => null),
         ])
 
         setData({
@@ -93,6 +97,9 @@ export default function AdminPage() {
           recentAgents:    allAgents.agents ?? [],
           recentUsers:     users.users      ?? [],
           flaggedAttempts: sec.attempts     ?? [],
+          economics:       econ,
+          routing,
+          execHealth,
         })
       } catch (err: any) {
         console.error("Admin data load failed:", err)

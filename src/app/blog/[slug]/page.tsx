@@ -500,6 +500,293 @@ const ARTICLES: Record<string, Article> = {
       "4. Test WebCrypto implementation carefully\n\n" +
       "The result is a globally distributed, sub-50ms cold start platform that feels alive to users anywhere in the world.",
   },
+
+  // ─── NEW ARTICLES: MAY 2026 ───────────────────────────────────────────────
+
+  "a2a-protocol-agent-to-agent-communication": {
+    slug:     "a2a-protocol-agent-to-agent-communication",
+    title:    "A2A vs MCP: The Two Protocols Defining How AI Agents Talk to Each Other",
+    excerpt:  "Google's Agent-to-Agent (A2A) protocol and Anthropic's Model Context Protocol (MCP) are not competitors — they solve different layers. MCP connects agents to tools; A2A connects agents to agents. Together they form a complete inter-agent communication stack.",
+    date:     "May 9, 2026",
+    readMin:  8,
+    category: "Architecture",
+    author:   { name: "Anya Krishnan", role: "CTO, AgentDyne" },
+    content:
+      "## Two Standards, One Stack\n\n" +
+      "The AI agent ecosystem is developing two foundational protocols simultaneously, and they are frequently confused with each other. Getting the distinction right is critical to designing multi-agent systems that actually work.\n\n" +
+      "**MCP (Model Context Protocol)** — developed by Anthropic, now multi-vendor — defines how an AI agent connects to *external tools and services*: databases, APIs, file systems, SaaS platforms.\n\n" +
+      "**A2A (Agent-to-Agent Protocol)** — developed by Google, open-sourced May 2025 — defines how AI agents communicate *with each other*: task delegation, capability discovery, result hand-off.\n\n" +
+      "They solve different layers of the same problem:\n\n" +
+      CODE(
+        "┌─────────────────────────────────────────────────────────────┐\n" +
+        "│                AGENT COMMUNICATION STACK                    │\n" +
+        "│                                                             │\n" +
+        "│  Layer 3 — Business Logic                                   │\n" +
+        "│    ┌─────────┐   A2A Task     ┌─────────┐                  │\n" +
+        "│    │ Agent A │ ────────────> │ Agent B │                  │\n" +
+        "│    │         │ <──────────── │         │                  │\n" +
+        "│    └─────────┘   A2A Result  └─────────┘                  │\n" +
+        "│         │                        │                        │\n" +
+        "│  Layer 2 — Tool Connectivity (MCP)                         │\n" +
+        "│         │                        │                        │\n" +
+        "│    ┌────┴───┐              ┌─────┴──┐                     │\n" +
+        "│    │ GitHub │              │Supabase│                     │\n" +
+        "│    │  MCP   │              │  MCP   │                     │\n" +
+        "│    └────────┘              └────────┘                     │\n" +
+        "│                                                             │\n" +
+        "│  Layer 1 — LLM Inference (Anthropic / OpenAI / Gemini)      │\n" +
+        "└─────────────────────────────────────────────────────────────┘"
+      ) + "\n\n" +
+      "## How A2A Works\n\n" +
+      "Every A2A-compliant agent publishes an **Agent Card** — a JSON manifest at `/.well-known/agent.json` that describes:\n\n" +
+      "- **name** and **description**\n" +
+      "- **capabilities** — what tasks the agent can accept\n" +
+      "- **input/output schemas** — structured types for task payloads\n" +
+      "- **authentication** — how the calling agent authenticates\n" +
+      "- **endpoint** — where to POST task requests\n\n" +
+      CODE(
+        "{\n" +
+        "  \"name\": \"Document Summariser\",\n" +
+        "  \"description\": \"Summarises documents up to 100,000 tokens\",\n" +
+        "  \"version\": \"1.2.0\",\n" +
+        "  \"capabilities\": [\n" +
+        "    { \"id\": \"summarise\", \"inputSchema\": { \"text\": \"string\" }, \"outputSchema\": { \"summary\": \"string\" } }\n" +
+        "  ],\n" +
+        "  \"endpoint\": \"https://api.agentdyne.com/v1/agents/doc-summariser/a2a\",\n" +
+        "  \"auth\": { \"type\": \"bearer\" }\n" +
+        "}"
+      ) + "\n\n" +
+      "A calling agent sends a **Task** to this endpoint:\n\n" +
+      CODE(
+        "POST /.well-known/agent.json (caller discovers card)\n" +
+        "POST /agents/doc-summariser/a2a\n" +
+        "{\n" +
+        "  \"id\": \"task-abc123\",\n" +
+        "  \"capability\": \"summarise\",\n" +
+        "  \"input\": { \"text\": \"Full document text here...\" }\n" +
+        "}"
+      ) + "\n\n" +
+      "The target agent processes the task and returns a **TaskResult**. If the task is long-running, it returns a streaming response or a task ID for polling.\n\n" +
+      "## MCP vs A2A: When to Use Each\n\n" +
+      "| Scenario | Protocol | Why |\n" +
+      "|---|---|---|\n" +
+      "| Agent reads from a database | MCP | Connecting to external tool |\n" +
+      "| Agent calls GitHub to create an issue | MCP | External API access |\n" +
+      "| Orchestrator delegates to a specialist | A2A | Agent-to-agent delegation |\n" +
+      "| Two agents collaborate on a shared task | A2A | Peer-to-peer coordination |\n" +
+      "| Agent uses a calculator function | MCP | Tool execution |\n" +
+      "| Agent asks another agent to check compliance | A2A | Cross-agent capability |\n\n" +
+      "## AgentDyne A2A Support\n\n" +
+      "As of v2.1.0, every AgentDyne agent automatically:\n\n" +
+      "1. Publishes an Agent Card at `/.well-known/agent.json` derived from the agent's registered schema\n" +
+      "2. Accepts inbound A2A Task requests at `/api/agents/{id}/a2a`\n" +
+      "3. Dispatches outbound A2A calls via the MCP tool-use loop when the agent's system prompt references another agent by name\n\n" +
+      "This means any two AgentDyne agents can collaborate without a central orchestrator. The marketplace becomes a peer network, not a hub-and-spoke system.\n\n" +
+      "## What This Enables\n\n" +
+      "The combination of MCP (vertical — agent to tool) and A2A (horizontal — agent to agent) creates a fully addressable intelligence layer:\n\n" +
+      "- A **Research Agent** can delegate fact-checking to a **Verification Agent** via A2A, and both can independently query databases via MCP\n" +
+      "- A **Customer Support Agent** can escalate complex issues to a **Legal Review Agent** via A2A, with no manual routing code\n" +
+      "- An **Orchestrator Agent** can dynamically discover the best specialist for any sub-task by querying the Agent Registry, then delegating via A2A\n\n" +
+      "This is the agent internet. It is being built right now.",
+  },
+
+  "parallel-agent-swarms-promise-allsettled": {
+    slug:     "parallel-agent-swarms-promise-allsettled",
+    title:    "Parallel Agent Swarms: Why Promise.allSettled Is the New Async/Await for AI",
+    excerpt:  "Sequential pipelines waste wall-clock time. We explain the DAG-based parallelism engine behind AgentDyne Pipelines, how we detect branch nodes, and why continue_on_failure changes the error calculus entirely.",
+    date:     "May 7, 2026",
+    readMin:  10,
+    category: "Engineering",
+    author:   { name: "Priya Sharma", role: "Head of Engineering, AgentDyne" },
+    content:
+      "## The Sequentiality Problem\n\n" +
+      "Most pipeline systems run agents sequentially: Step 1 completes, then Step 2 begins. This is fine for pipelines where each step depends on the previous step's output.\n\n" +
+      "It is catastrophic for pipelines with independent branches.\n\n" +
+      "Consider a due diligence pipeline:\n\n" +
+      CODE(
+        "Input: Company name + filing documents\n\n" +
+        "Step 1: Document Parser            (30s) — must run first\n" +
+        "Step 2: Financial Analyser         (45s) — needs parsed docs\n" +
+        "Step 3: Legal Risk Scanner         (40s) — needs parsed docs (independent of Step 2)\n" +
+        "Step 4: Market Research Agent      (35s) — needs only company name (independent of Steps 2+3)\n" +
+        "Step 5: Summary Generator          (20s) — needs Steps 2, 3, 4\n\n" +
+        "Sequential total:  30 + 45 + 40 + 35 + 20 = 170 seconds\n" +
+        "Parallel total:    30 + max(45, 40, 35) + 20 = 95 seconds  (44% faster)"
+      ) + "\n\n" +
+      "## The DAG Engine\n\n" +
+      "AgentDyne Pipelines are modelled as a Directed Acyclic Graph (DAG). Each node is an agent execution. Each edge is a data dependency.\n\n" +
+      "The parallel execution algorithm:\n\n" +
+      CODE(
+        "1. Topological sort — determine valid execution order\n" +
+        "2. Compute in-degree for every node\n" +
+        "3. Find all nodes with in-degree = 0 after previous wave completes\n" +
+        "   → these are the ready-to-run parallel candidates\n" +
+        "4. Launch all candidates simultaneously with Promise.allSettled()\n" +
+        "5. When wave completes, decrement in-degree for downstream nodes\n" +
+        "6. Repeat from step 3"
+      ) + "\n\n" +
+      CODE(
+        "// Simplified parallel wave executor\n" +
+        "async function executeDAG(nodes: PipelineNode[], edges: Edge[]) {\n" +
+        "  const inDegree = computeInDegree(nodes, edges)\n" +
+        "  const results  = new Map<string, NodeResult>()\n\n" +
+        "  while (results.size < nodes.length) {\n" +
+        "    // Find all nodes whose dependencies are satisfied\n" +
+        "    const ready = nodes.filter(n =>\n" +
+        "      !results.has(n.id) &&\n" +
+        "      inDegree.get(n.id) === 0\n" +
+        "    )\n\n" +
+        "    if (ready.length === 0) throw new Error('DAG cycle detected')\n\n" +
+        "    // Execute this wave in parallel\n" +
+        "    const wave = await Promise.allSettled(\n" +
+        "      ready.map(node => executeNode(node, results))\n" +
+        "    )\n\n" +
+        "    // Record results and decrement downstream in-degrees\n" +
+        "    wave.forEach((outcome, i) => {\n" +
+        "      const node = ready[i]\n" +
+        "      results.set(node.id, outcome.status === 'fulfilled'\n" +
+        "        ? { status: 'success', output: outcome.value }\n" +
+        "        : { status: 'failed', error: outcome.reason, node }\n" +
+        "      )\n" +
+        "      getDownstream(node.id, edges).forEach(d =>\n" +
+        "        inDegree.set(d, (inDegree.get(d) ?? 1) - 1)\n" +
+        "      )\n" +
+        "    })\n" +
+        "  }\n" +
+        "  return results\n" +
+        "}"
+      ) + "\n\n" +
+      "## Why Promise.allSettled, Not Promise.all\n\n" +
+      "This distinction is critical.\n\n" +
+      "`Promise.all` rejects immediately if any promise fails. In an agent pipeline, this means a single flaky node cancels the entire wave — including nodes that completed successfully and whose work is lost.\n\n" +
+      "`Promise.allSettled` waits for all promises to settle (fulfilled or rejected). This enables:\n\n" +
+      "- **continue_on_failure** — nodes marked optional do not block downstream nodes that don't depend on them\n" +
+      "- **Partial results** — a Summary Generator can work with the outputs of Steps 2 and 4 even if Step 3 failed, if Step 3 is optional in the schema\n" +
+      "- **Accurate error reporting** — every node's outcome is recorded, not just the first failure\n\n" +
+      "## Real Performance Data\n\n" +
+      "Across the first 30 days after enabling parallel execution on AgentDyne Pipelines:\n\n" +
+      "| Pipeline type | Before (sequential) | After (parallel) | Improvement |\n" +
+      "|---|---|---|---|\n" +
+      "| Due diligence (5 nodes) | 174s P50 | 97s P50 | 44% faster |\n" +
+      "| Content pipeline (4 nodes) | 112s P50 | 68s P50 | 39% faster |\n" +
+      "| Data enrichment (6 nodes) | 231s P50 | 118s P50 | 49% faster |\n" +
+      "| Linear pipeline (3 nodes) | 89s P50 | 91s P50 | ~flat (expected) |\n\n" +
+      "Linear pipelines (where every node depends on the previous) show no improvement — as expected. The gains are entirely from parallelising independent branches.\n\n" +
+      "## Designing for Parallelism\n\n" +
+      "To get the most from parallel execution, structure your pipeline to minimise artificial dependencies:\n\n" +
+      "1. **Fan out early** — put the document parser or input preprocessor as Step 1, then branch immediately\n" +
+      "2. **Minimise shared mutable state** — each node should only depend on explicit input edges, not side effects\n" +
+      "3. **Mark optional nodes** — use `continue_on_failure: true` on research/enrichment nodes that would block otherwise\n" +
+      "4. **Fan in late** — the aggregator or summary node should be the last step, collecting all branches\n\n" +
+      "The parallel agent swarm is not a futuristic concept. It is a DAG with a good scheduler. Build pipelines that way from the start.",
+  },
+
+  "vibe-coding-to-production-agents-the-gap-nobody-talks-about": {
+    slug:     "vibe-coding-to-production-agents-the-gap-nobody-talks-about",
+    title:    "From Vibe Coding to Production Agents: The Gap Nobody Talks About",
+    excerpt:  "Everyone can generate a working agent in five minutes. Fewer than 5% are still working six months later. The gap isn't the model — it's observability, schema validation, cost controls, and version pinning.",
+    date:     "May 5, 2026",
+    readMin:  12,
+    category: "Product",
+    author:   { name: "Marcus Lee", role: "Head of Product, AgentDyne" },
+    content:
+      "## The Demo-to-Production Chasm\n\n" +
+      "In 2025, building an AI agent became trivially easy. Cursor, Claude, and GPT-4o can generate a working agent in a conversation. The agent runs locally. It impresses in a demo. The team celebrates.\n\n" +
+      "Six months later, the agent is down. Nobody knows why. The model was updated. The API changed. Costs spiked. The output format drifted. No one noticed until a customer complained.\n\n" +
+      "This is not a model problem. Frontier models are extraordinarily reliable. This is an infrastructure problem — specifically, the infrastructure that most agent builders skip entirely in the rush from demo to deployment.\n\n" +
+      "## The Production Checklist\n\n" +
+      "Based on auditing dozens of production agent deployments, here are the six things that separate the 5% that are still working from the 95% that are not.\n\n" +
+      "## 1. Output Schema Validation\n\n" +
+      "The most common silent failure mode: the model changes its output format and downstream code breaks.\n\n" +
+      "Every agent should declare an output schema and validate every response against it:\n\n" +
+      CODE(
+        "// Without schema validation (common)\n" +
+        "const result = await agent.execute(input)\n" +
+        "const sentiment = result.sentiment  // undefined if model format drifted\n\n" +
+        "// With schema validation (production)\n" +
+        "import { z } from 'zod'\n\n" +
+        "const OutputSchema = z.object({\n" +
+        "  sentiment: z.enum(['positive', 'neutral', 'negative']),\n" +
+        "  confidence: z.number().min(0).max(1),\n" +
+        "  reasoning: z.string().optional(),\n" +
+        "})\n\n" +
+        "const parsed = OutputSchema.safeParse(result)\n" +
+        "if (!parsed.success) {\n" +
+        "  // Alert, log, fall back to default — never silently fail\n" +
+        "  throw new SchemaValidationError(parsed.error)\n" +
+        "}"
+      ) + "\n\n" +
+      "AgentDyne enforces output schemas at the API boundary. If a response fails schema validation, the call returns a structured error rather than passing malformed data to your application.\n\n" +
+      "## 2. Model Version Pinning\n\n" +
+      "Using `claude-sonnet-latest` in production is the AI equivalent of `npm install package@latest` in a production deploy script. You are opting into every breaking change the model provider ships.\n\n" +
+      CODE(
+        "// Dangerous: will silently upgrade to new model versions\n" +
+        "model: 'claude-sonnet-latest'\n\n" +
+        "// Safe: locked to a specific behaviour profile\n" +
+        "model: 'claude-sonnet-4-20250514'  // exact version, pinned forever"
+      ) + "\n\n" +
+      "Pin to explicit model versions. Run your eval suite before upgrading. Upgrade intentionally, not accidentally.\n\n" +
+      "## 3. Cost Controls\n\n" +
+      "Without cost controls, a single bad deployment — a prompt that expands unexpectedly, a user who submits a 100,000-token document — can generate a $10,000 bill before anyone notices.\n\n" +
+      "Production cost controls:\n\n" +
+      "| Control | Implementation | Purpose |\n" +
+      "|---|---|---|\n" +
+      "| Max input tokens | Truncate at 8,192 tokens | Prevent giant inputs |\n" +
+      "| Max output tokens | Cap at schema-appropriate value | Prevent runaway generation |\n" +
+      "| Per-user quota | Redis counter with TTL | Prevent abuse |\n" +
+      "| Budget alert | Trigger at 80% of monthly budget | Catch spikes early |\n" +
+      "| Circuit breaker | Fail open after 3 consecutive errors | Prevent retry storms |\n\n" +
+      "## 4. Observability: The Three Logs\n\n" +
+      "Every production agent call should produce three logs:\n\n" +
+      "**Request log** — input hash, token count, model version, timestamp, user ID\n" +
+      "**Response log** — output hash, token count, latency, schema validation result, cost\n" +
+      "**Error log** — full input, raw model response, error type, stack trace\n\n" +
+      "The input and output hashes enable debugging without storing PII. The cost field enables per-agent, per-user, per-feature cost attribution.\n\n" +
+      "Without these logs, you are flying blind. You will not know which agent is expensive, which users are abusing the system, or why production output differs from staging.\n\n" +
+      "## 5. Eval Suite Before Every Deploy\n\n" +
+      "Vibes are not a deployment strategy.\n\n" +
+      "Every agent that goes to production should have:\n\n" +
+      "- **20+ golden examples** — input/expected output pairs that represent the real distribution\n" +
+      "- **Automated eval runner** — runs on every PR, blocks merge if accuracy drops below threshold\n" +
+      "- **Regression budget** — defines acceptable accuracy range (e.g. 95% ± 2%)\n\n" +
+      "Building the eval suite takes 2–4 hours. Not building it costs 20–40 hours of debugging production failures.\n\n" +
+      "## 6. Graceful Degradation\n\n" +
+      "What does your product do when the agent fails? Most systems answer: nothing good.\n\n" +
+      "Production agents should have explicit fallback behaviour:\n\n" +
+      CODE(
+        "try {\n" +
+        "  const result = await agent.execute(input, { timeout: 8000 })\n" +
+        "  return OutputSchema.parse(result)\n" +
+        "} catch (error) {\n" +
+        "  if (error instanceof TimeoutError) {\n" +
+        "    // Return cached result or simplified fallback\n" +
+        "    return getFallback(input)\n" +
+        "  }\n" +
+        "  if (error instanceof QuotaExceededError) {\n" +
+        "    // Queue for later processing, notify user\n" +
+        "    await queue.push({ input, userId, priority: 'normal' })\n" +
+        "    return { status: 'queued', estimatedWait: '2 minutes' }\n" +
+        "  }\n" +
+        "  // Log everything else and surface gracefully\n" +
+        "  logger.error('Agent execution failed', { error, input })\n" +
+        "  return { status: 'error', userMessage: getLocalizedError(error) }\n" +
+        "}"
+      ) + "\n\n" +
+      "## The Production Readiness Score\n\n" +
+      "Before launching any agent to production, score yourself on these six dimensions:\n\n" +
+      "| Dimension | Not done | Partial | Done |\n" +
+      "|---|---|---|---|\n" +
+      "| Output schema validation | 0 | 1 | 2 |\n" +
+      "| Model version pinning | 0 | 1 | 2 |\n" +
+      "| Cost controls | 0 | 1 | 2 |\n" +
+      "| Observability | 0 | 1 | 2 |\n" +
+      "| Eval suite | 0 | 1 | 2 |\n" +
+      "| Graceful degradation | 0 | 1 | 2 |\n\n" +
+      "**10–12**: Production ready. Ship it.\n" +
+      "**6–9**: Stage-ready. Fix the gaps before customer traffic.\n" +
+      "**0–5**: Demo-ready only. Do not put this in front of paying customers.\n\n" +
+      "The gap between vibe coding and production is not a talent gap. It is a checklist gap. Use the checklist.",
+  },
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

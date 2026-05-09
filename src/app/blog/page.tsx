@@ -1,7 +1,7 @@
 import Link from "next/link"
 import { Navbar } from "@/components/layout/navbar"
 import { Footer } from "@/components/layout/footer"
-import { ArrowRight, Clock, TrendingUp, Zap, Brain, Layers, Shield, Globe, DollarSign } from "lucide-react"
+import { ArrowRight, Clock, TrendingUp, Zap, Brain, Layers, Shield, Globe, DollarSign, GitMerge, Cpu, Lock } from "lucide-react"
 import type { Metadata } from "next"
 
 export const metadata: Metadata = {
@@ -25,6 +25,33 @@ interface Post {
 }
 
 const POSTS: Post[] = [
+  {
+    slug:     "a2a-protocol-agent-to-agent-communication",
+    title:    "A2A vs MCP: The Two Protocols Defining How AI Agents Talk to Each Other",
+    excerpt:  "Google’s Agent-to-Agent (A2A) protocol and Anthropic’s Model Context Protocol (MCP) are not competitors — they solve different layers of the same problem. MCP connects an agent to tools; A2A connects agents to agents. Together they form a complete inter-agent communication stack, and AgentDyne now supports both.",
+    date:     "May 9, 2026",
+    readMin:  8,
+    category: "Architecture",
+    icon:     GitMerge,
+  },
+  {
+    slug:     "parallel-agent-swarms-promise-allsettled",
+    title:    "Parallel Agent Swarms: Why Promise.allSettled Is the New Async/Await for AI",
+    excerpt:  "Sequential pipelines waste wall-clock time. When three independent agents can run in parallel, running them sequentially is the AI equivalent of a single-threaded server. We explain the DAG-based parallelism engine behind AgentDyne Pipelines, how we detect branch nodes, and why continue_on_failure changes the error calculus entirely.",
+    date:     "May 7, 2026",
+    readMin:  10,
+    category: "Engineering",
+    icon:     Cpu,
+  },
+  {
+    slug:     "vibe-coding-to-production-agents-the-gap-nobody-talks-about",
+    title:    "From Vibe Coding to Production Agents: The Gap Nobody Talks About",
+    excerpt:  "Everyone can generate a working agent in five minutes with a frontier model. Fewer than 5% of those agents are still working six months later. The gap isn’t the model — it’s observability, schema validation, cost controls, and version pinning. This is the production checklist we wish existed when we launched AgentDyne.",
+    date:     "May 5, 2026",
+    readMin:  12,
+    category: "Product",
+    icon:     Lock,
+  },
   {
     slug:     "why-microagents-beat-monolithic-ai",
     title:    "Why Microagents Beat Monolithic AI: The Case for Composable Intelligence",
