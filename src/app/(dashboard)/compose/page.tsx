@@ -501,10 +501,35 @@ function ComposeInner() {
   }, [goal])
 
   const handleRun = useCallback(async () => {
-    if (!plan || !pipelineId) {
-      // Need to save pipeline first
-      toast.error("Saving pipeline first…")
-      return
+    if (!plan) return
+
+    // pipelineId is null when the composed plan used platform-starter agents (no real UUIDs).
+    // In that case, save it now before running — composer skips save for non-real agents.
+    let runPipelineId = pipelineId
+    if (!runPipelineId) {
+      try {
+        const saveRes = await fetch("/api/pipelines", {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({
+            name:        plan.description.slice(0, 100) || "Composed workflow",
+            description: `Auto-composed from: "${goal.slice(0, 200)}"`,
+            dag:         { nodes: plan.nodes, edges: plan.edges },
+            is_public:   false,
+            tags:        [plan.pattern, "ai-composed"],
+          }),
+        })
+        const saved = await saveRes.json()
+        if (!saveRes.ok || !saved?.id) {
+          toast.error(saved?.error ?? "Could not save pipeline. Add agents to the marketplace first.")
+          return
+        }
+        setPipelineId(saved.id)
+        runPipelineId = saved.id
+      } catch {
+        toast.error("Could not save pipeline. Check your connection.")
+        return
+      }
     }
 
     setRunning(true); setStage("running")
@@ -512,7 +537,7 @@ function ComposeInner() {
     setNodeResults([])
 
     try {
-      const res  = await fetch(`/api/pipelines/${pipelineId}/execute`, {
+      const res  = await fetch(`/api/pipelines/${runPipelineId}/execute`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ input: { text: goal.trim(), goal: goal.trim() } }),

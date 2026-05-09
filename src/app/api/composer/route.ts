@@ -85,9 +85,13 @@ Requested change: ${goal.trim()}`
     if (!result.ok)
       return NextResponse.json({ ok: false, error: result.error, reasoning: result.reasoning }, { status: 422 })
 
-    // Optionally save as a pipeline
+    // Optionally save as a pipeline.
+    // Guard: only save if all agent IDs are real UUIDs (not platform-starter placeholders).
+    // Starter-agent pipelines cannot be executed — saving them produces an unrunnable record.
     let pipelineId: string | undefined
-    if (saveAsPipeline && result.dag) {
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    const allRealAgents = result.dag?.nodes.every(n => UUID_RE.test(n.agent_id)) ?? false
+    if (saveAsPipeline && result.dag && allRealAgents) {
       const { data: pipeline } = await supabase
         .from("pipelines")
         .insert({
