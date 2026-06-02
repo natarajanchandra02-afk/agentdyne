@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
 import { useUser } from "@/hooks/use-user"
+import { useNotifications } from "@/hooks/use-notifications"
 import { getInitials, cn, formatRelativeTime } from "@/lib/utils"
 import type { User } from "@supabase/supabase-js"
 
@@ -60,27 +61,10 @@ function NotifIcon({ type }: { type: string }) {
 // ─── Notifications Bell ───────────────────────────────────────────────────────
 
 function NotificationBell({ navigate }: { navigate: (href: string) => void }) {
-  const [open,          setOpen]          = useState(false)
-  const [notifications, setNotifications] = useState<any[]>([])
-  const [unread,        setUnread]        = useState(0)
+  const [open, setOpen] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    const load = async () => {
-      try {
-        const res  = await fetch("/api/notifications")
-        if (!res.ok) return
-        const data = await res.json()
-        if (cancelled) return
-        const notifs = data.notifications || []
-        setNotifications(notifs)
-        setUnread(notifs.filter((n: any) => !n.is_read).length)
-      } catch { /* non-fatal */ }
-    }
-    load()
-    return () => { cancelled = true }
-  }, [])
+  const { notifications, unreadCount, markAllRead } = useNotifications(20)
+  const unread = unreadCount
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -91,11 +75,7 @@ function NotificationBell({ navigate }: { navigate: (href: string) => void }) {
   }, [open])
 
   const toggleOpen = async () => {
-    if (!open && unread > 0) {
-      setUnread(0)
-      setNotifications(prev => prev.map(n => ({ ...n, is_read: true })))
-      fetch("/api/notifications", { method: "PATCH" }).catch(() => {})
-    }
+    if (!open && unread > 0) markAllRead()
     setOpen(o => !o)
   }
 

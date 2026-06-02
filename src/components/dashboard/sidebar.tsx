@@ -9,7 +9,7 @@ import {
   LayoutDashboard, Bot, BarChart3, CreditCard, Key,
   Settings, Store, ShieldCheck, LogOut, Zap, ChevronRight,
   HelpCircle, Trophy, Layers, ChevronLeft, Menu, X, History,
-  Sparkles,
+  Sparkles, Network, Webhook,
 } from "lucide-react"
 import { cn, getInitials } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -22,6 +22,7 @@ const MAIN_NAV = [
   { href: "/compose",     icon: Sparkles,        label: "Compose",    badge: "New" },
   { href: "/my-agents",   icon: Bot,             label: "My Agents"   },
   { href: "/pipelines",   icon: Layers,          label: "Pipelines"   },
+  { href: "/swarm",       icon: Network,         label: "Swarm",      badge: "New" },
   { href: "/executions",  icon: History,         label: "Executions"  },
   { href: "/analytics",   icon: BarChart3,       label: "Analytics"   },
   { href: "/api-keys",    icon: Key,             label: "API Keys"    },
@@ -29,8 +30,13 @@ const MAIN_NAV = [
 ]
 
 const MONEY_NAV = [
-  { href: "/billing", icon: CreditCard, label: "Billing & Plans" },
-  { href: "/seller",  icon: Store,      label: "Seller Portal",  badge: "Earn" },
+  { href: "/billing",           icon: CreditCard, label: "Billing & Plans" },
+  { href: "/seller",            icon: Store,      label: "Seller Portal",  badge: "Earn" },
+]
+
+const SETTINGS_NAV = [
+  { href: "/settings",          icon: Settings,  label: "Settings"  },
+  { href: "/settings/webhooks", icon: Webhook,   label: "Webhooks"  },
 ]
 
 const ADMIN_NAV  = [{ href: "/admin",    icon: ShieldCheck, label: "Admin Panel" }]

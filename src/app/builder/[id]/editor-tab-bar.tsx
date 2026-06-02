@@ -1,19 +1,21 @@
 "use client"
 
 /**
- * EditorTabBar + tabVariants
- * Shared between builder-editor-client and any other editor-style page.
- * Uses the same SlidingTabs + AnimatePresence pattern as settings.
+ * EditorTabBar — builder tabs: Overview · Behavior · Security · Monetization · Deploy · Improve
+ * Deploy tab = Embed Agent (viral distribution)
+ * Improve tab = Self-Improving AI version diff panel
  */
 
-import { LayoutDashboard, Brain, ShieldCheck, DollarSign } from "lucide-react"
-import { SlidingTabs }                                       from "@/components/ui/sliding-tabs"
+import { LayoutDashboard, Brain, ShieldCheck, DollarSign, Globe, Sparkles } from "lucide-react"
+import { SlidingTabs } from "@/components/ui/sliding-tabs"
 
 export const EDITOR_TABS = [
   { id: "overview",     label: "Overview",     icon: LayoutDashboard },
   { id: "behavior",     label: "Behavior",     icon: Brain           },
   { id: "security",     label: "Security",     icon: ShieldCheck     },
   { id: "monetization", label: "Monetization", icon: DollarSign      },
+  { id: "deploy",       label: "Deploy",       icon: Globe           },
+  { id: "improve",      label: "Improve",      icon: Sparkles        },
 ] as const
 
 export type EditorTabId = (typeof EDITOR_TABS)[number]["id"]

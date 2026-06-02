@@ -1,20 +1,32 @@
 /**
  * @module @agentdyne/sdk
- * @description Official JavaScript / TypeScript SDK for AgentDyne.
+ * @description Official JavaScript / TypeScript SDK for AgentDyne v2.0.0
  *
  * @example
- * import AgentDyne from "@agentdyne/sdk";
+ * import AgentDyne from "@agentdyne/sdk"
+ * const client = new AgentDyne({ apiKey: process.env.AGENTDYNE_API_KEY! })
  *
- * const client = new AgentDyne({ apiKey: process.env.AGENTDYNE_API_KEY! });
- * const result = await client.execute("agent_id", "Summarize this...");
+ * // Execute
+ * const result = await client.execute("agent-id", "Summarise this...")
+ *
+ * // Stream
+ * for await (const chunk of client.stream("agent-id", "Write a post")) {
+ *   if (chunk.type === "token") process.stdout.write(chunk.delta ?? "")
+ * }
+ *
+ * // Swarm
+ * const session = await client.swarm({
+ *   task: "Research AI agent frameworks",
+ *   agentIds: ["agent-a", "agent-b"],
+ * })
  */
 
-export { AgentDyne } from "./client.js";
-export { AgentDyne as default } from "./client.js";
+export { AgentDyne } from "./client.js"
+export { AgentDyne as default } from "./client.js"
 
-// Resources (for advanced usage)
-export { AgentsResource }        from "./agents.js";
-export { ExecutionsResource, UserResource, NotificationsResource, WebhooksResource } from "./resources.js";
+// Resources
+export { AgentsResource }                                                        from "./agents.js"
+export { ExecutionsResource, UserResource, NotificationsResource, WebhooksResource } from "./resources.js"
 
 // Errors
 export {
@@ -31,7 +43,7 @@ export {
   SubscriptionRequiredError,
   ValidationError,
   WebhookSignatureError,
-} from "./errors.js";
+} from "./errors.js"
 
 // Types
 export type {
@@ -39,6 +51,8 @@ export type {
   AgentCategory,
   AgentDyneConfig,
   AgentStatus,
+  BrowserExecuteRequest,
+  BrowserExecuteResponse,
   CreateReviewRequest,
   Execution,
   ExecuteRequest,
@@ -48,14 +62,20 @@ export type {
   ListExecutionsParams,
   Notification,
   PaginatedResponse,
+  PipelineExecuteRequest,
+  PipelineExecuteResponse,
+  PipelineNodeResult,
   PricingModel,
   Review,
   SellerProfile,
   StreamChunk,
   SubscriptionPlan,
+  SwarmMode,
+  SwarmRequest,
+  SwarmSession,
   UserProfile,
   UserQuota,
   WebhookEvent,
   WebhookEventExecution,
   WebhookEventType,
-} from "./types.js";
+} from "./types.js"

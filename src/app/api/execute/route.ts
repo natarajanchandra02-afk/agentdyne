@@ -20,6 +20,8 @@ import { checkConcurrencyLimit }        from "@/lib/concurrency"
 import { checkInput, processOutput }    from "@/lib/guardrails"
 import { PLAN_QUOTAS, PLAN_COMPUTE_CAPS } from "@/lib/constants"
 import { reconcileActualCost }          from "@/core/execution/costEstimator"
+import { dispatchWebhooks }             from "@/lib/webhook-dispatcher"
+import { extractAndStoreExecutionMemories, getRelevantMemories, buildMemorySystemPrompt } from "@/lib/memory-graph"
 import Anthropic                        from "@anthropic-ai/sdk"
 import type { PlanName }                from "@/lib/anti-abuse"
 
@@ -289,6 +291,14 @@ export async function POST(req: NextRequest) {
         }).catch(() => {})
       }
 
+      // ── Background tasks: memory extraction + webhook dispatch ─────────────
+      extractAndStoreExecutionMemories(supabase, userId, agentId, inputStr, rawText).catch(() => {})
+      dispatchWebhooks(supabase, userId, "execution.success", {
+        executionId: execution.id, agentId, agentName: agent.name,
+        status: "success", latencyMs, costUsd: costUsd,
+        tokens: { input: response.usage.input_tokens, output: response.usage.output_tokens },
+      }).catch(() => {})
+
       // ── Persist execution + increment quota (awaited, never fire-and-forget) ─
       await Promise.all([
         supabase.from("executions").update({
@@ -327,6 +337,10 @@ export async function POST(req: NextRequest) {
         error_message: isTimeout ? "Execution timed out (25s limit)" : (aiError.message?.slice(0, 500) ?? "AI provider error"),
         completed_at:  new Date().toISOString(),
       }).eq("id", execution.id)
+      dispatchWebhooks(supabase, userId, "execution.failed", {
+        executionId: execution.id, agentId, agentName: agent.name,
+        status: "failed", error: isTimeout ? "timeout" : aiError.message?.slice(0, 200),
+      }).catch(() => {})
 
       return NextResponse.json({
         error: isTimeout ? "Execution timed out. Use streaming for long-running agents." : `Execution failed: ${aiError.message?.slice(0, 200) ?? "Unknown"}`,

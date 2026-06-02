@@ -9,6 +9,7 @@ import { retrieveRAGContext, buildRAGSystemPrompt } from "@/lib/rag-retriever"
 import { estimatePipelineCost, checkConcurrencyLimit } from "@/lib/concurrency"
 import { evaluateSafeCondition } from "@/lib/safe-condition-evaluator"
 import { buildIntentHash, buildStepEnvelope, extractConfidence, evaluateConfidenceGating } from "@/lib/trust-layer"
+import { dispatchWebhooks } from "@/lib/webhook-dispatcher"
 
 /**
  * POST /api/pipelines/[id]/execute
@@ -490,6 +491,14 @@ export async function POST(
         node_count:  nodeCount,
         snapshot_at: new Date().toISOString(),
       }, { onConflict: "pipeline_id,version" }),
+
+      // Webhook dispatch
+      dispatchWebhooks(supabase, userId!, "pipeline.success", {
+        pipelineId, pipelineName: pipeline.name,
+        executionId: pipelineExec.id, nodeCount,
+        totalCostUsd: totalCost.toFixed(6),
+        totalLatencyMs: totalLatency,
+      }),
 
       // Track which agents are used in this pipeline
       ...dag.nodes.map(node =>

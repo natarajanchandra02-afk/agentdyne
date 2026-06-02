@@ -1,43 +1,72 @@
 [build-system]
-requires      = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+requires      = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
 
 [project]
-name        = "agentdyne"
-version     = "1.0.0"
-description = "Official Python SDK for AgentDyne — The Global Microagent Marketplace"
-readme      = "README.md"
-license     = { text = "MIT" }
-authors     = [{ name = "AgentDyne, Inc.", email = "sdk@agentdyne.com" }]
-keywords    = ["agentdyne", "ai", "agents", "llm", "sdk", "anthropic", "mcp"]
+name            = "agentdyne"
+version         = "2.0.0"
+description     = "Official Python SDK for the AgentDyne AI Agent Platform"
+readme          = "README.md"
+license         = { text = "MIT" }
+authors         = [{ name = "AgentDyne, Inc.", email = "sdk@agentdyne.com" }]
+keywords        = [
+  "agentdyne", "ai", "agents", "llm", "sdk", "mcp",
+  "anthropic", "claude", "openai", "gemini", "streaming",
+  "multi-agent", "swarm", "pipeline", "autonomous",
+]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Topic :: Software Development :: Libraries :: Python Modules",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Typing :: Typed",
 ]
 requires-python = ">=3.9"
-dependencies    = []   # Zero required deps for sync client
+# Zero mandatory dependencies — pure stdlib for sync usage
+dependencies    = []
 
 [project.optional-dependencies]
-async = ["httpx>=0.27.0"]
-dev   = ["pytest>=8.0", "pytest-asyncio>=0.23", "httpx>=0.27.0", "respx>=0.21"]
+async = ["httpx>=0.25.0"]
+dev   = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+  "httpx>=0.25.0",
+  "mypy>=1.9",
+  "ruff>=0.4",
+  "hatch>=1.9",
+]
 
 [project.urls]
-Homepage      = "https://agentdyne.com"
-Documentation = "https://agentdyne.com/docs"
-Repository    = "https://github.com/agentdyne/sdk-python"
-"Bug Tracker" = "https://github.com/agentdyne/sdk-python/issues"
+Homepage        = "https://agentdyne.com"
+Documentation   = "https://agentdyne.com/docs/sdk"
+"API Reference" = "https://agentdyne.com/docs/sdk/python"
+Repository      = "https://github.com/agentdyne/sdk-python"
+"Bug Tracker"   = "https://github.com/agentdyne/sdk-python/issues"
+Changelog       = "https://github.com/agentdyne/sdk-python/blob/main/CHANGELOG.md"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["agentdyne*"]
+[tool.hatch.build.targets.wheel]
+packages = ["agentdyne"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/agentdyne", "/tests", "README.md", "LICENSE", "CHANGELOG.md"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+testpaths    = ["tests"]
+
+[tool.mypy]
+strict              = true
+python_version      = "3.9"
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+select = ["E", "F", "I", "UP", "B", "SIM"]

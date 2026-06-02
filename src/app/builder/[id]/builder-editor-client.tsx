@@ -29,6 +29,8 @@ import { createClient }                                 from "@/lib/supabase/cli
 import { MCP_SERVERS, MCP_CATEGORIES, type MCPCategory } from "@/lib/mcp-servers"
 import { MAX_SYSTEM_PROMPT_LENGTH, SUPPORTED_MODELS, MODEL_LABELS } from "@/lib/constants"
 import { categoryLabel, cn }                            from "@/lib/utils"
+import { DeployPanel }                                  from "./deploy-panel"
+import { ImprovePanel }                                 from "./improve-panel"
 import toast                                            from "react-hot-toast"
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -610,6 +612,24 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
 
   // ── Panels ────────────────────────────────────────────────────────────────
   const panels: Record<EditorTabId, React.ReactNode> = {
+
+    // Deploy tab — Embed agent on any website (P1: viral distribution)
+    deploy: (
+      <DeployPanel
+        agentId={agent.id}
+        agentName={agent.name}
+        isPublic={isPublic ?? agent.is_public ?? false}
+      />
+    ),
+
+    // Improve tab — AI-powered self-improvement (P2)
+    improve: (
+      <ImprovePanel
+        agentId={agent.id}
+        agentName={agent.name}
+        currentScore={agent.evaluation_score ?? null}
+      />
+    ),
 
     overview: (
       <div className="space-y-6">

@@ -126,10 +126,103 @@ export interface ExecuteResponse {
 }
 
 export interface StreamChunk {
-  type: "delta" | "done" | "error";
-  delta?: string;
-  executionId?: string;
-  error?: string;
+  type: "token" | "start" | "correction" | "done" | "error"
+  /** Incremental text delta (type === "token") */
+  delta?:       string
+  executionId?: string
+  error?:       string
+  confidence?:  number
+  metadata?:    Record<string, unknown>
+}
+
+// ---------------------------------------------------------------------------
+// Multi-Agent Swarm (Gap 4)
+// ---------------------------------------------------------------------------
+
+export type SwarmMode = "orchestrate" | "debate" | "parallel"
+
+export interface SwarmRequest {
+  task:        string
+  agentIds:    string[]   // 2–8 agents
+  name?:       string
+  mode?:       SwarmMode
+  maxRounds?:  number     // 1–5, relevant for debate mode
+}
+
+export interface SwarmSession {
+  sessionId:   string
+  status:      "active" | "completed" | "failed"
+  mode:        SwarmMode
+  agentCount:  number
+  finalAnswer: string
+  messageLog:  Array<Record<string, unknown>>
+  rounds:      number
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline execution
+// ---------------------------------------------------------------------------
+
+export interface PipelineExecuteRequest {
+  input?:      string | Record<string, unknown>
+  variables?:  Record<string, string>
+  state?:      Record<string, unknown>
+  resume_execution_id?: string
+}
+
+export interface PipelineNodeResult {
+  node_id:     string
+  agent_id:    string
+  agent_name:  string
+  status:      "success" | "failed" | "skipped"
+  input?:      unknown
+  output?:     unknown
+  latency_ms:  number
+  cost:        number
+  tokens?:     { input: number; output: number }
+  error?:      string
+  retry_count: number
+  used_fallback?: boolean
+}
+
+export interface PipelineExecuteResponse {
+  executionId:  string
+  status:       "success" | "failed"
+  output:       unknown
+  state:        Record<string, unknown>
+  node_results: PipelineNodeResult[]
+  summary: {
+    nodes_executed:   number
+    nodes_skipped:    number
+    nodes_failed:     number
+    total_retries:    number
+    total_latency_ms: number
+    total_cost_usd:   string
+    total_tokens:     { input: number; output: number }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Browser agent (Gap 5 / P3)
+// ---------------------------------------------------------------------------
+
+export interface BrowserExecuteRequest {
+  task:           string
+  targetUrl?:     string
+  extractSchema?: Record<string, string>
+}
+
+export interface BrowserExecuteResponse {
+  executionId: string
+  sessionId:   string
+  status:      "success" | "failed"
+  result:      unknown
+  summary:     string
+  steps:       number
+  actionsTaken: Array<Record<string, unknown>>
+  latencyMs:   number
+  cost:        number
+  tokens:      { input: number; output: number }
 }
 
 // ---------------------------------------------------------------------------

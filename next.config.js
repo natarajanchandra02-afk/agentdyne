@@ -1,75 +1,87 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // ── TypeScript / ESLint ────────────────────────────────────────────────────
-  // ignoreBuildErrors: true keeps Cloudflare Pages builds green while the
-  // team iterates. For a truly hardened CI pipeline, remove these and fix all
-  // type errors before merging to main.
   typescript: { ignoreBuildErrors: true },
   eslint:     { ignoreDuringBuilds: true },
 
   // ── Image optimisation ─────────────────────────────────────────────────────
-  // unoptimized: true is required for Cloudflare Pages (no image CDN).
-  // In production, consider replacing with a dedicated image CDN.
   images: {
-    unoptimized: true,
+    unoptimized: true,   // Required for Cloudflare Pages (no image CDN)
     remotePatterns: [
-      { protocol: "https", hostname: "*.supabase.co"           },
+      { protocol: "https", hostname: "*.supabase.co"               },
       { protocol: "https", hostname: "avatars.githubusercontent.com" },
-      { protocol: "https", hostname: "*.googleusercontent.com" },
-      { protocol: "https", hostname: "*.cloudflare.com"        },
+      { protocol: "https", hostname: "*.googleusercontent.com"     },
+      { protocol: "https", hostname: "*.cloudflare.com"            },
     ],
   },
 
   // ── URL rewrites ───────────────────────────────────────────────────────────
-  // /v1/* → /api/* — SDK compatibility (developers can hit /v1/agents etc.)
+  // /v1/* → /api/* for SDK backwards compat
+  // /embed/{id}.js → /api/embed/{id} for the viral widget script
   async rewrites() {
     return [
-      { source: "/v1/:path*", destination: "/api/:path*" },
+      { source: "/v1/:path*",         destination: "/api/:path*"        },
+      { source: "/embed/:id\\.js",    destination: "/api/embed/:id"     },
     ]
   },
 
   // ── HTTP headers ───────────────────────────────────────────────────────────
-  // These are applied at the CDN/edge layer by Cloudflare Pages (CF Pages
-  // merges headers from next.config.js and _headers). The middleware also
-  // applies CSP + security headers for finer-grained per-route control.
-  // Having both layers is intentional: belt-and-suspenders security.
   async headers() {
     return [
+      // ── Default security headers for all routes ──────────────────────────
       {
         source: "/(.*)",
         headers: [
           { key: "X-Content-Type-Options",  value: "nosniff"                          },
-          { key: "X-Frame-Options",          value: "DENY"                             },
           { key: "X-XSS-Protection",         value: "1; mode=block"                   },
           { key: "Referrer-Policy",           value: "strict-origin-when-cross-origin" },
           { key: "Permissions-Policy",        value: "camera=(), microphone=(), geolocation=()" },
         ],
       },
-      // CORS for public API routes — allow any origin to call /api/*
-      // Specific origin allowlisting is enforced in middleware.ts for security.
+
+      // ── Embed widget pages: allow iframing on any external site ──────────
+      // This REMOVES X-Frame-Options and sets permissive frame-ancestors.
+      // Required for the "Stripe Checkout for AI" viral embed feature.
+      {
+        source: "/embed/(.*)",
+        headers: [
+          // Override the default DENY — embed widget MUST be iframeable
+          { key: "X-Frame-Options",          value: "ALLOWALL"  },
+          { key: "Content-Security-Policy",  value: "frame-ancestors *" },
+          { key: "Access-Control-Allow-Origin", value: "*"      },
+        ],
+      },
+
+      // ── Embed JS script: CORS + caching ──────────────────────────────────
+      {
+        source: "/api/embed/(.*)",
+        headers: [
+          { key: "Access-Control-Allow-Origin",  value: "*"                         },
+          { key: "Access-Control-Allow-Methods", value: "GET, POST, OPTIONS"        },
+          { key: "Access-Control-Allow-Headers", value: "Content-Type, X-API-Key, X-Embed-Token" },
+          { key: "Cache-Control",                value: "public, max-age=3600, s-maxage=86400" },
+        ],
+      },
+
+      // ── Public API routes: CORS ───────────────────────────────────────────
       {
         source: "/api/(.*)",
         headers: [
           { key: "Access-Control-Allow-Origin",  value: "*"                            },
           { key: "Access-Control-Allow-Methods", value: "GET, POST, PATCH, DELETE, OPTIONS" },
-          { key: "Access-Control-Allow-Headers", value: "Content-Type, Authorization, X-API-Key" },
+          { key: "Access-Control-Allow-Headers", value: "Content-Type, Authorization, X-API-Key, X-Embed-Token" },
         ],
       },
-      // Webhook: ensure Stripe can POST with raw body
+
+      // ── Stripe webhooks: Stripe origin only ──────────────────────────────
       {
-        source: "/api/webhooks/(.*)",
+        source: "/api/webhooks/stripe(.*)",
         headers: [
           { key: "Access-Control-Allow-Origin", value: "https://stripe.com" },
         ],
       },
-      // SDK JS files: long-lived cache
-      {
-        source: "/sdk/(.*)\\.js",
-        headers: [
-          { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
-        ],
-      },
-      // Static assets: long-lived cache
+
+      // ── Static assets: immutable cache ───────────────────────────────────
       {
         source: "/_next/static/(.*)",
         headers: [
@@ -80,32 +92,23 @@ const nextConfig = {
   },
 
   // ── External packages ──────────────────────────────────────────────────────
-  // @anthropic-ai/sdk imports `node:crypto` in some paths — mark as external
-  // so Next.js doesn't try to bundle it in edge workers.
   serverExternalPackages: ["@anthropic-ai/sdk"],
 
-  // ── Compiler options ───────────────────────────────────────────────────────
+  // ── Compiler ──────────────────────────────────────────────────────────────
   compiler: {
-    // Keep error + warn in production (Sentry, CF Logs need them).
-    // Also keep 'info' so startup env validation messages are visible in
-    // Cloudflare Pages build logs and production Workers logs.
     removeConsole: process.env.NODE_ENV === "production"
       ? { exclude: ["error", "warn", "info"] }
       : false,
   },
 
-  // ── Experimental ──────────────────────────────────────────────────────────
-  experimental: {
-    // Inline CSS for critical path — reduces First Contentful Paint
-    optimizeCss: false,  // Disabled: requires critters which conflicts with CF Pages
+  // ── Logging ───────────────────────────────────────────────────────────────
+  logging: {
+    fetches: { fullUrl: process.env.NODE_ENV !== "production" },
   },
 
-  // ── Logging ───────────────────────────────────────────────────────────────
-  // Reduce Next.js verbose fetch logging in production
-  logging: {
-    fetches: {
-      fullUrl: process.env.NODE_ENV !== "production",
-    },
+  // ── Experimental ──────────────────────────────────────────────────────────
+  experimental: {
+    optimizeCss: false,  // Disabled: critters conflicts with CF Pages edge runtime
   },
 }
 

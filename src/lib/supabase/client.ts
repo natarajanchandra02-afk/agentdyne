@@ -1,105 +1,111 @@
 import { createBrowserClient } from "@supabase/ssr"
 import type { Database } from "@/types/supabase"
 
-// ─── Dummy Supabase client ────────────────────────────────────────────────────
-// Returned when NEXT_PUBLIC_SUPABASE_URL / ANON_KEY are missing or placeholder.
-// Prevents network errors, console spam, and infinite loading on first deploy.
-// All operations return empty/null — the UI shows Sign In buttons (not a crash).
+// ─── Environment checks ───────────────────────────────────────────────────────
 
-const DUMMY_CLIENT = {
-  auth: {
-    getSession:             async () => ({ data: { session: null }, error: null }),
-    getUser:                async () => ({ data: { user: null }, error: null }),
-    onAuthStateChange:      () => ({ data: { subscription: { unsubscribe: () => {} } } }),
-    signInWithPassword:     async () => ({ data: null, error: { message: "Supabase not configured" } }),
-    signInWithOAuth:        async () => ({ data: null, error: { message: "Supabase not configured" } }),
-    signUp:                 async () => ({ data: null, error: { message: "Supabase not configured" } }),
-    signOut:                async () => ({ error: null }),
-    resetPasswordForEmail:  async () => ({ data: null, error: null }),
-    updateUser:             async () => ({ data: null, error: null }),
-  },
-  from: (_table: string) => ({
-    select: (..._args: any[]) => ({
-      eq:       (..._a: any[]) => ({
-        single:  async () => ({ data: null, error: null }),
-        order:   (..._b: any[]) => ({ data: [], error: null, count: 0 }),
-        limit:   (..._b: any[]) => ({ data: [], error: null, count: 0 }),
-        in:      (..._b: any[]) => ({ data: [], error: null }),
-        then:    (resolve: any) => resolve({ data: [], error: null }),
-      }),
-      in:      (..._a: any[]) => ({ data: [], error: null }),
-      order:   (..._a: any[]) => ({
-        limit:   (..._b: any[]) => ({ data: [], error: null, count: 0 }),
-        then:    (resolve: any) => resolve({ data: [], error: null }),
-        data: [], error: null, count: 0,
-      }),
-      limit:   (..._a: any[]) => ({ data: [], error: null }),
-      single:  async () => ({ data: null, error: null }),
-      textSearch: (..._a: any[]) => ({
-        eq: (..._b: any[]) => ({
-          order: (..._c: any[]) => ({ data: [], error: null, count: 0 }),
-        }),
-        order: (..._b: any[]) => ({ data: [], error: null, count: 0 }),
-      }),
-      contains: (..._a: any[]) => ({
-        order: (..._b: any[]) => ({ data: [], error: null, count: 0 }),
-      }),
-      then:    (resolve: any) => resolve({ data: [], error: null, count: 0 }),
-      data: [], error: null, count: 0,
-    }),
-    update: (..._args: any[]) => ({
-      eq: (..._a: any[]) => ({ data: null, error: null }),
-      then: (resolve: any) => resolve({ data: null, error: null }),
-    }),
-    insert: (..._args: any[]) => ({
-      select: (..._a: any[]) => ({
-        single: async () => ({ data: null, error: null }),
-      }),
-      then: (resolve: any) => resolve({ data: null, error: null }),
-    }),
-    delete: (..._args: any[]) => ({
-      eq: (..._a: any[]) => ({ data: null, error: null }),
-    }),
-    upsert: (..._args: any[]) => ({ data: null, error: null }),
-  }),
-  storage: {
-    from: (_bucket: string) => ({
-      upload: async () => ({ error: null }),
-      getPublicUrl: () => ({ data: { publicUrl: "" } }),
-    }),
-  },
-  rpc: async (..._args: any[]) => ({ data: null, error: null }),
-} as any
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ""
 
-// ─── Singleton real client ───────────────────────────────────────────────────
+/**
+ * isSupabaseConfigured
+ *
+ * Returns true only when BOTH public vars are set to real (non-placeholder) values.
+ * Used by the login page to show a configuration error banner instead of
+ * silently failing with a cryptic "Supabase not configured" toast.
+ *
+ * Note: SUPABASE_SERVICE_ROLE_KEY is server-only — it is NOT checked here.
+ * Login uses the anon key + browser client, not the service role key.
+ */
+export function isSupabaseConfigured(): boolean {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return false
+  if (SUPABASE_URL.includes("your-project") || SUPABASE_URL === "https://your-project.supabase.co") return false
+  if (SUPABASE_ANON_KEY === "your-anon-key" || SUPABASE_ANON_KEY.length < 20) return false
+  try { new URL(SUPABASE_URL) } catch { return false }
+  return true
+}
+
+// ─── Dummy client ─────────────────────────────────────────────────────────────
+// Returned ONLY when env vars are genuinely missing.
+// Every auth method returns a clear, actionable error message.
+
+function makeDummyClient() {
+  const CONFIG_ERROR = {
+    message:
+      "Supabase is not configured. " +
+      "Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY " +
+      "in .env.local (local) or in Cloudflare Pages → Settings → Environment Variables (production). " +
+      "Get both values from: Supabase Dashboard → your project → Settings → API",
+    code: "SUPABASE_NOT_CONFIGURED",
+  }
+
+  const qb = (): any => {
+    const q: any = {}
+    const noop = () => q
+    ;["select","insert","update","upsert","delete","eq","neq","in","not","or","and",
+      "gt","gte","lt","lte","is","ilike","like","filter","order","limit","range",
+      "contains","textSearch","maybeSingle"].forEach(m => { q[m] = noop })
+    q.single = async () => ({ data: null, error: null })
+    q.then   = (resolve: any) => Promise.resolve({ data: [], error: null, count: 0 }).then(resolve)
+    return q
+  }
+
+  return {
+    auth: {
+      getSession:             async () => ({ data: { session: null }, error: null }),
+      getUser:                async () => ({ data: { user: null },    error: null }),
+      onAuthStateChange:      () => ({ data: { subscription: { unsubscribe: () => {} } } }),
+      signInWithPassword:     async () => ({ data: null, error: CONFIG_ERROR }),
+      signInWithOAuth:        async () => ({ data: null, error: CONFIG_ERROR }),
+      signUp:                 async () => ({ data: null, error: CONFIG_ERROR }),
+      signOut:                async () => ({ error: null }),
+      resetPasswordForEmail:  async () => ({ data: null, error: null }),
+      updateUser:             async () => ({ data: null, error: null }),
+    },
+    from:    (_: string) => qb(),
+    rpc:     async (..._: any[]) => ({ data: null, error: null }),
+    channel: (_: string) => ({
+      on: () => ({ subscribe: () => ({ status: "CLOSED" }) }),
+      subscribe: (_cb?: any) => {
+        _cb?.("CHANNEL_ERROR")
+        return {}
+      },
+    }),
+    removeChannel: () => {},
+    storage: {
+      from: (_: string) => ({
+        upload:       async () => ({ data: null, error: null }),
+        getPublicUrl: () => ({ data: { publicUrl: "" } }),
+        remove:       async () => ({ data: null, error: null }),
+      }),
+    },
+  } as any
+}
+
+// ─── Singleton real client ────────────────────────────────────────────────────
+// One GoTrueClient per browser tab — prevents auth state conflicts.
 
 let _realClient: ReturnType<typeof createBrowserClient<Database>> | null = null
 
-export const createClient = () => {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-
-  // Detect missing / placeholder env vars
-  const isMissing =
-    !url || !key ||
-    url === "https://your-project.supabase.co" ||
-    url.includes("your-project") ||
-    key === "your-anon-key"
-
-  if (isMissing) {
-    if (typeof window !== "undefined") {
-      console.warn(
-        "[AgentDyne] Supabase env vars not set.\n" +
-        "Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local\n" +
-        "Get them from: Supabase Dashboard → Settings → API"
+export function createClient() {
+  if (!isSupabaseConfigured()) {
+    if (typeof window !== "undefined" && process.env.NODE_ENV !== "test") {
+      console.error(
+        "[AgentDyne] Supabase is NOT configured.\n" +
+        "Required variables:\n" +
+        "  NEXT_PUBLIC_SUPABASE_URL   — your Supabase project URL\n" +
+        "  NEXT_PUBLIC_SUPABASE_ANON_KEY — your public anon key\n\n" +
+        "Get them from: Supabase Dashboard → your project → Settings → API\n\n" +
+        "Note: SUPABASE_SERVICE_ROLE_KEY is server-only. " +
+        "Login requires the NEXT_PUBLIC_ vars, not the service role key.\n\n" +
+        "Cloudflare Pages: add the NEXT_PUBLIC_ vars in Project → Settings → Environment Variables " +
+        "(they must be set as 'production' vars, NOT as build-only secrets)."
       )
     }
-    return DUMMY_CLIENT
+    return makeDummyClient()
   }
 
-  // Singleton — prevents multiple GoTrueClient instances
   if (!_realClient) {
-    _realClient = createBrowserClient<Database>(url, key)
+    _realClient = createBrowserClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY)
   }
   return _realClient
 }

@@ -1,383 +1,301 @@
 """
-types.py — AgentDyne Python SDK type definitions.
-
-All types use dataclasses for zero-overhead construction and
-`__slots__` for memory efficiency in high-throughput scenarios.
+types.py — Typed data classes for the AgentDyne Python SDK.
+All objects are immutable (frozen dataclasses) and serialisable.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterator, List, Literal, Optional
+from typing import Any, Dict, Generic, List, Optional, Type, TypeVar
+
+T = TypeVar("T")
+
 
 # ---------------------------------------------------------------------------
-# Enumerations (Literal types — no enum import overhead)
+# Pagination
 # ---------------------------------------------------------------------------
 
-AgentCategory = Literal[
-    "productivity", "coding", "marketing", "finance", "legal",
-    "customer_support", "data_analysis", "content", "research",
-    "hr", "sales", "devops", "security", "other",
-]
-
-PricingModel = Literal["free", "per_call", "subscription", "freemium"]
-
-AgentStatus = Literal["draft", "pending_review", "active", "suspended", "archived"]
-
-ExecutionStatus = Literal["queued", "running", "success", "failed", "timeout"]
-
-SubscriptionPlan = Literal["free", "starter", "pro", "enterprise"]
-
-WebhookEventType = Literal[
-    "execution.completed", "execution.failed",
-    "agent.approved", "agent.rejected",
-    "subscription.created", "subscription.updated", "subscription.canceled",
-    "payout.processed", "review.posted",
-]
-
-# ---------------------------------------------------------------------------
-# Data classes
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class SellerProfile:
-    id: str
-    full_name: str
-    is_verified: bool
-    username: Optional[str] = None
-    avatar_url: Optional[str] = None
-    bio: Optional[str] = None
-    total_earned: Optional[float] = None
+@dataclass(frozen=True)
+class PaginationMeta:
+    page:       int
+    limit:      int
+    total:      int
+    has_next:   bool
+    has_prev:   bool
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "SellerProfile":
+    def from_dict(cls, d: Dict[str, Any]) -> "PaginationMeta":
+        p = d.get("pagination", d)
         return cls(
-            id=d["id"],
-            full_name=d["full_name"],
-            is_verified=d.get("is_verified", False),
-            username=d.get("username"),
-            avatar_url=d.get("avatar_url"),
-            bio=d.get("bio"),
-            total_earned=d.get("total_earned"),
+            page     = p.get("page", 1),
+            limit    = p.get("limit", 24),
+            total    = p.get("total", 0),
+            has_next = p.get("hasNext", p.get("has_next", False)),
+            has_prev = p.get("hasPrev", p.get("has_prev", False)),
         )
 
 
-@dataclass
+@dataclass(frozen=True)
+class Page(Generic[T]):
+    data:       List[T]
+    pagination: PaginationMeta
+
+    @classmethod
+    def from_dict(cls, raw: Dict[str, Any], item_cls: Type[T]) -> "Page[T]":
+        items  = raw.get("agents") or raw.get("data") or raw.get("executions") or raw.get("reviews") or []
+        parsed = [item_cls.from_dict(i) for i in items]  # type: ignore[attr-defined]
+        return cls(data=parsed, pagination=PaginationMeta.from_dict(raw))
+
+
+# ---------------------------------------------------------------------------
+# Agent
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
 class Agent:
-    id: str
-    seller_id: str
-    name: str
-    slug: str
-    description: str
-    category: str
-    tags: List[str]
-    status: str
-    is_featured: bool
-    is_verified: bool
-    pricing_model: str
-    price_per_call: float
-    subscription_price_monthly: float
-    free_calls_per_month: int
-    model_name: str
-    system_prompt: str
-    temperature: float
-    max_tokens: int
-    timeout_seconds: int
-    average_rating: float
-    total_reviews: int
-    total_executions: int
-    successful_executions: int
-    average_latency_ms: int
-    total_revenue: float
-    version: str
-    created_at: str
-    updated_at: str
-    long_description: Optional[str] = None
-    model_provider: Optional[str] = None
-    icon_url: Optional[str] = None
-    documentation: Optional[str] = None
-    profiles: Optional[SellerProfile] = None
+    id:             str
+    name:           str
+    description:    Optional[str]
+    category:       Optional[str]
+    tags:           List[str]
+    pricing_model:  str                   # "free" | "per_call" | "subscription"
+    price_per_call: Optional[float]
+    model_name:     Optional[str]
+    average_rating: Optional[float]
+    total_reviews:  int
+    total_runs:     int
+    status:         str
+    created_at:     str
+    seller_id:      Optional[str]
+    agent_type:     str                   # "standard" | "browser" | "swarm" | "rag"
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "Agent":
-        profiles = None
-        if d.get("profiles"):
-            profiles = SellerProfile.from_dict(d["profiles"])
         return cls(
-            id=d["id"],
-            seller_id=d["seller_id"],
-            name=d["name"],
-            slug=d["slug"],
-            description=d["description"],
-            category=d["category"],
-            tags=d.get("tags", []),
-            status=d["status"],
-            is_featured=d.get("is_featured", False),
-            is_verified=d.get("is_verified", False),
-            pricing_model=d["pricing_model"],
-            price_per_call=d.get("price_per_call", 0.0),
-            subscription_price_monthly=d.get("subscription_price_monthly", 0.0),
-            free_calls_per_month=d.get("free_calls_per_month", 0),
-            model_name=d.get("model_name", "claude-sonnet-4-20250514"),
-            system_prompt=d.get("system_prompt", ""),
-            temperature=d.get("temperature", 0.7),
-            max_tokens=d.get("max_tokens", 4096),
-            timeout_seconds=d.get("timeout_seconds", 30),
-            average_rating=d.get("average_rating", 0.0),
-            total_reviews=d.get("total_reviews", 0),
-            total_executions=d.get("total_executions", 0),
-            successful_executions=d.get("successful_executions", 0),
-            average_latency_ms=d.get("average_latency_ms", 0),
-            total_revenue=d.get("total_revenue", 0.0),
-            version=d.get("version", "1.0.0"),
-            created_at=d["created_at"],
-            updated_at=d["updated_at"],
-            long_description=d.get("long_description"),
-            model_provider=d.get("model_provider"),
-            icon_url=d.get("icon_url"),
-            documentation=d.get("documentation"),
-            profiles=profiles,
+            id             = d.get("id", ""),
+            name           = d.get("name", ""),
+            description    = d.get("description"),
+            category       = d.get("category"),
+            tags           = d.get("tags") or [],
+            pricing_model  = d.get("pricing_model") or d.get("pricingModel") or "free",
+            price_per_call = d.get("price_per_call") or d.get("pricePerCall"),
+            model_name     = d.get("model_name") or d.get("modelName"),
+            average_rating = d.get("average_rating") or d.get("averageRating"),
+            total_reviews  = d.get("total_reviews") or d.get("totalReviews") or 0,
+            total_runs     = d.get("total_runs")    or d.get("totalRuns")    or 0,
+            status         = d.get("status", "active"),
+            created_at     = d.get("created_at") or d.get("createdAt") or "",
+            seller_id      = d.get("seller_id") or d.get("sellerId"),
+            agent_type     = d.get("agent_type") or d.get("agentType") or "standard",
         )
 
 
-@dataclass
-class Tokens:
-    input: int
-    output: int
+# ---------------------------------------------------------------------------
+# Execution
+# ---------------------------------------------------------------------------
 
-    @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "Tokens":
-        return cls(input=d.get("input", 0), output=d.get("output", 0))
-
-
-@dataclass
-class ExecuteResponse:
-    execution_id: str
-    output: Any
-    latency_ms: int
-    tokens: Tokens
-    cost: float
-
-    @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "ExecuteResponse":
-        return cls(
-            execution_id=d["executionId"],
-            output=d["output"],
-            latency_ms=d["latencyMs"],
-            tokens=Tokens.from_dict(d.get("tokens", {})),
-            cost=d.get("cost", 0.0),
-        )
-
-
-@dataclass
+@dataclass(frozen=True)
 class Execution:
-    id: str
-    agent_id: str
-    user_id: str
-    status: str
-    input: Any
-    output: Optional[Any] = None
-    error_message: Optional[str] = None
-    tokens_input: Optional[int] = None
-    tokens_output: Optional[int] = None
-    latency_ms: Optional[int] = None
-    cost: Optional[float] = None
-    created_at: str = ""
-    completed_at: Optional[str] = None
+    id:              str
+    agent_id:        str
+    status:          str          # "running" | "success" | "failed" | "timeout"
+    input:           Optional[Any]
+    output:          Optional[Any]
+    latency_ms:      Optional[int]
+    cost_usd:        Optional[float]
+    tokens_input:    Optional[int]
+    tokens_output:   Optional[int]
+    correction_attempts: int
+    model:           Optional[str]
+    created_at:      str
+    completed_at:    Optional[str]
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "Execution":
         return cls(
-            id=d["id"],
-            agent_id=d["agent_id"],
-            user_id=d["user_id"],
-            status=d["status"],
-            input=d.get("input"),
-            output=d.get("output"),
-            error_message=d.get("error_message"),
-            tokens_input=d.get("tokens_input"),
-            tokens_output=d.get("tokens_output"),
-            latency_ms=d.get("latency_ms"),
-            cost=d.get("cost"),
-            created_at=d.get("created_at", ""),
-            completed_at=d.get("completed_at"),
+            id                  = d.get("id", ""),
+            agent_id            = d.get("agent_id") or d.get("agentId") or "",
+            status              = d.get("status", "running"),
+            input               = d.get("input"),
+            output              = d.get("output"),
+            latency_ms          = d.get("latency_ms") or d.get("latencyMs"),
+            cost_usd            = d.get("cost_usd") or d.get("costUsd"),
+            tokens_input        = d.get("tokens_input") or d.get("tokensInput"),
+            tokens_output       = d.get("tokens_output") or d.get("tokensOutput"),
+            correction_attempts = d.get("correction_attempts") or d.get("correctionAttempts") or 0,
+            model               = d.get("model"),
+            created_at          = d.get("created_at") or d.get("createdAt") or "",
+            completed_at        = d.get("completed_at") or d.get("completedAt"),
         )
 
 
-@dataclass
-class Pagination:
-    total: int
-    page: int
-    limit: int
-    pages: int
-    has_next: bool
-    has_prev: bool
+@dataclass(frozen=True)
+class ExecuteResponse:
+    execution_id: str
+    output:       Any
+    status:       str
+    latency_ms:   Optional[int]
+    cost:         Optional[float]
+    tokens:       Optional[Dict[str, int]]
+    model:        Optional[str]
+    correction_attempts: int
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "Pagination":
+    def from_dict(cls, d: Dict[str, Any]) -> "ExecuteResponse":
+        # Handle both direct output and nested execution response
+        output = d.get("output") or d.get("text") or d
+        if isinstance(output, dict):
+            output = output.get("text") or output
         return cls(
-            total=d.get("total", 0),
-            page=d.get("page", 1),
-            limit=d.get("limit", 24),
-            pages=d.get("pages", 1),
-            has_next=d.get("hasNext", False),
-            has_prev=d.get("hasPrev", False),
+            execution_id        = d.get("executionId") or d.get("execution_id") or "",
+            output              = output,
+            status              = d.get("status", "success"),
+            latency_ms          = d.get("latencyMs") or d.get("latency_ms"),
+            cost                = d.get("cost") or d.get("cost_usd"),
+            tokens              = d.get("tokens"),
+            model               = d.get("model"),
+            correction_attempts = d.get("correctionAttempts") or d.get("correction_attempts") or 0,
         )
 
 
-@dataclass
-class Page:
-    """A paginated list of items."""
-    data: List[Any]
-    pagination: Pagination
+# ---------------------------------------------------------------------------
+# Streaming
+# ---------------------------------------------------------------------------
 
-    @classmethod
-    def from_dict(cls, d: Dict[str, Any], item_cls: Any) -> "Page":
-        return cls(
-            data=[item_cls.from_dict(item) for item in d.get("data", [])],
-            pagination=Pagination.from_dict(d.get("pagination", {})),
-        )
+@dataclass(frozen=True)
+class StreamChunk:
+    type:         str           # "token" | "start" | "correction" | "done" | "error"
+    delta:        Optional[str] = None   # incremental text (type == "token")
+    execution_id: Optional[str] = None
+    error:        Optional[str] = None
+    confidence:   Optional[float] = None
+    metadata:     Optional[Dict[str, Any]] = None
 
 
-@dataclass
+# ---------------------------------------------------------------------------
+# User
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
 class UserProfile:
-    id: str
-    email: str
-    role: str
-    is_verified: bool
+    id:                str
+    email:             Optional[str]
+    full_name:         Optional[str]
+    username:          Optional[str]
+    avatar_url:        Optional[str]
     subscription_plan: str
-    stripe_connect_onboarded: bool
-    monthly_execution_quota: int
-    executions_used_this_month: int
-    total_earned: float
-    created_at: str
-    updated_at: str
-    full_name: Optional[str] = None
-    username: Optional[str] = None
-    avatar_url: Optional[str] = None
-    bio: Optional[str] = None
-    website: Optional[str] = None
-    company: Optional[str] = None
-    subscription_status: Optional[str] = None
-    quota_reset_date: Optional[str] = None
+    is_seller:         bool
+    created_at:        str
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "UserProfile":
+        p = d.get("profile") or d
         return cls(
-            id=d["id"],
-            email=d["email"],
-            role=d.get("role", "user"),
-            is_verified=d.get("is_verified", False),
-            subscription_plan=d.get("subscription_plan", "free"),
-            stripe_connect_onboarded=d.get("stripe_connect_onboarded", False),
-            monthly_execution_quota=d.get("monthly_execution_quota", 100),
-            executions_used_this_month=d.get("executions_used_this_month", 0),
-            total_earned=d.get("total_earned", 0.0),
-            created_at=d["created_at"],
-            updated_at=d["updated_at"],
-            full_name=d.get("full_name"),
-            username=d.get("username"),
-            avatar_url=d.get("avatar_url"),
-            bio=d.get("bio"),
-            website=d.get("website"),
-            company=d.get("company"),
-            subscription_status=d.get("subscription_status"),
-            quota_reset_date=d.get("quota_reset_date"),
+            id                = p.get("id", ""),
+            email             = p.get("email"),
+            full_name         = p.get("full_name") or p.get("fullName"),
+            username          = p.get("username"),
+            avatar_url        = p.get("avatar_url") or p.get("avatarUrl"),
+            subscription_plan = p.get("subscription_plan") or p.get("subscriptionPlan") or "free",
+            is_seller         = bool(p.get("is_seller") or p.get("isSeller") or False),
+            created_at        = p.get("created_at") or p.get("createdAt") or "",
         )
 
 
-@dataclass
+@dataclass(frozen=True)
 class UserQuota:
-    plan: str
-    quota: int
-    used: int
-    remaining: int
-    percent_used: float
-    resets_at: str
+    plan:                        str
+    executions_used_this_month:  int
+    monthly_execution_quota:     int
+    executions_remaining:        int
+    compute_cap_usd:             Optional[float]
+    compute_used_usd:            Optional[float]
+    reset_date:                  Optional[str]
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "UserQuota":
+        q = d.get("quota") or d
+        used  = q.get("executionsUsedThisMonth") or q.get("executions_used_this_month") or 0
+        quota = q.get("monthlyExecutionQuota")   or q.get("monthly_execution_quota")    or 0
         return cls(
-            plan=d.get("plan", "free"),
-            quota=d.get("quota", 100),
-            used=d.get("used", 0),
-            remaining=d.get("remaining", 100),
-            percent_used=d.get("percentUsed", 0.0),
-            resets_at=d.get("resetsAt", ""),
+            plan                       = q.get("plan", "free"),
+            executions_used_this_month = used,
+            monthly_execution_quota    = quota,
+            executions_remaining       = max(0, quota - used) if quota >= 0 else -1,
+            compute_cap_usd            = q.get("computeCapUsd"),
+            compute_used_usd           = q.get("computeUsedUsd"),
+            reset_date                 = q.get("resetDate"),
         )
 
 
-@dataclass
+# ---------------------------------------------------------------------------
+# Review
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
 class Review:
-    id: str
-    agent_id: str
-    user_id: str
-    rating: int
-    status: str
+    id:         str
+    agent_id:   str
+    rating:     int
+    title:      Optional[str]
+    body:       Optional[str]
+    is_verified: bool
     created_at: str
-    title: Optional[str] = None
-    body: Optional[str] = None
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "Review":
         return cls(
-            id=d["id"],
-            agent_id=d["agent_id"],
-            user_id=d["user_id"],
-            rating=d["rating"],
-            status=d.get("status", "pending"),
-            created_at=d["created_at"],
-            title=d.get("title"),
-            body=d.get("body"),
+            id          = d.get("id", ""),
+            agent_id    = d.get("agent_id") or d.get("agentId") or "",
+            rating      = d.get("rating", 0),
+            title       = d.get("title"),
+            body        = d.get("body"),
+            is_verified = bool(d.get("is_verified") or d.get("isVerified") or False),
+            created_at  = d.get("created_at") or d.get("createdAt") or "",
         )
 
 
-@dataclass
+# ---------------------------------------------------------------------------
+# Notification
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
 class Notification:
-    id: str
-    user_id: str
-    title: str
-    body: str
-    type: str
-    is_read: bool
+    id:         str
+    type:       str
+    title:      str
+    body:       Optional[str]
+    is_read:    bool
+    action_url: Optional[str]
     created_at: str
-    action_url: Optional[str] = None
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "Notification":
         return cls(
-            id=d["id"],
-            user_id=d["user_id"],
-            title=d["title"],
-            body=d["body"],
-            type=d["type"],
-            is_read=d.get("is_read", False),
-            created_at=d["created_at"],
-            action_url=d.get("action_url"),
+            id         = d.get("id", ""),
+            type       = d.get("type", ""),
+            title      = d.get("title", ""),
+            body       = d.get("body"),
+            is_read    = bool(d.get("is_read") or d.get("isRead") or False),
+            action_url = d.get("action_url") or d.get("actionUrl"),
+            created_at = d.get("created_at") or d.get("createdAt") or "",
         )
 
 
-@dataclass
+# ---------------------------------------------------------------------------
+# Webhook
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
 class WebhookEvent:
-    id: str
-    type: str
+    event:     str
     timestamp: str
-    data: Dict[str, Any]
+    data:      Dict[str, Any]
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "WebhookEvent":
         return cls(
-            id=d.get("id", ""),
-            type=d["type"],
-            timestamp=d.get("timestamp", ""),
-            data=d.get("data", {}),
+            event     = d.get("event", ""),
+            timestamp = d.get("timestamp", ""),
+            data      = d.get("data") or {},
         )
-
-
-@dataclass
-class StreamChunk:
-    type: str
-    delta: Optional[str] = None
-    execution_id: Optional[str] = None
-    error: Optional[str] = None
