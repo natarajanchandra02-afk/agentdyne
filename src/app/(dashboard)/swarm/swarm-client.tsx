@@ -471,7 +471,6 @@ function SwarmGraph({ agents, mode, running }:{ agents:Agent[]; mode:SwarmMode; 
     </div>
   )
 
-  // Node component — shows: Name, Role badge, Model, Confidence
   const NodeCard = ({
     x, y, w, h, agent, label, conf, pulse
   }:{
@@ -483,26 +482,21 @@ function SwarmGraph({ agents, mode, running }:{ agents:Agent[]; mode:SwarmMode; 
       <g>
         <rect x={x} y={y} width={w} height={h} rx="10"
           fill={m.bg} stroke={m.border} strokeWidth="1.5"/>
-        {/* Agent name */}
         <text x={x+w/2} y={y+16} textAnchor="middle" fontSize="11" fontWeight="700" fill={m.color}>
           {agent.name.slice(0,18)}
         </text>
-        {/* Role pill */}
         <rect x={x+w/2-26} y={y+20} width={52} height={13} rx="4" fill={`${m.color}18`}/>
         <text x={x+w/2} y={y+30} textAnchor="middle" fontSize="8" fontWeight="600" fill={m.color}>
           {m.role}
         </text>
-        {/* Model */}
         <text x={x+w/2} y={y+42} textAnchor="middle" fontSize="8.5" fill={C.text3}>
           {modelShort(agent.model_name)}
         </text>
-        {/* Confidence */}
         {conf!==undefined&&(
           <text x={x+w/2} y={y+h-7} textAnchor="middle" fontSize="8.5" fontWeight="600" fill={m.color}>
             Conf: {conf}%
           </text>
         )}
-        {/* Animated pulse when running */}
         {pulse&&(
           <rect x={x+4} y={y+h-5} height="3" rx="1.5" fill={m.color} opacity="0.4">
             <animate attributeName="x" values={`${x+4};${x+w-18};${x+4}`} dur="1.8s" repeatCount="indefinite"/>
@@ -513,7 +507,6 @@ function SwarmGraph({ agents, mode, running }:{ agents:Agent[]; mode:SwarmMode; 
     )
   }
 
-  // ── Orchestrate layout ─────────────────────────────────────────────────────
   if (mode==="orchestrate" && agents.length>=2) {
     const planner = agents[0]
     const workers = agents.slice(1, agents.length>3 ? agents.length-1 : agents.length)
@@ -532,7 +525,6 @@ function SwarmGraph({ agents, mode, running }:{ agents:Agent[]; mode:SwarmMode; 
 
     return (
       <div className="flex-1 flex flex-col" style={{minHeight:0}}>
-        {/* Legend */}
         <div className="flex items-center gap-4 px-5 py-2 flex-shrink-0 flex-wrap">
           {LEGEND_ITEMS.map(l=>(
             <div key={l.l} className="flex items-center gap-1.5">
@@ -541,41 +533,33 @@ function SwarmGraph({ agents, mode, running }:{ agents:Agent[]; mode:SwarmMode; 
             </div>
           ))}
         </div>
-        {/* SVG — scrollable */}
         <div className="flex-1 overflow-auto px-2 pb-4" style={{minHeight:0}}>
           <svg width="100%" viewBox={`0 0 ${W} ${TOTAL_H}`}
             style={{minHeight:TOTAL_H,display:"block",width:"100%"}}>
             <Defs/>
-            {/* Planner → workers */}
             {wxs.map((wx,i)=>(
               <line key={i} x1={W/2} y1={PY+NH} x2={wx} y2={WY-4}
                 stroke="#e4e4e7" strokeWidth="1.5"
                 strokeDasharray={running?"5 3":undefined}
                 markerEnd="url(#ag)"/>
             ))}
-            {/* Workers → synth */}
             {synth&&wxs.map((wx,i)=>(
               <line key={i} x1={wx} y1={WY+NH+8} x2={W/2} y2={SY-4}
                 stroke="#e4e4e7" strokeWidth="1.5" markerEnd="url(#ag)"/>
             ))}
-            {/* Synth → output */}
             {synth&&<line x1={W/2} y1={SY+NH} x2={W/2} y2={OY-4}
               stroke={C.green} strokeWidth="2" markerEnd="url(#agg)"/>}
-            {/* Planner */}
             <NodeCard x={(W-NW)/2} y={PY} w={NW} h={NH}
               agent={planner} conf={95} pulse={running}/>
-            {/* Workers */}
             {workers.map((a,i)=>(
               <NodeCard key={a.id}
                 x={wxs[i]-NW/2} y={WY} w={NW} h={NH+8}
                 agent={a} conf={88+i*2}/>
             ))}
-            {/* Synth */}
             {synth&&(
               <NodeCard x={(W-NW)/2} y={SY} w={NW} h={NH+8}
                 agent={synth} conf={91}/>
             )}
-            {/* Final output */}
             <g>
               <rect x={(W-168)/2} y={synth?OY:WY+NH+20}
                 width={168} height={50} rx="10"
@@ -591,7 +575,6 @@ function SwarmGraph({ agents, mode, running }:{ agents:Agent[]; mode:SwarmMode; 
             </g>
           </svg>
         </div>
-        {/* Controls */}
         <div className="flex items-center gap-1 px-4 py-2 flex-shrink-0">
           {[Maximize2,Plus,Minus].map((Icon,i)=>(
             <button key={i} type="button"
@@ -605,7 +588,6 @@ function SwarmGraph({ agents, mode, running }:{ agents:Agent[]; mode:SwarmMode; 
     )
   }
 
-  // ── Parallel / Debate layout ────────────────────────────────────────────────
   const N   = agents.length
   const gap = Math.min(140, (W-60)/Math.max(N,1))
   const xs  = agents.map((_,i)=>(W-(N-1)*gap)/2+i*gap)
@@ -797,7 +779,6 @@ function RightPanel({ agents, mode, rounds, running, result, sessions, templates
           <Brain style={{width:14,height:14,color:C.brand}}/>
           <span style={{fontSize:13,fontWeight:700,color:C.text}}>Swarm Intelligence</span>
         </div>
-        {/* 2×2 KPI */}
         <div className="grid grid-cols-2 gap-2 mb-3">
           {[
             {label:"Predicted Success",v:has?`${m.acc}%`:"—",spark:true, up:true,  sc:C.green},
@@ -814,7 +795,6 @@ function RightPanel({ agents, mode, rounds, running, result, sessions, templates
             </div>
           ))}
         </div>
-        {/* Detail rows */}
         {[
           {Icon:Cpu,        label:"Models Used",      value:has?m.models:"—"},
           {Icon:Zap,        label:"Parallel Workers", value:has?`${m.workers} agents`:"—"},
@@ -840,7 +820,6 @@ function RightPanel({ agents, mode, rounds, running, result, sessions, templates
             <div className="px-4 py-3">
               <p style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:10}}>Post Execution Insights</p>
               <div className="flex gap-3">
-                {/* Donut */}
                 <div className="relative flex-shrink-0" style={{width:52,height:52}}>
                   <svg width="52" height="52" viewBox="0 0 52 52">
                     <circle cx="26" cy="26" r="20" fill="none" stroke={C.greenBg} strokeWidth="7"/>
@@ -1003,19 +982,16 @@ export default function SwarmClient() {
   const router  = useRouter()
   const supabase = createClient()
 
-  // Data
   const [agents,        setAgents]        = useState<Agent[]>([])
   const [agentsLoading, setAgentsLoading] = useState(false)
   const [sessions,      setSessions]      = useState<any[]>([])
   const [templates,     setTemplates]     = useState<SwarmTemplate[]>([])
 
-  // Modals
   const [showTemplates,  setShowTemplates]  = useState(false)
   const [showSaveModal,  setShowSaveModal]  = useState(false)
   const [showTraceModal, setShowTraceModal] = useState(false)
   const [showUpgrade,    setShowUpgrade]    = useState(false)
 
-  // Task & attachments
   const [task,     setTask]    = useState("Research the AI agent marketplace and create an investment memo with key opportunities and risks.")
   const [context,  setContext] = useState("")
   const [showCtx,  setShowCtx] = useState(false)
@@ -1024,7 +1000,6 @@ export default function SwarmClient() {
   const [files,    setFiles]   = useState<AttachedFile[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
 
-  // Config
   const [mode,      setMode]     = useState<SwarmMode>("orchestrate")
   const [rounds,    setRounds]   = useState(3)
   const [cm,        setCm]       = useState("Weighted Confidence")
@@ -1039,14 +1014,12 @@ export default function SwarmClient() {
   const [dynSwarm,  setDynSwarm] = useState(true)
   const [remLearn,  setRemLearn] = useState(true)
 
-  // Execution
   const [running,     setRunning]    = useState(false)
   const [autoAsmBusy, setAutoAsmBusy]= useState(false)
   const [result,      setResult]     = useState<SwarmResult|null>(null)
   const [error,       setError]      = useState<string|null>(null)
   const [copied,      setCopied]     = useState(false)
 
-  // Load data on mount
   useEffect(()=>{
     setAgentsLoading(true)
     supabase.auth.getUser().then(({data:{user}})=>{
@@ -1064,7 +1037,6 @@ export default function SwarmClient() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[])
 
-  // File attach
   const handleFileChange = useCallback((e:ChangeEvent<HTMLInputElement>)=>{
     const picked = Array.from(e.target.files??[])
     if(!picked.length)return
@@ -1086,7 +1058,6 @@ export default function SwarmClient() {
     toast.success(`${newFiles.length} file${newFiles.length>1?"s":""} attached`)
   },[])
 
-  // Variables
   const addVar = () => setVars(v=>[...v,{id:Math.random().toString(36).slice(2),key:"",value:""}])
   const updVar = (id:string,field:"key"|"value",val:string) => setVars(v=>v.map(x=>x.id===id?{...x,[field]:val}:x))
   const delVar = (id:string) => setVars(v=>v.filter(x=>x.id!==id))
@@ -1096,7 +1067,6 @@ export default function SwarmClient() {
     setTask(t);toast.success("Variables applied")
   }
 
-  // Auto assemble
   const handleAutoAssemble = useCallback(async()=>{
     if(!task.trim()){toast.error("Enter a task first");return}
     if(!agents.length){toast.error("No active agents — create some in Builder");return}
@@ -1128,7 +1098,6 @@ export default function SwarmClient() {
     })
   },[])
 
-  // Launch swarm
   const runSwarm = useCallback(async()=>{
     if(!task.trim())        {toast.error("Task is required");return}
     if(selected.length<2)   {toast.error("Select at least 2 agents");return}
@@ -1167,7 +1136,6 @@ export default function SwarmClient() {
     }finally{setRunning(false)}
   },[task,context,files,selected,mode,rounds,remLearn,cm,supabase])
 
-  // Save template
   const saveTemplate = useCallback(async(name:string,desc:string)=>{
     const{data:{user}}=await supabase.auth.getUser()
     if(!user){toast.error("Must be logged in");return}
@@ -1190,13 +1158,11 @@ export default function SwarmClient() {
     <div className="-mx-6 -my-8 flex flex-col"
       style={{height:"100vh",minHeight:720,overflow:"hidden",background:C.bg}}>
 
-      {/* ── Modals ── */}
       <UpgradeModal     open={showUpgrade}    onClose={()=>setShowUpgrade(false)}/>
       <TemplatesModal   open={showTemplates}  onClose={()=>setShowTemplates(false)}  templates={templates} onLoad={t=>{setMode(t.mode as SwarmMode);toast.success(`Loaded: ${t.name}`)}}/>
       <SaveTemplateModal open={showSaveModal} onClose={()=>setShowSaveModal(false)}  mode={mode} agentCount={selAgents.length} onSave={saveTemplate}/>
       <TraceModal       open={showTraceModal} onClose={()=>setShowTraceModal(false)} log={result?.messageLog??[]}/>
 
-      {/* ── Top Bar ── */}
       <header className="flex items-center gap-3 flex-shrink-0"
         style={{padding:"10px 20px",borderBottom:`1px solid ${C.border}`,minHeight:52,background:C.bg,boxShadow:"0 1px 0 rgba(0,0,0,0.03)"}}>
         <div>
@@ -1233,14 +1199,12 @@ export default function SwarmClient() {
         </div>
       </header>
 
-      {/* ── Body ── */}
       <div className="flex flex-1 overflow-hidden">
 
         {/* ══ Left Panel ══ */}
         <aside className="flex-shrink-0 flex flex-col overflow-y-auto"
           style={{width:272,borderRight:`1px solid ${C.border}`,background:C.bg}}>
 
-          {/* Mode selector — full-width strip */}
           <div style={{padding:"10px",borderBottom:`1px solid ${C.border}`}}>
             <div className="grid grid-cols-3 gap-1.5">
               {SWARM_MODES.map(m=>(
@@ -1271,7 +1235,6 @@ export default function SwarmClient() {
             </div>
           </div>
 
-          {/* Task */}
           <div style={{padding:"12px",borderBottom:`1px solid ${C.border}`}}>
             <p style={{fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.07em",color:C.text2,marginBottom:6}}>
               Task
@@ -1282,7 +1245,6 @@ export default function SwarmClient() {
               style={{fontSize:12,lineHeight:1.55,padding:"8px 10px",border:`1px solid ${C.border2}`,color:C.text,background:C.bg,fontFamily:"inherit"}}
               onFocus={e=>(e.target.style.borderColor=C.brand)} onBlur={e=>(e.target.style.borderColor=C.border2)}/>
 
-            {/* Files strip */}
             {files.length>0&&(
               <div className="flex flex-wrap gap-1.5 mt-2">
                 {files.map(f=>(
@@ -1303,7 +1265,6 @@ export default function SwarmClient() {
               </div>
             )}
 
-            {/* Action bar */}
             <div className="flex items-center gap-0.5 mt-2">
               <input ref={fileRef} type="file" multiple className="hidden"
                 accept="image/*,.pdf,.doc,.docx,.txt,.csv,.xlsx,.json,.md"
@@ -1324,7 +1285,6 @@ export default function SwarmClient() {
               <span className="ml-auto tabular-nums" style={{fontSize:9,color:C.text4}}>{task.length}/3000</span>
             </div>
 
-            {/* Context panel */}
             <AnimatePresence>
               {showCtx&&(
                 <motion.div initial={{opacity:0,y:-4}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-4}}
@@ -1345,7 +1305,6 @@ export default function SwarmClient() {
               )}
             </AnimatePresence>
 
-            {/* Variables panel */}
             <AnimatePresence>
               {showVars&&(
                 <motion.div initial={{opacity:0,y:-4}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-4}}
@@ -1378,7 +1337,7 @@ export default function SwarmClient() {
                             <input value={v.key} onChange={e=>updVar(v.id,"key",e.target.value)}
                               placeholder="name" className="focus:outline-none bg-transparent"
                               style={{fontSize:11,width:52,color:C.brand,fontWeight:600,fontFamily:"monospace"}}/>
-                            <span style={{fontSize:10,color:C.text3,fontFamily:"monospace"}}>{"}}"}}</span>
+                            <span style={{fontSize:10,color:C.text3,fontFamily:"monospace"}}>{"}}"}</span>
                           </div>
                           <input value={v.value} onChange={e=>updVar(v.id,"value",e.target.value)}
                             placeholder="value" className="flex-1 focus:outline-none px-2 py-1"
@@ -1502,7 +1461,6 @@ export default function SwarmClient() {
         {/* ══ Centre Panel ══ */}
         <main className="flex-1 flex flex-col overflow-hidden min-w-0" style={{background:C.bg}}>
 
-          {/* Error banner */}
           {error&&(
             <div className="mx-4 mt-3 flex items-start gap-2.5 rounded-xl p-3 flex-shrink-0"
               style={{background:C.redBg,border:`1px solid ${C.redBd}`}}>
@@ -1514,16 +1472,13 @@ export default function SwarmClient() {
             </div>
           )}
 
-          {/* Execution Plan card — shown before launch */}
           <AnimatePresence>
             {showPlan&&(
               <ExecutionPlanCard agents={selAgents} mode={mode} rounds={rounds} visible={showPlan}/>
             )}
           </AnimatePresence>
 
-          {/* Graph + Debate Settings */}
           <div className="flex flex-1 overflow-hidden">
-            {/* Graph */}
             <div className="flex-1 flex flex-col overflow-hidden">
               <div className="flex items-center gap-2 px-4 py-2.5 flex-shrink-0"
                 style={{borderBottom:`1px solid ${C.border}`}}>
@@ -1547,7 +1502,6 @@ export default function SwarmClient() {
               </div>
             </div>
 
-            {/* Debate Settings */}
             {mode==="debate"&&(
               <aside className="flex-shrink-0 overflow-y-auto"
                 style={{width:204,borderLeft:`1px solid ${C.border}`,padding:14}}>
@@ -1622,12 +1576,10 @@ export default function SwarmClient() {
             )}
           </div>
 
-          {/* Live Execution */}
           <LiveExecution
             agents={selAgents} running={running} result={result}
             onTrace={()=>setShowTraceModal(true)}/>
 
-          {/* Final Answer */}
           <AnimatePresence>
             {result?.finalAnswer&&(
               <motion.div initial={{opacity:0,y:6}} animate={{opacity:1,y:0}} exit={{opacity:0}}
