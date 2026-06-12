@@ -297,12 +297,12 @@ export function AgentGenomeLeaderboard() {
                   </td>
                   <td className="px-4 py-3">
                     <span className={cn("text-xs font-bold", row.has_rag ? "text-green-600" : "text-zinc-300")}>
-                      {row.has_rag ? "✓" : "—"}
+                      {row.has_rag ? <CheckCircle className="h-3.5 w-3.5 inline" /> : "—"}
                     </span>
                   </td>
                   <td className="px-4 py-3">
                     <span className={cn("text-xs font-bold", row.has_memory ? "text-blue-600" : "text-zinc-300")}>
-                      {row.has_memory ? "✓" : "—"}
+                      {row.has_memory ? <CheckCircle className="h-3.5 w-3.5 inline" /> : "—"}
                     </span>
                   </td>
                   <td className="px-4 py-3">

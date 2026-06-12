@@ -650,7 +650,7 @@ function EconomicsPanel({ econ }: { econ: Economics | null }) {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <KpiCard label="Gross Revenue"   value={formatCurrency(econ.grossRevenue)}       sub="all time"               icon={DollarSign}  color="text-emerald-600" bg="bg-emerald-50"/>
         <KpiCard label="Total LLM Cost"  value={formatCurrency(econ.totalLLMCost)}       sub="compute spend"          icon={Cpu}          color="text-orange-600"  bg="bg-orange-50"/>
-        <KpiCard label="Gross Margin"    value={`${econ.grossMarginPct.toFixed(1)}%`}    sub={econ.grossMarginPct>=60?"healthy ✓":"watch closely"} icon={TrendingUp} color={econ.grossMarginPct>=60?"text-emerald-600":"text-red-600"} bg={econ.grossMarginPct>=60?"bg-emerald-50":"bg-red-50"}/>
+        <KpiCard label="Gross Margin"    value={`${econ.grossMarginPct.toFixed(1)}%`}    sub={econ.grossMarginPct>=60?"Healthy":"Watch closely"} icon={TrendingUp} color={econ.grossMarginPct>=60?"text-emerald-600":"text-red-600"} bg={econ.grossMarginPct>=60?"bg-emerald-50":"bg-red-50"}/>
         <KpiCard label="Routing Savings" value={formatCurrency(econ.costSavedRouting)}  sub="via smart routing"      icon={Sparkles}     color="text-violet-600"  bg="bg-violet-50"/>
       </div>
 
@@ -769,8 +769,8 @@ function QueueDashboard({ queue }: { queue: QueueData | null }) {
       <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
         <div className="flex items-center justify-between mb-3">
           <p className="text-sm font-semibold text-zinc-900">Queue Health</p>
-          <span className={cn("text-sm font-bold", healthPct>=80?"text-emerald-600":healthPct>=50?"text-amber-600":"text-red-600")}>
-            {healthPct>=80?"Healthy ✓":healthPct>=50?"Moderate":"Overloaded ⚠"}
+          <span className={cn("text-sm font-bold flex items-center gap-1", healthPct>=80?"text-emerald-600":healthPct>=50?"text-amber-600":"text-red-600")}>
+            {healthPct>=80 ? <><CheckCircle className="h-3.5 w-3.5" /> Healthy</> : healthPct>=50 ? "Moderate" : <><AlertTriangle className="h-3.5 w-3.5" /> Overloaded</>}
           </span>
         </div>
         <div className="h-3 bg-zinc-100 rounded-full overflow-hidden">
@@ -784,7 +784,7 @@ function QueueDashboard({ queue }: { queue: QueueData | null }) {
         <SectionCard title="Queued Jobs" icon={Inbox}>
           <div className="max-h-60 overflow-y-auto divide-y divide-zinc-50">
             {queue.queuedJobs.length===0
-              ? <p className="text-center py-8 text-xs text-zinc-400">Queue empty ✓</p>
+              ? <p className="text-center py-8 text-xs text-zinc-400 flex items-center justify-center gap-1.5"><CheckCircle className="h-3.5 w-3.5 text-emerald-400" /> Queue empty</p>
               : queue.queuedJobs.map(j => (
                 <div key={j.id} className="px-5 py-2.5">
                   <p className="text-xs font-medium text-zinc-800 truncate">{j.agent}</p>
@@ -811,7 +811,7 @@ function QueueDashboard({ queue }: { queue: QueueData | null }) {
         <SectionCard title="Dead Letter Queue" sub="last hour failures" icon={SkipForward}>
           <div className="max-h-60 overflow-y-auto divide-y divide-zinc-50">
             {queue.deadLetter.length===0
-              ? <p className="text-center py-8 text-xs text-zinc-400">No failures ✓</p>
+              ? <p className="text-center py-8 text-xs text-zinc-400 flex items-center justify-center gap-1.5"><CheckCircle className="h-3.5 w-3.5 text-emerald-400" /> No failures</p>
               : queue.deadLetter.map(j => (
                 <div key={j.id} className="px-5 py-2.5">
                   <div className="flex items-center gap-2 mb-0.5"><Pill status={j.status}/><p className="text-xs font-medium text-zinc-800 truncate">{j.agent}</p></div>
@@ -1096,7 +1096,7 @@ function ReviewCard({ agent, onApprove, onReject }: {
             </div>
             <p className="text-xs text-zinc-500 line-clamp-2 leading-relaxed">{agent.description}</p>
             {agent.profiles && (
-              <p className="text-[11px] text-zinc-400 mt-1.5">By <strong>{agent.profiles.full_name||agent.profiles.email}</strong>{agent.profiles.is_verified&&" ✓"} · {new Date(agent.created_at).toLocaleDateString()}</p>
+            <p className="text-[11px] text-zinc-400 mt-1.5">By <strong>{agent.profiles.full_name||agent.profiles.email}</strong>{agent.profiles.is_verified && <CheckCircle className="h-3 w-3 inline ml-1 text-blue-400" />} · {new Date(agent.created_at).toLocaleDateString()}</p>
             )}
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
@@ -1194,7 +1194,7 @@ export function AdminClient({
     const r=await fetch("/api/admin/agents",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({agent_id:id,action:"approve"})})
     const j=await r.json(); if(!r.ok){toast.error(j.error||"Failed to approve");return}
     setPending(p=>p.filter(a=>a.id!==id)); setAgents(a=>a.map(x=>x.id===id?{...x,status:"active"}:x))
-    toast.success("Agent approved ✓")
+    toast.success("Agent approved")
   },[])
 
   const rejectReview = useCallback(async(id:string,reason:string)=>{

@@ -5,7 +5,7 @@ import { useRouter, usePathname, useSearchParams } from "next/navigation"
 import {
   Search, X, Star, Zap, CheckCircle, TrendingUp,
   ArrowRight, Filter, Grid3x3, List, AlertCircle, Sparkles,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, Flame,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -47,7 +47,6 @@ const PAGE_SIZE = 24
 function getPricingLabel(agent: any) {
   if (agent.pricing_model === "free")         return "Free"
   if (agent.pricing_model === "per_call") {
-    // Show Free if price is 0 (seed data or promotional) rather than "$0.00/call"
     if (!agent.price_per_call || Number(agent.price_per_call) === 0) return "Free"
     return `${formatCurrency(agent.price_per_call)}/call`
   }
@@ -64,8 +63,6 @@ function getPricingColor(model: string) {
 // ─── Agent card ───────────────────────────────────────────────────────────────
 
 function AgentCard({ agent, view }: { agent: any; view: "grid" | "list" }) {
-  // Bug 1 FIX: use pipeline_use_count directly from agents table
-  // (the agent_pipeline_stats view join does not work with Supabase client FK syntax)
   const pipelineCount = agent.pipeline_use_count ?? 0
 
   if (view === "list") {
@@ -100,9 +97,10 @@ function AgentCard({ agent, view }: { agent: any; view: "grid" | "list" }) {
                 {agent.average_rating?.toFixed(1)}
               </span>
             )}
+            {/* Flame icon replaces 🔥 emoji — list view */}
             {pipelineCount > 0 && (
               <span className="hidden md:flex items-center gap-1 text-[11px] text-primary font-semibold bg-primary/8 border border-primary/20 px-2 py-0.5 rounded-full">
-                🔥 {formatNumber(pipelineCount)} pipeline{pipelineCount > 1 ? "s" : ""}
+                <Flame className="h-3 w-3" /> {formatNumber(pipelineCount)} pipeline{pipelineCount > 1 ? "s" : ""}
               </span>
             )}
             <span className={cn("text-[10px] font-semibold px-2.5 py-1 rounded-full border", getPricingColor(agent.pricing_model))}>
@@ -143,11 +141,13 @@ function AgentCard({ agent, view }: { agent: any; view: "grid" | "list" }) {
 
         <p className="text-xs text-zinc-500 leading-relaxed line-clamp-2 flex-1 mb-3">{agent.description}</p>
 
-        {/* Seller attribution */}
+        {/* Seller attribution — CheckCircle replaces ✓ character */}
         {agent.profiles?.full_name && (
-          <p className="text-[11px] text-zinc-400 mb-3 truncate">
-            by <span className="font-medium text-zinc-500">{agent.profiles.full_name}</span>
-            {agent.profiles.is_verified && <span className="ml-1 text-blue-400">✓</span>}
+          <p className="text-[11px] text-zinc-400 mb-3 truncate flex items-center gap-1">
+            by <span className="font-medium text-zinc-500 ml-0.5">{agent.profiles.full_name}</span>
+            {agent.profiles.is_verified && (
+              <CheckCircle className="h-2.5 w-2.5 text-blue-400 flex-shrink-0 ml-0.5" />
+            )}
           </p>
         )}
 
@@ -162,9 +162,10 @@ function AgentCard({ agent, view }: { agent: any; view: "grid" | "list" }) {
                 {agent.average_rating?.toFixed(1)}
               </span>
             )}
+            {/* Flame icon replaces 🔥 emoji — grid view */}
             {pipelineCount > 0 && (
               <span className="flex items-center gap-1 text-primary font-semibold nums text-[10px]">
-                🔥 {formatNumber(pipelineCount)}
+                <Flame className="h-3 w-3" /> {formatNumber(pipelineCount)}
               </span>
             )}
           </div>
@@ -214,7 +215,7 @@ function SkeletonCard({ view }: { view: "grid" | "list" }) {
   )
 }
 
-// ─── Category carousel with arrow navigation ────────────────────────────────
+// ─── Category carousel ────────────────────────────────────────────────────────
 
 function CategoryCarousel({
   categories, activeCategory, onSelect,
@@ -252,7 +253,6 @@ function CategoryCarousel({
 
   return (
     <div className="relative mb-6">
-      {/* Left fade + arrow */}
       <div className={cn(
         "absolute left-0 top-0 bottom-0 z-10 flex items-center pointer-events-none transition-opacity duration-200",
         canLeft ? "opacity-100" : "opacity-0"
@@ -267,15 +267,12 @@ function CategoryCarousel({
         </button>
       </div>
 
-      {/* Scrollable pill row */}
       <div
         ref={scrollRef}
         className="flex items-center gap-2 overflow-x-auto scrollbar-hide pb-1 px-0"
         style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
       >
-        {/* Left spacer so pills don't hide behind arrow */}
         <div className={cn("flex-shrink-0 transition-all", canLeft ? "w-8" : "w-0")} />
-
         {categories.map(cat => (
           <button
             key={cat}
@@ -296,12 +293,9 @@ function CategoryCarousel({
             {cat === "all" ? "All" : categoryLabel(cat)}
           </button>
         ))}
-
-        {/* Right spacer */}
         <div className={cn("flex-shrink-0 transition-all", canRight ? "w-8" : "w-0")} />
       </div>
 
-      {/* Right fade + arrow */}
       <div className={cn(
         "absolute right-0 top-0 bottom-0 z-10 flex items-center justify-end pointer-events-none transition-opacity duration-200",
         canRight ? "opacity-100" : "opacity-0"
@@ -319,7 +313,7 @@ function CategoryCarousel({
   )
 }
 
-// ─── Featured hero section (Gap 4) ───────────────────────────────────────────
+// ─── Featured hero ────────────────────────────────────────────────────────────
 
 function FeaturedHero({ agents }: { agents: any[] }) {
   const featured = agents.filter(a => a.is_featured).slice(0, 3)
@@ -331,7 +325,7 @@ function FeaturedHero({ agents }: { agents: any[] }) {
         <Sparkles className="h-4 w-4 text-amber-500" />
         <p className="text-sm font-semibold text-zinc-900">Featured Agents</p>
         <span className="text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded-full">
-          Editor's picks
+          Editor&apos;s picks
         </span>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -350,18 +344,24 @@ function FeaturedHero({ agents }: { agents: any[] }) {
                   </p>
                   <p className="text-[11px] text-zinc-400 capitalize">{categoryLabel(agent.category)}</p>
                 </div>
-                <span className="text-[9px] font-bold bg-amber-400/20 text-amber-300 border border-amber-400/30 px-1.5 py-0.5 rounded-full flex-shrink-0">
-                  ★ Featured
+                {/* Star icon replaces ★ character in featured badge */}
+                <span className="text-[9px] font-bold bg-amber-400/20 text-amber-300 border border-amber-400/30 px-1.5 py-0.5 rounded-full flex-shrink-0 flex items-center gap-1">
+                  <Star className="h-2.5 w-2.5 fill-amber-300" /> Featured
                 </span>
               </div>
               <p className="text-xs text-zinc-400 leading-relaxed line-clamp-2 mb-3 relative">{agent.description}</p>
               <div className="flex items-center justify-between relative">
-              <div className="flex items-center gap-3 text-xs text-zinc-500">
-              {(agent.total_executions || 0) > 0 && (
-                <span className="flex items-center gap-1 nums"><Zap className="h-3 w-3" />{formatNumber(agent.total_executions)}</span>
-              )}
-              {(agent.average_rating || 0) > 0 && (
-                  <span className="flex items-center gap-1 nums"><Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />{agent.average_rating?.toFixed(1)}</span>
+                <div className="flex items-center gap-3 text-xs text-zinc-500">
+                  {(agent.total_executions || 0) > 0 && (
+                    <span className="flex items-center gap-1 nums">
+                      <Zap className="h-3 w-3" />{formatNumber(agent.total_executions)}
+                    </span>
+                  )}
+                  {(agent.average_rating || 0) > 0 && (
+                    <span className="flex items-center gap-1 nums">
+                      <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                      {agent.average_rating?.toFixed(1)}
+                    </span>
                   )}
                 </div>
                 <span className="text-[10px] font-semibold text-white bg-white/10 px-2 py-0.5 rounded-full">
@@ -384,24 +384,22 @@ export function MarketplaceLoader() {
   const pathname     = usePathname()
   const supabase     = useRef(createClient()).current
 
-  const [agents,   setAgents]   = useState<any[]>([])
-  const [total,    setTotal]    = useState(0)
-  const [loading,  setLoading]  = useState(true)
-  const [error,    setError]    = useState<string | null>(null)   // Bug 7 FIX
-  const [view,     setView]     = useState<"grid" | "list">("grid")
-  const [search,   setSearch]   = useState(searchParams.get("q") || "")
+  const [agents,  setAgents]  = useState<any[]>([])
+  const [total,   setTotal]   = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [error,   setError]   = useState<string | null>(null)
+  const [view,    setView]    = useState<"grid" | "list">("grid")
+  const [search,  setSearch]  = useState(searchParams.get("q") || "")
   const debouncedSearch = useDebounce(search, 400)
 
   const sp = Object.fromEntries(searchParams.entries())
 
-  // Bug 2 FIX: only delete page when NOT explicitly navigating pages
   const updateParams = useCallback((updates: Record<string, string | undefined>) => {
     const params = new URLSearchParams(sp)
     Object.entries(updates).forEach(([k, v]) => {
       if (v && v !== "all") params.set(k, v)
       else params.delete(k)
     })
-    // Only reset to page 1 when changing filters, NOT when navigating pages
     if (!("page" in updates)) params.delete("page")
     router.push(`${pathname}?${params.toString()}`)
   }, [sp, router, pathname])
@@ -415,7 +413,7 @@ export function MarketplaceLoader() {
     let cancelled = false
     async function load() {
       setLoading(true)
-      setError(null)  // Bug 7 FIX: clear previous error
+      setError(null)
       try {
         const q        = searchParams.get("q")        || undefined
         const category = searchParams.get("category") || undefined
@@ -423,8 +421,6 @@ export function MarketplaceLoader() {
         const sort     = searchParams.get("sort")     || "popular"
         const page     = parseInt(searchParams.get("page") || "1")
 
-        // Bug 1 FIX: removed agent_pipeline_stats join (doesn't exist as FK)
-        // pipeline_use_count is a direct column on agents table (live schema confirmed)
         let query = supabase
           .from("agents")
           .select(
@@ -433,14 +429,7 @@ export function MarketplaceLoader() {
           )
           .eq("status", "active")
 
-        // Bug 8 FIX: search across name, description, and tags — not just name
-        if (q) {
-          // Use OR filter to search multiple fields
-          query = query.or(
-            `name.ilike.%${q}%,description.ilike.%${q}%`
-          )
-        }
-
+        if (q) query = query.or(`name.ilike.%${q}%,description.ilike.%${q}%`)
         if (category && category !== "all") query = query.eq("category", category)
         if (pricing  && pricing  !== "all") query = query.eq("pricing_model", pricing)
 
@@ -452,7 +441,6 @@ export function MarketplaceLoader() {
         query = query.range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1)
 
         const { data, count, error: queryErr } = await query
-
         if (queryErr) throw queryErr
 
         if (!cancelled) {
@@ -462,7 +450,6 @@ export function MarketplaceLoader() {
         }
       } catch (err: any) {
         if (!cancelled) {
-          // Bug 7 FIX: set a real error state instead of showing empty results
           setError(err.message ?? "Failed to load agents")
           setLoading(false)
         }
@@ -487,7 +474,7 @@ export function MarketplaceLoader() {
       <Navbar />
       <div className="pt-14">
 
-        {/* ── Hero search ───────────────────────────────────────────────── */}
+        {/* Hero search */}
         <div className="relative bg-white border-b border-zinc-100">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
             <div className="max-w-2xl">
@@ -520,17 +507,15 @@ export function MarketplaceLoader() {
 
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
 
-          {/* ── Category carousel with arrow navigation ─────────────────── */}
           <CategoryCarousel
             categories={CATEGORIES}
             activeCategory={activeCategory}
             onSelect={cat => updateParams({ category: cat })}
           />
 
-          {/* ── Featured hero (Gap 4) — only when no filters active ───────── */}
           {!hasFilters && !loading && !error && <FeaturedHero agents={agents} />}
 
-          {/* ── Toolbar ───────────────────────────────────────────────────── */}
+          {/* Toolbar */}
           <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
             <div className="flex items-center gap-2">
               <span className="text-sm text-zinc-500">
@@ -545,7 +530,6 @@ export function MarketplaceLoader() {
                 </button>
               )}
             </div>
-
             <div className="flex items-center gap-2">
               <Select value={activePricing} onValueChange={v => updateParams({ pricing: v })}>
                 <SelectTrigger className="w-36 h-9 text-xs rounded-xl border-zinc-200 bg-white">
@@ -581,18 +565,14 @@ export function MarketplaceLoader() {
             </div>
           </div>
 
-          {/* ── Bug 7 FIX: proper error state ────────────────────────────── */}
+          {/* Error state */}
           {error ? (
             <div className="flex flex-col items-center justify-center py-28 text-center">
               <div className="w-14 h-14 rounded-2xl bg-red-50 border border-red-100 flex items-center justify-center mx-auto mb-4">
                 <AlertCircle className="h-7 w-7 text-red-400" />
               </div>
               <h3 className="text-lg font-semibold text-zinc-900 mb-2">Could not load agents</h3>
-              <p className="text-zinc-400 text-sm mb-5 max-w-xs">
-                {error.includes("agent_pipeline_stats")
-                  ? "Database configuration issue. Please run the latest migration and try again."
-                  : error}
-              </p>
+              <p className="text-zinc-400 text-sm mb-5 max-w-xs">{error}</p>
               <Button onClick={() => window.location.reload()} className="rounded-xl bg-zinc-900 text-white hover:bg-zinc-700">
                 Retry
               </Button>
@@ -629,21 +609,21 @@ export function MarketplaceLoader() {
             </div>
           )}
 
-          {/* ── Pagination — Bug 2 already fixed in updateParams above ─────── */}
+          {/* Pagination */}
           {totalPages > 1 && !loading && !error && (
             <div className="flex items-center justify-center gap-3 mt-12">
               <Button variant="outline" disabled={page <= 1}
                 onClick={() => updateParams({ page: String(page - 1) })}
-                className="rounded-xl border-zinc-200 text-sm">
-                ← Previous
+                className="rounded-xl border-zinc-200 text-sm flex items-center gap-1.5">
+                <ChevronLeft className="h-3.5 w-3.5" /> Previous
               </Button>
               <span className="text-sm text-zinc-500 px-2 nums">
                 Page {page} of {totalPages}
               </span>
               <Button variant="outline" disabled={page >= totalPages}
                 onClick={() => updateParams({ page: String(page + 1) })}
-                className="rounded-xl border-zinc-200 text-sm">
-                Next →
+                className="rounded-xl border-zinc-200 text-sm flex items-center gap-1.5">
+                Next <ChevronRight className="h-3.5 w-3.5" />
               </Button>
             </div>
           )}

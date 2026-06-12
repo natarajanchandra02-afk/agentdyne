@@ -465,7 +465,7 @@ export function AgentDetailClient({ agent, reviews: initReviews, user, userSubsc
   const handleTrySample = () => {
     if (testInFlightRef.current) return
     handleTest(sampleData.json)
-    toast(`Loading sample: "${sampleData.label}"`, { icon: "🧪" })
+    toast(`Loading sample: "${sampleData.label}"`)
   }
 
   // Bug 6 FIX: dynamic origin — never hardcode agentdyne.com
@@ -695,7 +695,7 @@ export function AgentDetailClient({ agent, reviews: initReviews, user, userSubsc
                         </span>
                       )}
                       <span className="flex items-center gap-1 nums">
-                        💰 ${traceInfo.cost.toFixed(6)}
+                        <DollarSign className="h-3 w-3" /> ${traceInfo.cost.toFixed(6)}
                       </span>
                     </div>
                   )}

@@ -1,11 +1,9 @@
-import type { Metadata } from "next"
-import DashboardIntegrationsClient from "../integrations-client"
+// REDIRECT: /dashboard/dashboard/integrations → /dashboard/integrations
+// This file exists only to prevent 404s from old links.
+// The correct route is (dashboard)/integrations/page.tsx
 
-export const metadata: Metadata = {
-  title: "Integrations — AgentDyne",
-  description: "Connect your agents to databases, APIs, cloud services and more via MCP.",
-}
+import { redirect } from "next/navigation"
 
-export default function DashboardIntegrationsPage() {
-  return <DashboardIntegrationsClient />
+export default function RedirectIntegrations() {
+  redirect("/dashboard/integrations")
 }

@@ -1,11 +1,9 @@
-import type { Metadata } from "next"
-import RevenueClient from "./revenue-client"
+// REDIRECT: /dashboard/dashboard/revenue → /dashboard/revenue
+// This file exists only to prevent 404s from old links.
+// The correct route is (dashboard)/revenue/page.tsx
 
-export const metadata: Metadata = {
-  title: "Revenue — AgentDyne",
-  description: "Your Shopify dashboard for AI creator earnings — by agent, by day, by source.",
-}
+import { redirect } from "next/navigation"
 
-export default function RevenuePage() {
-  return <RevenueClient />
+export default function RedirectRevenue() {
+  redirect("/dashboard/revenue")
 }
