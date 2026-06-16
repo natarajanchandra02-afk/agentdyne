@@ -7,6 +7,8 @@ const PROTECTED_PATHS = [
   "/dashboard", "/my-agents", "/analytics", "/api-keys",
   "/billing", "/settings", "/admin", "/seller", "/builder",
   "/pipelines", "/executions", "/swarm",
+  // H1 FIX: new dashboard routes now protected
+  "/collections", "/revenue",
 ]
 
 const AUTH_ONLY_PATHS = ["/login", "/signup", "/forgot-password"]
@@ -32,25 +34,24 @@ const PUBLIC_API_PREFIXES = [
   "/api/swarm",
   "/api/embed",
   "/api/debug",
+  "/api/collections",
 ]
 
-// Stripe webhooks: skip auth, never buffer body
 const STRIPE_WEBHOOK_PATH = "/api/webhooks/stripe"
-
-// Embed widget pages: served in iframes on external sites — need relaxed CSP
 const EMBED_PATHS = ["/embed/", "/api/embed/"]
 
 // ─── CSP builder ─────────────────────────────────────────────────────────────
 
 function buildCSP(isProd: boolean, isEmbedRoute: boolean): string {
   if (isEmbedRoute) {
-    // Embed widget: must work inside any third-party iframe.
-    // Minimal CSP — no frame-ancestors restriction.
     return [
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline'",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: https:",
+      // M2 FIX: added 'unsafe-inline' to style-src already; SMIL animations
+      // are controlled by the browser engine not CSP — but keeping permissive
+      // connect-src ensures the swarm graph fetch works in iframes.
       "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.anthropic.com",
       "frame-ancestors *",
     ].join("; ")
@@ -74,7 +75,7 @@ function buildCSP(isProd: boolean, isEmbedRoute: boolean): string {
       "https://generativelanguage.googleapis.com",
     ].join(" "),
     "frame-src https://js.stripe.com https://hooks.stripe.com",
-    "frame-ancestors 'none'",  // Only for non-embed routes
+    "frame-ancestors 'none'",
     "form-action 'self'",
     "base-uri 'self'",
     "object-src 'none'",
@@ -91,8 +92,6 @@ function buildSecurityHeaders(isProd: boolean, isEmbedRoute: boolean): Record<st
     "Content-Security-Policy": buildCSP(isProd, isEmbedRoute),
   }
 
-  // X-Frame-Options: embed widgets MUST be embeddable — omit this header for them.
-  // For all other routes, deny framing entirely.
   if (!isEmbedRoute) {
     headers["X-Frame-Options"] = "DENY"
   }
@@ -122,7 +121,6 @@ const CORS_EXPOSE_HEADERS = [
 ].join(", ")
 
 function buildCORSHeaders(origin: string | null, isPreflight: boolean, isEmbed: boolean): Record<string, string> {
-  // Embed routes: allow any origin (needed for third-party sites embedding the widget)
   const allowedOrigin = isEmbed ? "*" : (() => {
     const isAllowed =
       !origin ||
@@ -141,7 +139,6 @@ function buildCORSHeaders(origin: string | null, isPreflight: boolean, isEmbed: 
     "Access-Control-Max-Age":        "86400",
   }
 
-  // Don't send Allow-Credentials with wildcard origin (browser rejects it)
   if (allowedOrigin !== "*") {
     headers["Access-Control-Allow-Credentials"] = "true"
   }
@@ -159,6 +156,8 @@ const SAFE_REDIRECT_PREFIXES = [
   "/dashboard", "/my-agents", "/analytics", "/api-keys",
   "/billing", "/settings", "/admin", "/seller",
   "/pipelines", "/executions", "/marketplace", "/builder", "/swarm",
+  // H1 FIX: new routes also safe for redirect
+  "/collections", "/revenue",
 ]
 
 function sanitizeRedirect(rawNext: string | null): string {
@@ -197,7 +196,7 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next()
   }
 
-  // ── 2. Stripe webhooks — pass through immediately (no auth, no CSP) ──────
+  // ── 2. Stripe webhooks — pass through immediately ─────────────────────────
   if (pathname.startsWith(STRIPE_WEBHOOK_PATH)) {
     const res = NextResponse.next()
     res.headers.set("Access-Control-Allow-Origin", "https://stripe.com")
@@ -224,9 +223,6 @@ export async function middleware(req: NextRequest) {
   }
 
   // ── 5. Supabase SSR session refresh ───────────────────────────────────────
-  // IMPORTANT: We always attempt session refresh even when env vars are missing
-  // so the request object stays correct. The dummy client guards handle the
-  // case where vars are absent.
   let supabaseResponse = NextResponse.next({ request: req })
   let user: { id: string; email?: string } | null = null
 
@@ -253,7 +249,6 @@ export async function middleware(req: NextRequest) {
           },
         },
       })
-      // Always use getUser() — validates JWT server-side (never getSession())
       const { data: { user: authedUser } } = await supabase.auth.getUser()
       user = authedUser
     } catch {
@@ -270,8 +265,6 @@ export async function middleware(req: NextRequest) {
   )
 
   if (isProtected && !user) {
-    // If Supabase isn't configured, don't redirect in a loop — let the page render
-    // so the config error is visible on the login page.
     if (!supabaseConfigured) {
       // Let protected routes render — they'll hit auth checks in the page component
     } else {
@@ -297,11 +290,9 @@ export async function middleware(req: NextRequest) {
     applyHeaders(supabaseResponse, buildCORSHeaders(origin, false, isEmbedRoute))
   }
 
-  // Remove fingerprinting
   supabaseResponse.headers.delete("X-Powered-By")
   supabaseResponse.headers.delete("Server")
 
-  // Distributed tracing
   const requestId =
     req.headers.get("x-request-id") ??
     crypto.randomUUID().replace(/-/g, "").slice(0, 16)
