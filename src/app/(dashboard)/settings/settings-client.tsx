@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -67,7 +67,14 @@ const tabVariants = {
 
 export function SettingsClient({ user, profile }: Props) {
   const router   = useRouter()
-  const supabase = createClient()
+  // Bug fix: createClient() was being called inline in the component body,
+  // creating a brand-new Supabase client object on every single render.
+  // Memoized via useRef so it's created exactly once per mount — same
+  // pattern as revenue-client.tsx, swarm-client.tsx, collections-client.tsx,
+  // integrations-client.tsx, api-keys-client.tsx, and my-agents-client.tsx.
+  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null)
+  if (!supabaseRef.current) supabaseRef.current = createClient()
+  const supabase = supabaseRef.current
 
   const [activeTab,       setActiveTab]       = useState<TabId>("profile")
   const [savingProfile,   setSavingProfile]   = useState(false)

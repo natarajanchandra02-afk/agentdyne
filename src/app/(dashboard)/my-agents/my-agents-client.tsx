@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useRef } from "react"
 import Link from "next/link"
 import { AnimatePresence, motion } from "framer-motion"
 import {
@@ -245,7 +245,15 @@ export function MyAgentsClient({ agents: init }: { agents: any[] }) {
   )
   const [search, setSearch] = useState("")
   const [filter, setFilter] = useState("all")
-  const supabase = createClient()
+
+  // Bug fix: createClient() was being called inline in the component body,
+  // creating a brand-new Supabase client object on every single render.
+  // Memoized via useRef so it's created exactly once per mount — same
+  // pattern as revenue-client.tsx, swarm-client.tsx, collections-client.tsx,
+  // integrations-client.tsx, and api-keys-client.tsx.
+  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null)
+  if (!supabaseRef.current) supabaseRef.current = createClient()
+  const supabase = supabaseRef.current
 
   const filtered = agents.filter(a => {
     const matchSearch = a.name.toLowerCase().includes(search.toLowerCase()) || (a.description || "").toLowerCase().includes(search.toLowerCase())

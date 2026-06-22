@@ -1,5 +1,5 @@
 import type { Metadata } from "next"
-import RevenueClient from "../dashboard/revenue-client"
+import RevenueClient from "@/app/(dashboard)/dashboard/revenue-client"
 
 export const metadata: Metadata = {
   title: "Revenue — AgentDyne",

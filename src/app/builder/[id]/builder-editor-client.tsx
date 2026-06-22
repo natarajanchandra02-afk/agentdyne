@@ -12,7 +12,7 @@ import {
   Plus, Trash2, Info, ChevronDown, ChevronUp,
   Zap, Settings2, Database, Puzzle, Bot,
   FileText, Link2, Upload, BookOpen,
-  Globe, Lock, ShieldCheck, AlertTriangle, Eye, EyeOff,
+  Globe, ShieldCheck, AlertTriangle, Eye, EyeOff,
   Home, ChevronRight, Trophy, TrendingUp,
   Clock, Banknote, BarChart3, Star,
 } from "lucide-react"
@@ -78,6 +78,14 @@ interface EvalResult {
 }
 
 // ─── Form schema ──────────────────────────────────────────────────────────────
+// NOTE: `is_public` was REMOVED from this schema. The `agents` table has no
+// `is_public` column in the database — visibility is governed entirely by the
+// `status` enum (draft → pending_review → active → suspended/rejected/archived).
+// The old code wrote `is_public` into the same Supabase .update() call as every
+// other field on this form, which meant EVERY save from this editor failed at
+// the database level with "column does not exist", not just the visibility
+// toggle. See submitForReview() below for the real (evaluation-gated) path
+// from draft to live.
 
 const schema = z.object({
   name:                       z.string().min(3).max(60),
@@ -85,7 +93,6 @@ const schema = z.object({
   long_description:           z.string().max(5000).optional(),
   category:                   z.string().min(1),
   tags:                       z.string().optional(),
-  is_public:                  z.boolean().optional(),
   pricing_model:              z.enum(["free","per_call","subscription","freemium"]),
   price_per_call:             z.coerce.number().min(0).optional(),
   subscription_price_monthly: z.coerce.number().min(0).optional(),
@@ -445,7 +452,18 @@ function KnowledgeSection({ items, onChange }: { items: KnowledgeItem[]; onChang
 // ─── BuilderEditorClient — main export ───────────────────────────────────────
 
 export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent: any; defaultTab?: string }) {
-  const supabase = createClient()
+  // Bug fix: createClient() was being called inline in the component body,
+  // creating a brand-new Supabase client object on every single render.
+  // This was especially bad here because `supabase` was a dep of the `onSave`
+  // useCallback below, which is itself a dep of the keyboard-shortcut
+  // useEffect — meaning the keydown listener was being torn down and
+  // re-attached on EVERY render of this large, frequently-re-rendering form.
+  // Memoized via useRef so the client (and therefore onSave's identity) is
+  // stable across renders — same pattern as revenue-client.tsx,
+  // swarm-client.tsx, settings-client.tsx, api-keys-client.tsx, etc.
+  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null)
+  if (!supabaseRef.current) supabaseRef.current = createClient()
+  const supabase = supabaseRef.current
 
   // ── State ─────────────────────────────────────────────────────────────────
   const [saving,      setSaving]      = useState(false)
@@ -470,13 +488,13 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
   const saveTimer = useRef<ReturnType<typeof setTimeout>|null>(null)
 
   // ── Form ──────────────────────────────────────────────────────────────────
+  // NOTE: `is_public` removed from defaultValues — see schema comment above.
   const { register, handleSubmit, watch, setValue, formState: { errors, isDirty } } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
       name: agent.name, description: agent.description,
       long_description: agent.long_description || "",
       category: agent.category, tags: (agent.tags || []).join(", "),
-      is_public: agent.is_public ?? false,
       pricing_model: agent.pricing_model || "free",
       price_per_call: agent.price_per_call || 0,
       subscription_price_monthly: agent.subscription_price_monthly || 0,
@@ -493,10 +511,14 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
   const pricingModel = watch("pricing_model")
   const category     = watch("category") || "default"
   const systemPrompt = watch("system_prompt") ?? ""
-  const isPublic     = watch("is_public")
   const pricePerCall = watch("price_per_call") || 0
   const subPrice     = watch("subscription_price_monthly") || 0
   const bench        = PRICE_BENCH[category] ?? PRICE_BENCH.default!
+
+  // Whether the agent is currently visible on the marketplace.
+  // Derived from `status` (the real source of truth in the DB) rather than
+  // a nonexistent `is_public` column.
+  const isLive = agent.status === "active"
 
   // ── Save ──────────────────────────────────────────────────────────────────
   // BUG FIX: onSave defined as useCallback BEFORE the keyboard-shortcut useEffect
@@ -512,13 +534,15 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
       if (ppc > 0 && ppc < 0.001) { toast.error("Min price: $0.001/call"); setSaveState("idle"); setSaving(false); return }
       if (spm > 999)   { toast.error("Subscription price cannot exceed $999/month"); setSaveState("idle"); setSaving(false); return }
 
+      // NOTE: `is_public` removed from this payload — the column does not
+      // exist on `agents`. It was previously causing every save from this
+      // form to fail at the database level with "column does not exist".
       const { error } = await supabase.from("agents").update({
         name:                       sanitize(data.name),
         description:                sanitize(data.description),
         long_description:           data.long_description ? sanitize(data.long_description) : null,
         category:                   data.category,
         tags:                       (data.tags || "").split(",").map(t => sanitize(t)).filter(Boolean).slice(0, 30),
-        is_public:                  data.is_public ?? false,
         pricing_model:              data.pricing_model,
         price_per_call:             data.price_per_call ?? 0,
         subscription_price_monthly: data.subscription_price_monthly ?? 0,
@@ -566,6 +590,9 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
   // BUG FIX: placed AFTER onSave and runTest are initialized as useCallbacks.
   // Previously this useEffect was above onSave/runTest → TDZ error:
   //   "Cannot access 'eq' before initialization" (Supabase .eq chained inside onSave).
+  // Now that `supabase` is a stable useRef-memoized reference (see fix above),
+  // onSave's identity is also stable across renders, so this listener is
+  // attached once on mount instead of on every render.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey
@@ -618,7 +645,7 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
       <DeployPanel
         agentId={agent.id}
         agentName={agent.name}
-        isPublic={isPublic ?? agent.is_public ?? false}
+        isPublic={isLive}
       />
     ),
 
@@ -701,21 +728,33 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
           </div>
         </div>
 
-        {/* Visibility */}
+        {/* Visibility — read-only status indicator.
+            Previously this was a Private/Public toggle bound to a nonexistent
+            `is_public` column. Visibility is actually governed by `status`,
+            which can only progress draft → pending_review → active via the
+            evaluation gate (see "Submit for Review" button below), or be
+            reverted by an admin. Showing it as a live toggle here would let
+            users believe they can self-publish without evaluation. */}
         <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-          <SectionTitle icon={Globe} title="Visibility" />
-          <div className="flex gap-3">
-            {[{ val: false, icon: Lock, label: "Private", sub: "Only you" }, { val: true, icon: Globe, label: "Public", sub: "On marketplace" }].map(opt => (
-              <button key={String(opt.val)} type="button" onClick={() => setValue("is_public", opt.val)}
-                className={cn("flex-1 p-3.5 rounded-xl border text-left transition-all",
-                  isPublic === opt.val ? "border-zinc-900 bg-zinc-900" : "border-zinc-200 bg-white hover:border-zinc-400")}>
-                <div className="flex items-center gap-2 mb-1">
-                  <opt.icon className={cn("h-4 w-4", isPublic === opt.val ? "text-white" : "text-zinc-500")} />
-                  <span className={cn("font-bold text-sm", isPublic === opt.val ? "text-white" : "text-zinc-900")}>{opt.label}</span>
-                </div>
-                <p className={cn("text-xs", isPublic === opt.val ? "text-zinc-400" : "text-zinc-500")}>{opt.sub}</p>
-              </button>
-            ))}
+          <SectionTitle icon={Globe} title="Visibility" subtitle="Controlled by review status, not a manual toggle" />
+          <div className={cn("flex items-center gap-3 px-4 py-3.5 rounded-xl border",
+            isLive ? "border-green-200 bg-green-50" : "border-zinc-200 bg-zinc-50")}>
+            <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0",
+              isLive ? "bg-green-100" : "bg-zinc-100")}>
+              <Globe className={cn("h-4 w-4", isLive ? "text-green-600" : "text-zinc-400")} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-zinc-900">
+                {isLive ? "Live on Marketplace" : "Not yet public"}
+              </p>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                {isLive
+                  ? "Anyone can find and run this agent."
+                  : agent.status === "pending_review"
+                    ? "Under review — will go live automatically once approved."
+                    : "Submit for review to make this agent public."}
+              </p>
+            </div>
           </div>
         </div>
 

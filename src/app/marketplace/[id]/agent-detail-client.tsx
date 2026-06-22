@@ -6,7 +6,7 @@ import Link from "next/link"
 import {
   Star, Zap, CheckCircle, Play, Code2, BookOpen, MessageSquare,
   Tag, Globe, Clock, TrendingUp, ArrowLeft, Copy, Check, Loader2,
-  Layers, Sparkles, BarChart3, Flag, FolderPlus,
+  Layers, Sparkles, BarChart3, Flag, FolderPlus, DollarSign,
   AlertTriangle, ChevronDown, Send, X,
 } from "lucide-react"
 import { Button }                                    from "@/components/ui/button"
@@ -73,10 +73,17 @@ function GradeBadge({ score }: { score?: number }) {
 
 function RelatedAgents({ category, currentId }: { category: string; currentId: string }) {
   const [related, setRelated] = useState<any[]>([])
+  // Bug fix: createClient() was being called fresh inside the effect body on
+  // every re-run (whenever category/currentId changed), creating a new
+  // Supabase client object each time instead of reusing one. Memoized via
+  // useRef so it's created exactly once per mount — same pattern used
+  // throughout the rest of the app (revenue-client.tsx, swarm-client.tsx,
+  // settings-client.tsx, etc).
+  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null)
+  if (!supabaseRef.current) supabaseRef.current = createClient()
 
   useEffect(() => {
-    const client = createClient()
-    client
+    supabaseRef.current!
       .from("agents")
       .select("id, name, description, total_executions, average_rating, pricing_model, price_per_call, category")
       .eq("status", "active")

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import {
   Key, Plus, Copy, Check, Trash2, EyeOff, AlertTriangle,
@@ -158,7 +158,14 @@ export function ApiKeysClient({ initialKeys }: { initialKeys: ApiKey[] }) {
   const [rateMinute,  setRateMinute]  = useState("60")
   const [creating,    setCreating]    = useState(false)
 
-  const supabase    = createClient()
+  // Bug fix: createClient() was being called inline in the component body,
+  // creating a brand-new Supabase client object on every single render.
+  // Memoized via useRef so the client is created exactly once per mount —
+  // same pattern used in revenue-client.tsx, collections-client.tsx,
+  // swarm-client.tsx, and integrations-client.tsx.
+  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null)
+  if (!supabaseRef.current) supabaseRef.current = createClient()
+  const supabase    = supabaseRef.current
   const exampleKey  = justCreated ?? "agd_YOUR_API_KEY_HERE"
   const activeKeys  = keys.filter(k => k.is_active)
   const revokedKeys = keys.filter(k => !k.is_active)

@@ -147,7 +147,7 @@ export function DeployPanel({ agentId, agentName, isPublic }: Props) {
 
   const generate = useCallback(async () => {
     if (!isPublic) {
-      toast.error("Make your agent public first (Overview → Visibility)")
+      toast.error("Submit your agent for review first — embedding unlocks once it's live")
       return
     }
     setLoading(true)
@@ -215,7 +215,11 @@ export function DeployPanel({ agentId, agentName, isPublic }: Props) {
         </div>
       </div>
 
-      {/* Not-public warning */}
+      {/* Not-live warning.
+          NOTE: copy updated — there is no longer a manual "Visibility" toggle
+          to flip in the Overview tab (agents.is_public never existed as a
+          column; visibility is governed by `status`, gated by evaluation).
+          This now correctly points users at Submit for Review instead. */}
       {!isPublic && (
         <div
           role="alert"
@@ -223,9 +227,9 @@ export function DeployPanel({ agentId, agentName, isPublic }: Props) {
         >
           <AlertCircle className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" aria-hidden="true" />
           <div>
-            <p className="text-sm font-semibold text-amber-800">Agent must be public</p>
+            <p className="text-sm font-semibold text-amber-800">Agent must be live on the marketplace</p>
             <p className="text-xs text-amber-700 mt-0.5">
-              Go to the <strong>Overview</strong> tab → Visibility → set to <strong>Public</strong>, then save.
+              Go to the <strong>Overview</strong> tab and click <strong>Submit for Review</strong>. Embedding unlocks once your agent passes evaluation and goes live.
             </p>
           </div>
         </div>
