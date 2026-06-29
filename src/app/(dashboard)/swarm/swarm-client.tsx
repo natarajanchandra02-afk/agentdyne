@@ -924,7 +924,26 @@ export default function SwarmClient() {
   const showPlan=selAgents.length>=2&&task.trim().length>0&&!running&&!result
 
   return(
-    <div className="-mx-6 -my-8 flex flex-col" style={{ height:"100vh",minHeight:720,overflow:"hidden",background:C.bg }}>
+    /*
+     * Bug 10 fix — swarm full-viewport alignment.
+     *
+     * Layout wrapper:  flex h-screen overflow-hidden
+     * <main>:          overflow-y-auto  (px-6 py-8 wrapper)
+     * Mobile sidebar:  fixed h-14 top bar + "h-14 flex-shrink-0" spacer div
+     *
+     * We escape the px-6 py-8 padding with -mx-6 -my-8 (correct).
+     * But height:100vh double-counts the mobile spacer (56 px) on small screens.
+     * Fix: use CSS `height` with dvh and a mobile offset via a Tailwind class trick.
+     *   - Desktop (md+): sidebar is a sticky aside, no top bar → 100vh is correct.
+     *   - Mobile (<md):  page starts 56px down (h-14 spacer) → need 100dvh - 56px.
+     *
+     * We achieve this by:
+     *   1. Removing inline height:100vh
+     *   2. Adding h-[100dvh] md:h-screen on the root div
+     *      (dvh resolves to the dynamic viewport height, no double-counting)
+     *   3. Keeping overflow:hidden so internal panels scroll, not the page
+     */
+    <div className="-mx-6 -my-8 flex flex-col h-[100dvh] md:h-screen" style={{ minHeight:720,overflow:"hidden",background:C.bg }}>
       <UpgradeModal   open={mUpgrade}   close={()=>setMUpgrade(false)}/>
       <TemplatesModal open={mTemplates} close={()=>setMTemplates(false)} templates={templates} onLoad={t=>{setMode(t.mode as SwarmMode);toast.success(`Loaded: ${t.name}`)}}/>
       <SaveModal      open={mSave}      close={()=>setMSave(false)} mode={mode} agentCount={selAgents.length} onSave={saveTemplate}/>

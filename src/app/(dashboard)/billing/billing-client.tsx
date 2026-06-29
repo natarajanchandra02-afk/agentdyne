@@ -212,23 +212,13 @@ export function BillingClient({ profile, transactions }: Props) {
       </div>
 
       {/* ── Stripe setup banner ─────────────────────────────────────────────── */}
-      {isFreePlan && (
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl px-5 py-4 flex items-start gap-3">
-          <AlertTriangle className="h-5 w-5 text-amber-500 flex-shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-zinc-900">Payments via Stripe — configure before going live</p>
-            <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
-              Set{" "}
-              <code className="bg-amber-100 px-1 rounded font-mono text-[10px]">STRIPE_STARTER_PRICE_ID</code> and{" "}
-              <code className="bg-amber-100 px-1 rounded font-mono text-[10px]">STRIPE_PRO_PRICE_ID</code> in your environment to activate upgrades.
-            </p>
-            <a href="https://dashboard.stripe.com/products" target="_blank" rel="noopener noreferrer"
-              className="text-xs text-primary font-semibold flex items-center gap-1 mt-1.5 hover:underline w-fit">
-              Open Stripe dashboard <ExternalLink className="h-3 w-3" />
-            </a>
-          </div>
-        </div>
-      )}
+      {/* ✅ Bug 6 fix: Removed developer-only Stripe env-var warning from end-user
+       * billing page. Previously showed to EVERY free-plan user: "Set
+       * STRIPE_STARTER_PRICE_ID in your environment" — a setup instruction
+       * meant for developers, not customers.
+       * Stripe misconfiguration is surfaced via: /api/debug/config (dev tool)
+       * + upgradeError banner in billing/page.tsx + toast.error in handleUpgrade.
+       */}
 
       {/* ── Current plan + usage ─────────────────────────────────────────────── */}
       <div className="bg-white border border-zinc-100 rounded-2xl p-6 space-y-5"

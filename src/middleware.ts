@@ -7,8 +7,9 @@ const PROTECTED_PATHS = [
   "/dashboard", "/my-agents", "/analytics", "/api-keys",
   "/billing", "/settings", "/admin", "/seller", "/builder",
   "/pipelines", "/executions", "/swarm",
-  // H1 FIX: new dashboard routes now protected
+  // ✅ Bug fix: added all routes that require auth
   "/collections", "/revenue",
+  "/integrations", "/compose",
 ]
 
 const AUTH_ONLY_PATHS = ["/login", "/signup", "/forgot-password"]
@@ -156,8 +157,8 @@ const SAFE_REDIRECT_PREFIXES = [
   "/dashboard", "/my-agents", "/analytics", "/api-keys",
   "/billing", "/settings", "/admin", "/seller",
   "/pipelines", "/executions", "/marketplace", "/builder", "/swarm",
-  // H1 FIX: new routes also safe for redirect
-  "/collections", "/revenue",
+  // ✅ Bug fix: all new routes also safe for redirect
+  "/collections", "/revenue", "/integrations", "/compose",
 ]
 
 function sanitizeRedirect(rawNext: string | null): string {

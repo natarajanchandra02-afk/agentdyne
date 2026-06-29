@@ -79,7 +79,10 @@ const FAQS = [
   { q: "What happens when I hit my compute cap?", a: "Executions stop with a clear error. The cap protects you from runaway costs. Upgrade instantly from your billing dashboard." },
   { q: "Can free users publish agents?", a: "No. Publishing requires Starter or Pro. This keeps marketplace quality high for everyone." },
   { q: "How does the evaluation harness work?", a: "Submitting for review runs your agent on test cases + hidden adversarial tests. Below 70/100 is rejected instantly with feedback. 70–85 goes to review; 85+ is fast-tracked." },
-  { q: "Is there a free trial?", a: "Starter and Pro have a 14-day free trial. No credit card required to start." },
+  // ✅ Bug 5 fix: removed false "14-day free trial" claim.
+  // The Stripe checkout route never sets trial_period_days so users who signed
+  // up expecting a free trial found none. Replaced with accurate copy.
+  { q: "Is there a free trial?", a: "The Free plan gives you 50 executions to explore every feature — no credit card needed, no time limit. When you\'re ready to scale, upgrade to Starter or Pro from your billing dashboard at any time." },
   { q: "How do seller payouts work?", a: "Sellers receive 80% of every transaction. Monthly payouts via Stripe Connect directly to your bank." },
 ]
 

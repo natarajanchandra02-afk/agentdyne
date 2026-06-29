@@ -11,7 +11,7 @@ import {
   Store, BarChart3, Trophy, DollarSign,
   CreditCard, Settings, HelpCircle,
   LogOut, Zap, ChevronRight, ChevronLeft,
-  Menu, X, ShieldCheck, Crown,
+  Menu, X, ShieldCheck, Crown, Sparkles, Lock,
 } from "lucide-react"
 import { cn, getInitials } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -39,11 +39,14 @@ const WORKSPACE_NAV = [
   { href: "/collections",  icon: FolderOpen,      label: "Collections" },
 ]
 
+// BUILD_NAV — ✅ Bug 7 fix: /integrations added; ✅ Bug 15 fix: /compose added; ✅ Bug 22 fix: planGate flags for Starter+ features
 const BUILD_NAV = [
-  { href: "/builder",      icon: Cpu,     label: "Agent Studio"            },
-  { href: "/pipelines",    icon: Layers,  label: "Pipelines"               },
-  { href: "/swarm",        icon: Network, label: "Swarms",    badge: "New" },
-  { href: "/api-keys",     icon: Key,     label: "API Keys"                },
+  { href: "/builder",      icon: Cpu,     label: "Agent Studio"                              },
+  { href: "/compose",      icon: Sparkles,label: "AI Composer",  badge: "New"              }, // ✅ Bug 15 fix: was missing from nav
+  { href: "/pipelines",    icon: Layers,  label: "Pipelines"                                 },
+  { href: "/swarm",        icon: Network, label: "Swarms",       badge: "Starter+", planGate: true },
+  { href: "/integrations", icon: Plug2,   label: "Integrations"                              }, // ✅ Bug 7 fix: was missing from nav
+  { href: "/api-keys",     icon: Key,     label: "API Keys",     badge: "Starter+", planGate: true },
 ]
 
 const MONETIZE_NAV = [
@@ -64,31 +67,42 @@ const ADMIN_NAV = [
 ]
 
 /* ─── NavItem ─────────────────────────────────────────────────────────────── */
-function NavItem({ href, icon: Icon, label, badge, pathname, newTab }: {
+function NavItem({ href, icon: Icon, label, badge, pathname, newTab, planGate, isFreePlan }: {
   href: string; icon: any; label: string
   badge?: string; pathname: string; newTab?: boolean
+  planGate?: boolean; isFreePlan?: boolean  // ✅ Bug 22: plan gate support
 }) {
-  const active = pathname === href || pathname.startsWith(href + "/")
+  const active   = pathname === href || pathname.startsWith(href + "/")
+  const isLocked = planGate && isFreePlan
   return (
     <Link
-      href={href}
+      href={isLocked ? "/billing?upgrade=starter" : href}
       target={newTab ? "_blank" : undefined}
       rel={newTab ? "noopener noreferrer" : undefined}
+      title={isLocked ? `${label} - requires Starter plan` : undefined}
     >
       <div className={cn(
         "flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all duration-150",
-        active
-          ? "bg-primary/8 text-primary"
-          : "text-zinc-500 hover:text-zinc-900 hover:bg-zinc-50"
+        active    ? "bg-primary/8 text-primary"
+        : isLocked? "text-zinc-400 hover:text-zinc-500 hover:bg-zinc-50"
+        :           "text-zinc-500 hover:text-zinc-900 hover:bg-zinc-50"
       )}>
-        <Icon className={cn("h-4 w-4 flex-shrink-0", active ? "text-primary" : "opacity-60")} />
+        <Icon className={cn(
+          "h-4 w-4 flex-shrink-0",
+          active ? "text-primary" : isLocked ? "opacity-25" : "opacity-60"
+        )} />
         <span className="flex-1 truncate">{label}</span>
-        {badge && (
-          <Badge className="text-[10px] h-4 px-1.5 bg-green-50 text-green-600 border-green-200 font-semibold">
-            {badge}
-          </Badge>
-        )}
-        {active && <ChevronRight className="h-3 w-3 opacity-40 flex-shrink-0" />}
+        {isLocked ? (
+          <Lock className="h-3 w-3 text-zinc-300 flex-shrink-0" />
+        ) : badge ? (
+          <Badge className={cn(
+            "text-[10px] h-4 px-1.5 font-semibold",
+            badge === "New" || badge === "Earn"
+              ? "bg-green-50 text-green-600 border-green-200"
+              : "bg-amber-50 text-amber-600 border-amber-200"
+          )}>{badge}</Badge>
+        ) : null}
+        {active && !isLocked && <ChevronRight className="h-3 w-3 opacity-40 flex-shrink-0" />}
       </div>
     </Link>
   )
@@ -130,6 +144,8 @@ export function DashboardSidebar() {
 
   useEffect(() => { setMobileOpen(false) }, [pathname])
 
+  const isFreePlan = !profile?.subscription_plan || profile.subscription_plan === "free"
+
   const signOut = async () => {
     if (signingOut) return
     setSigningOut(true)
@@ -170,28 +186,28 @@ export function DashboardSidebar() {
         <div>
           <SectionLabel label="Workspace" />
           <div className="space-y-0.5">
-            {WORKSPACE_NAV.map(item => <NavItem key={item.href} {...item} pathname={pathname} />)}
+            {WORKSPACE_NAV.map(item => <NavItem key={item.href} {...item} pathname={pathname} isFreePlan={isFreePlan} />)}
           </div>
         </div>
 
         <div>
           <SectionLabel label="Build" />
           <div className="space-y-0.5">
-            {BUILD_NAV.map(item => <NavItem key={item.href} {...item} pathname={pathname} />)}
+            {BUILD_NAV.map(item => <NavItem key={item.href} {...item} pathname={pathname} isFreePlan={isFreePlan} />)}
           </div>
         </div>
 
         <div>
           <SectionLabel label="Monetize" />
           <div className="space-y-0.5">
-            {MONETIZE_NAV.map(item => <NavItem key={item.href} {...item} pathname={pathname} />)}
+            {MONETIZE_NAV.map(item => <NavItem key={item.href} {...item} pathname={pathname} isFreePlan={isFreePlan} />)}
           </div>
         </div>
 
         <div>
           <SectionLabel label="Account" />
           <div className="space-y-0.5">
-            {ACCOUNT_NAV.map(item => <NavItem key={item.href} {...item} pathname={pathname} />)}
+            {ACCOUNT_NAV.map(item => <NavItem key={item.href} {...item} pathname={pathname} isFreePlan={isFreePlan} />)}
           </div>
         </div>
 

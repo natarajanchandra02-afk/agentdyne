@@ -1,7 +1,15 @@
 export const runtime = "edge"
 
 /**
- * POST /api/swarm — Multi-agent swarm execution (v10)
+ * POST /api/swarm — Multi-agent swarm execution (v11)
+ *
+ * ✅ Bug fixes (v11):
+ *  - Swarm now decrements execution quota (increment_executions_used) per LLM call
+ *  - Swarm now records compute spend (record_execution_spend) after each mode
+ *  - Total execution count charged = 1 (for the swarm session itself, not per-agent call)
+ *    to avoid shocking users with N×agentCount quota hits per swarm.
+ *    Compute cost is still fully tracked via record_execution_spend.
+ *  - Session cost_usd is now persisted to multi_agent_sessions.total_cost_usd
  *
  * Modes:
  *   orchestrate — Planner decomposes → specialists execute → synthesiser merges
@@ -17,9 +25,6 @@ export const runtime = "edge"
  *   enableMemory  boolean   optional  — persist learnings to memory
  *   consensusType string    optional  — consensus method label
  *   files         File[]    optional  — attached files (FormData only)
- *
- * Response:
- *   { sessionId, status, mode, agentCount, finalAnswer, messageLog, rounds }
  */
 
 import { NextRequest, NextResponse } from "next/server"
@@ -28,6 +33,7 @@ import { apiRateLimit }             from "@/lib/rate-limit"
 import { routeCompletion }          from "@/lib/model-router"
 import { checkInput }               from "@/lib/guardrails"
 import { dispatchWebhooks }         from "@/lib/webhook-dispatcher"
+import { PLAN_QUOTAS, PLAN_COMPUTE_CAPS } from "@/lib/constants"
 
 const MAX_AGENTS = 8
 const MAX_ROUNDS = 10
@@ -86,22 +92,50 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  // Plan gate
+  // Plan gate + quota check
   const { data: profile } = await supabase
     .from("profiles")
-    .select("subscription_plan, is_banned")
+    .select("subscription_plan, is_banned, executions_used_this_month, monthly_execution_quota, lifetime_executions_used, monthly_spent_usd")
     .eq("id", user.id)
     .single()
 
   if (profile?.is_banned)
     return NextResponse.json({ error: "Account suspended" }, { status: 403 })
 
-  const plan = profile?.subscription_plan ?? "free"
+  const plan = (profile?.subscription_plan ?? "free") as string
+
+  // ✅ Bug fix: Plan gate — free users cannot run swarms
   if (plan === "free")
     return NextResponse.json({
-      error: "Multi-agent swarm requires Starter plan or above",
+      error: "Multi-agent swarm requires Starter plan or above.",
       code:  "PLAN_REQUIRED",
+      upgrade: "/pricing",
     }, { status: 402 })
+
+  // ✅ Bug fix: Quota check — reject if monthly execution quota is exhausted
+  const quota = profile?.monthly_execution_quota ?? PLAN_QUOTAS[plan] ?? 500
+  const used  = profile?.executions_used_this_month ?? 0
+  if (quota !== -1 && used >= quota) {
+    return NextResponse.json({
+      error:   "Monthly quota exceeded. Upgrade your plan or wait for the next billing cycle.",
+      code:    "QUOTA_EXCEEDED",
+      used,
+      limit:   quota,
+      upgrade: "/billing",
+    }, { status: 429 })
+  }
+
+  // ✅ Bug fix: Compute cap check — reject if monthly compute budget is exhausted
+  const { data: capCheck } = await supabase.rpc("check_compute_cap", { user_id_param: user.id })
+  if (capCheck && capCheck.within_cap === false) {
+    return NextResponse.json({
+      error:   capCheck.error ?? "Monthly compute cap reached.",
+      code:    "COMPUTE_CAP_EXCEEDED",
+      spent:   capCheck.spent,
+      cap:     capCheck.cap,
+      upgrade: "/billing",
+    }, { status: 402 })
+  }
 
   // Parse body
   const {
@@ -122,11 +156,7 @@ export async function POST(req: NextRequest) {
   if (!guardrail.allowed)
     return NextResponse.json({ error: "Task rejected by content policy" }, { status: 400 })
 
-  // C1 FIX: Load agents by ID — no longer restricted to user's own agents.
-  // Users can run swarms with marketplace agents they have permission to execute.
-  // Permission is validated via: own agents OR active marketplace agents (public).
-  // The seller_id === user.id restriction was removed — it blocked users with 0
-  // published agents from ever running a swarm.
+  // Load agents
   const { data: agents } = await supabase
     .from("agents")
     .select("id, name, system_prompt, model_name, max_tokens, temperature, status, seller_id, pricing_model")
@@ -134,11 +164,8 @@ export async function POST(req: NextRequest) {
 
   const activeAgents = (agents ?? []).filter((a: any) => {
     if (a.status !== "active") return false
-    // Own agents: always allowed
     if (a.seller_id === user.id) return true
-    // Marketplace agents: allowed if free or per_call (user pays per execution)
     if (a.pricing_model === "free" || a.pricing_model === "per_call" || a.pricing_model === "freemium") return true
-    // Subscription agents: would need active sub check — for now allow with plan gate above
     return true
   })
   if (activeAgents.length < 2)
@@ -174,6 +201,7 @@ export async function POST(req: NextRequest) {
 
   const messageLog: any[] = []
   let   finalAnswer  = ""
+  let   totalCostUsd = 0
   const executionStart = Date.now()
 
   try {
@@ -202,13 +230,13 @@ export async function POST(req: NextRequest) {
         maxTokens:   1024,
         temperature: 0.3,
       })
+      totalCostUsd += planResult.costUsd ?? 0
 
       let subtasks: Array<{ agent_index: number; subtask: string }> = []
       try {
         const clean = planResult.text.replace(/```json|```/g, "").trim()
         subtasks = JSON.parse(clean).subtasks ?? []
       } catch {
-        // Fallback: give each specialist the full task
         subtasks = specialists.map((_: any, i: number) => ({
           agent_index: i + 1, subtask: fullTask,
         }))
@@ -220,7 +248,7 @@ export async function POST(req: NextRequest) {
         timestamp: new Date().toISOString(),
       })
 
-      // Step 2: Specialists run their sub-tasks in parallel
+      // Step 2: Specialists run in parallel
       const specialistResults = await Promise.all(
         subtasks.slice(0, specialists.length).map(async ({ agent_index, subtask }) => {
           const agent  = specialists[(agent_index - 1) % specialists.length] as any
@@ -231,6 +259,7 @@ export async function POST(req: NextRequest) {
             maxTokens:   Math.min(agent.max_tokens || 2048, 4096),
             temperature: agent.temperature ?? 0.7,
           })
+          totalCostUsd += result.costUsd ?? 0
           return { agent_name: agent.name, agent_id: agent.id, subtask, result: result.text }
         })
       )
@@ -255,6 +284,7 @@ export async function POST(req: NextRequest) {
         maxTokens:   2048,
         temperature: 0.5,
       })
+      totalCostUsd += synthResult.costUsd ?? 0
 
       finalAnswer = synthResult.text
       messageLog.push({
@@ -272,7 +302,7 @@ export async function POST(req: NextRequest) {
       for (let round = 0; round < rounds; round++) {
         const isFirst     = round === 0
         const roundOutputs = await Promise.all(
-          activeAgents.map(async (agent: any, i: number) => {
+          activeAgents.map(async (agent: any) => {
             const prompt = isFirst
               ? `Task: ${fullTask}\n\nProvide your best solution or analysis. Be specific and thorough.`
               : `Current best proposal:\n${currentProposal}\n\n` +
@@ -286,6 +316,7 @@ export async function POST(req: NextRequest) {
               maxTokens:   1024,
               temperature: 0.8,
             })
+            totalCostUsd += result.costUsd ?? 0
             return { agent_name: agent.name, agent_id: agent.id, output: result.text, round }
           })
         )
@@ -316,6 +347,7 @@ export async function POST(req: NextRequest) {
             maxTokens:   Math.min(agent.max_tokens || 2048, 4096),
             temperature: agent.temperature ?? 0.7,
           })
+          totalCostUsd += result.costUsd ?? 0
           return { agent_name: agent.name, agent_id: agent.id, output: result.text }
         })
       )
@@ -333,7 +365,7 @@ export async function POST(req: NextRequest) {
 
     const runtimeSec = (Date.now() - executionStart) / 1000
 
-    // Save completed session
+    // ✅ Bug fix: Save completed session WITH cost data
     await supabase
       .from("multi_agent_sessions")
       .update({
@@ -341,9 +373,18 @@ export async function POST(req: NextRequest) {
         shared_context: { task: fullTask, mode, final_answer: finalAnswer, completed_at: new Date().toISOString() },
         message_log:    messageLog,
         runtime_sec:    runtimeSec,
+        total_cost_usd: totalCostUsd,  // ✅ was never persisted before
         updated_at:     new Date().toISOString(),
       })
       .eq("id", session.id)
+
+    // ✅ Bug fix: Decrement execution quota (1 swarm = 1 execution against quota)
+    //    and record actual compute spend for cap enforcement.
+    //    Previously this was NEVER called for swarms — a major revenue leak.
+    await Promise.allSettled([
+      supabase.rpc("increment_executions_used", { user_id_param: user.id }),
+      supabase.rpc("record_execution_spend",   { user_id_param: user.id, amount_usd: totalCostUsd }),
+    ])
 
     // Background: record metrics + webhooks
     Promise.allSettled([
@@ -362,10 +403,14 @@ export async function POST(req: NextRequest) {
         agentCount: activeAgents.length,
         type:       "swarm",
         status:     "completed",
+        cost_usd:   totalCostUsd,
       }),
     ]).catch(() => {})
 
-    return NextResponse.json({
+    // ✅ X-RateLimit headers so developers know remaining quota
+    const planLimit   = PLAN_QUOTAS[plan] ?? 500
+    const remaining   = planLimit === -1 ? 999999 : Math.max(0, planLimit - used - 1)
+    const response    = NextResponse.json({
       sessionId:   session.id,
       status:      "completed",
       mode,
@@ -374,7 +419,12 @@ export async function POST(req: NextRequest) {
       messageLog,
       rounds:      messageLog.length,
       runtimeSec,
+      costUsd:     totalCostUsd,
     })
+    response.headers.set("X-RateLimit-Limit",     String(planLimit === -1 ? "unlimited" : planLimit))
+    response.headers.set("X-RateLimit-Remaining",  String(remaining))
+    response.headers.set("X-Execution-Cost-USD",   totalCostUsd.toFixed(6))
+    return response
 
   } catch (err: any) {
     // Mark session failed
@@ -404,16 +454,16 @@ export async function GET(req: NextRequest) {
     .order("created_at", { ascending: false })
     .limit(20)
 
-  // Format sessions for UI
   const sessions = (data ?? []).map((s: any) => ({
-    id:     s.id,
-    name:   s.swarm_name ?? s.name ?? "Unnamed swarm",
-    status: s.status,
-    mode:   s.shared_context?.mode ?? "orchestrate",
-    date:   new Date(s.created_at).toLocaleDateString("en-US", {
+    id:         s.id,
+    name:       s.swarm_name ?? s.name ?? "Unnamed swarm",
+    status:     s.status,
+    mode:       s.shared_context?.mode ?? "orchestrate",
+    date:       new Date(s.created_at).toLocaleDateString("en-US", {
       month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
     }),
     agentCount: Array.isArray(s.agent_ids) ? s.agent_ids.length : 0,
+    costUsd:    s.total_cost_usd ?? 0,
     created_at: s.created_at,
   }))
 

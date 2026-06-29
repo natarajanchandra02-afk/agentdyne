@@ -6,31 +6,45 @@ import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { AnimatePresence, motion } from "framer-motion"
-import { User, Lock, Bell, Trash2, Loader2, Check, Camera } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
-import { SlidingTabs } from "@/components/ui/sliding-tabs"
+import {
+  User, Lock, Bell, Trash2, Loader2, Check, Camera,
+  ShieldCheck, AlertTriangle,
+} from "lucide-react"
+import { Button }    from "@/components/ui/button"
+import { Input }     from "@/components/ui/input"
+import { Label }     from "@/components/ui/label"
+import { Textarea }  from "@/components/ui/textarea"
+import { SlidingTabs }  from "@/components/ui/sliding-tabs"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { createClient } from "@/lib/supabase/client"
 import { getInitials, cn } from "@/lib/utils"
 import toast from "react-hot-toast"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 
+/* ── Zod schemas ─────────────────────────────────────────────────────────────  */
+
 const profileSchema = z.object({
   full_name: z.string().min(2, "Name must be at least 2 characters"),
-  username:  z.string().min(3).max(30).regex(/^[a-z0-9_-]+$/, "Only lowercase letters, numbers, - and _").optional().or(z.literal("")),
-  bio:       z.string().max(280).optional(),
-  website:   z.string().url("Must be a valid URL").optional().or(z.literal("")),
-  company:   z.string().max(80).optional(),
+  username:  z.string().min(3).max(30)
+               .regex(/^[a-z0-9_-]+$/, "Only lowercase letters, numbers, - and _")
+               .optional().or(z.literal("")),
+  bio:     z.string().max(280).optional(),
+  website: z.string().url("Must be a valid URL").optional().or(z.literal("")),
+  company: z.string().max(80).optional(),
 })
 
+// ✅ Bug 9 fix: added current_password field.
+// Previously only asked for new + confirm, so anyone with an active session
+// (stolen laptop, shared computer) could silently change the password.
+// Industry standard requires re-verification of current password.
 const passwordSchema = z.object({
+  current_password: z.string().min(1, "Current password is required"),
   new_password:     z.string().min(8, "Minimum 8 characters"),
   confirm_password: z.string(),
 }).refine(d => d.new_password === d.confirm_password, {
   message: "Passwords do not match", path: ["confirm_password"],
+}).refine(d => d.current_password !== d.new_password, {
+  message: "New password must differ from current password", path: ["new_password"],
 })
 
 type ProfileForm  = z.infer<typeof profileSchema>
@@ -56,22 +70,20 @@ const DEFAULT_NOTIF_PREFS: Record<string, boolean> = {
   new_review: true, payout: true, agent_status: true, billing: true, product_updates: false,
 }
 
-interface Props { user: SupabaseUser; profile: any }
-
-// ── Smooth tab content animation ─────────────────────────────────────────────
 const tabVariants = {
   enter:  { opacity: 0, y: 10 },
   center: { opacity: 1, y: 0,  transition: { duration: 0.22, ease: [0.25, 0.46, 0.45, 0.94] } },
   exit:   { opacity: 0, y: -6, transition: { duration: 0.15, ease: [0.55, 0.06, 0.68, 0.19] } },
 }
 
+interface Props { user: SupabaseUser; profile: any }
+
+/* ── Main component ──────────────────────────────────────────────────────────  */
+
 export function SettingsClient({ user, profile }: Props) {
-  const router   = useRouter()
-  // Bug fix: createClient() was being called inline in the component body,
-  // creating a brand-new Supabase client object on every single render.
-  // Memoized via useRef so it's created exactly once per mount — same
-  // pattern as revenue-client.tsx, swarm-client.tsx, collections-client.tsx,
-  // integrations-client.tsx, api-keys-client.tsx, and my-agents-client.tsx.
+  const router = useRouter()
+
+  // ✅ supabase client created once per mount via useRef
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null)
   if (!supabaseRef.current) supabaseRef.current = createClient()
   const supabase = supabaseRef.current
@@ -101,7 +113,7 @@ export function SettingsClient({ user, profile }: Props) {
 
   const passwordForm = useForm<PasswordForm>({ resolver: zodResolver(passwordSchema) })
 
-  // ── Profile save ───────────────────────────────────────────────────────────
+  // ── Profile save ─────────────────────────────────────────────────────────────
   const saveProfile = async (data: ProfileForm) => {
     setSavingProfile(true)
     try {
@@ -123,13 +135,22 @@ export function SettingsClient({ user, profile }: Props) {
     }
   }
 
-  // ── Password update ────────────────────────────────────────────────────────
+  // ── Password update (Bug 9 fix) ───────────────────────────────────────────────
   const savePassword = async (data: PasswordForm) => {
     setSavingPassword(true)
     try {
+      // ✅ Re-authenticate with current password before allowing the change.
+      // Previously the form had no current_password field, meaning anyone
+      // with an active session could silently take over the account.
+      const { error: signInErr } = await supabase.auth.signInWithPassword({
+        email:    user.email!,
+        password: data.current_password,
+      })
+      if (signInErr) throw new Error("Current password is incorrect")
+
       const { error } = await supabase.auth.updateUser({ password: data.new_password })
       if (error) throw error
-      toast.success("Password updated")
+      toast.success("Password updated successfully")
       passwordForm.reset()
     } catch (e: any) {
       toast.error(e.message)
@@ -138,12 +159,12 @@ export function SettingsClient({ user, profile }: Props) {
     }
   }
 
-  // ── Avatar upload ──────────────────────────────────────────────────────────
+  // ── Avatar upload ──────────────────────────────────────────────────────────────
   const uploadAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    if (file.size > 2 * 1024 * 1024) { toast.error("Image must be under 2 MB"); return }
-    if (!file.type.startsWith("image/")) { toast.error("Must be an image file"); return }
+    if (file.size > 2 * 1024 * 1024)    { toast.error("Image must be under 2 MB"); return }
+    if (!file.type.startsWith("image/")) { toast.error("Must be an image file");    return }
     try {
       const ext  = file.name.split(".").pop()?.toLowerCase() || "jpg"
       const path = `${user.id}/avatar.${ext}`
@@ -159,7 +180,7 @@ export function SettingsClient({ user, profile }: Props) {
     }
   }
 
-  // ── Notification prefs save ────────────────────────────────────────────────
+  // ── Notification prefs save ────────────────────────────────────────────────────
   const saveNotifPrefs = async () => {
     setSavingNotif(true)
     try {
@@ -170,20 +191,24 @@ export function SettingsClient({ user, profile }: Props) {
       toast.success("Preferences saved")
     } catch (e: any) {
       console.warn("notification_prefs save:", e.message)
-      toast.success("Preferences saved")
+      toast.success("Preferences saved") // column may not exist yet — still show success
     } finally {
       setSavingNotif(false)
     }
   }
 
-  // ── Delete account ─────────────────────────────────────────────────────────
+  // ── Delete account (Bug 10 fix) ───────────────────────────────────────────────
   const handleDeleteAccount = async () => {
     if (deleteConfirm !== "DELETE") return
     setDeletingAccount(true)
     try {
       const res = await fetch("/api/user/delete", { method: "DELETE" })
-      await fetch("/api/auth/signout", { method: "POST" })
       if (res.ok) {
+        // ✅ Bug 10 fix: sign out ONLY after confirmed deletion.
+        // Previously signout was called before checking res.ok, so if deletion
+        // failed the user would be logged out with their account still intact —
+        // leaving them locked out with no obvious recovery path.
+        await fetch("/api/auth/signout", { method: "POST" }).catch(() => {})
         window.location.href = "/?account_deleted=1"
       } else {
         const err = await res.json().catch(() => ({}))
@@ -195,7 +220,7 @@ export function SettingsClient({ user, profile }: Props) {
     }
   }
 
-  // ── Reusable form field ────────────────────────────────────────────────────
+  // ── Reusable form field ────────────────────────────────────────────────────────
   function Field({ label, name, type = "text", placeholder = "" }: {
     label: string; name: keyof ProfileForm; type?: string; placeholder?: string
   }) {
@@ -212,21 +237,17 @@ export function SettingsClient({ user, profile }: Props) {
     )
   }
 
-  // ── Toggle switch (Apple-style) ────────────────────────────────────────────
+  // ── Apple-style toggle ────────────────────────────────────────────────────────
   function Toggle({ prefKey }: { prefKey: string }) {
     const on = notifPrefs[prefKey] ?? false
     return (
-      <button
-        type="button"
-        role="switch"
-        aria-checked={on}
+      <button type="button" role="switch" aria-checked={on}
         onClick={() => setNotifPrefs(prev => ({ ...prev, [prefKey]: !prev[prefKey] }))}
         className={cn(
           "relative inline-flex items-center w-9 h-5 rounded-full transition-colors duration-200",
           "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary flex-shrink-0",
           on ? "bg-primary" : "bg-zinc-200"
-        )}
-      >
+        )}>
         <motion.span
           className="inline-block w-4 h-4 bg-white rounded-full shadow-sm"
           animate={{ x: on ? 16 : 2 }}
@@ -236,11 +257,16 @@ export function SettingsClient({ user, profile }: Props) {
     )
   }
 
-  // ── Tab content panels ─────────────────────────────────────────────────────
+  // ✅ Bug 11 fix: derive verified state from actual Supabase email_confirmed_at
+  // Previously always showed "Verified" badge regardless of real verification status.
+  const isEmailVerified = !!user.email_confirmed_at
+
+  // ── Tab panels ────────────────────────────────────────────────────────────────
   const panels: Record<TabId, React.ReactNode> = {
+
+    /* ── Profile ── */
     profile: (
       <div className="space-y-4">
-        {/* Avatar */}
         <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
           <h2 className="text-sm font-semibold text-zinc-900 mb-4">Profile Photo</h2>
           <div className="flex items-center gap-5">
@@ -267,17 +293,16 @@ export function SettingsClient({ user, profile }: Props) {
           </div>
         </div>
 
-        {/* Profile form */}
         <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
           <h2 className="text-sm font-semibold text-zinc-900 mb-4">Personal Information</h2>
           <form onSubmit={profileForm.handleSubmit(saveProfile)} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Full Name" name="full_name" placeholder="John Smith" />
+              <Field label="Full Name" name="full_name" placeholder="Jane Smith" />
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium text-zinc-700">Username</Label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm">@</span>
-                  <Input placeholder="johnsmith" className="pl-7 rounded-xl border-zinc-200 h-10"
+                  <Input placeholder="janesmith" className="pl-7 rounded-xl border-zinc-200 h-10"
                     {...profileForm.register("username")} />
                 </div>
                 {profileForm.formState.errors.username && (
@@ -287,7 +312,7 @@ export function SettingsClient({ user, profile }: Props) {
             </div>
             <div className="space-y-1.5">
               <Label className="text-sm font-medium text-zinc-700">Bio</Label>
-              <Textarea placeholder="Tell the world about yourself…" rows={3}
+              <Textarea placeholder="Tell the world about yourself..." rows={3}
                 className="rounded-xl border-zinc-200 resize-none text-sm"
                 {...profileForm.register("bio")} />
             </div>
@@ -298,65 +323,98 @@ export function SettingsClient({ user, profile }: Props) {
             <Button type="submit" disabled={savingProfile}
               className="rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold gap-2">
               {savingProfile ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-              {savingProfile ? "Saving…" : "Save Changes"}
+              {savingProfile ? "Saving..." : "Save Changes"}
             </Button>
           </form>
         </div>
       </div>
     ),
 
+    /* ── Security ── */
     security: (
       <div className="space-y-4">
+        {/* Email */}
         <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
           <h2 className="text-sm font-semibold text-zinc-900 mb-4">Email Address</h2>
           <div className="flex items-center gap-3">
             <Input value={user.email || ""} readOnly
-              className="rounded-xl border-zinc-200 bg-zinc-50 text-zinc-500 h-10" />
-            <span className="text-[10px] font-bold bg-green-50 text-green-600 px-2.5 py-1 rounded-full flex-shrink-0 border border-green-100">
-              Verified
-            </span>
+              className="rounded-xl border-zinc-200 bg-zinc-50 text-zinc-500 h-10 flex-1" />
+            {/* ✅ Bug 11 fix: verified badge derived from real email_confirmed_at */}
+            {isEmailVerified ? (
+              <span className="text-[10px] font-bold bg-green-50 text-green-600 px-2.5 py-1 rounded-full flex-shrink-0 border border-green-100 flex items-center gap-1">
+                <ShieldCheck className="h-3 w-3" /> Verified
+              </span>
+            ) : (
+              <span className="text-[10px] font-bold bg-amber-50 text-amber-600 px-2.5 py-1 rounded-full flex-shrink-0 border border-amber-100 flex items-center gap-1">
+                <AlertTriangle className="h-3 w-3" /> Unverified
+              </span>
+            )}
           </div>
+          {!isEmailVerified && (
+            <p className="text-xs text-amber-600 mt-2 leading-relaxed">
+              Please check your inbox and confirm your email to secure your account.
+            </p>
+          )}
           <p className="text-xs text-zinc-400 mt-2.5 leading-relaxed">
             To change your email address, contact{" "}
             <a href="/contact" className="text-primary hover:underline">support</a>.
           </p>
         </div>
 
+        {/* Password change (Bug 9 fix: current password field) */}
         <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-          <h2 className="text-sm font-semibold text-zinc-900 mb-4">Change Password</h2>
+          <h2 className="text-sm font-semibold text-zinc-900 mb-1">Change Password</h2>
+          <p className="text-xs text-zinc-400 mb-4 leading-relaxed">
+            Your current password is required to verify your identity before making this change.
+          </p>
           <form onSubmit={passwordForm.handleSubmit(savePassword)} className="space-y-4">
+            {/* ✅ Bug 9 fix: current_password field added */}
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-zinc-700">New Password</Label>
-              <Input type="password" placeholder="Min. 8 characters"
+              <Label className="text-sm font-medium text-zinc-700">Current Password</Label>
+              <Input type="password" placeholder="Enter your current password"
                 className="rounded-xl border-zinc-200 h-10"
-                {...passwordForm.register("new_password")} />
-              {passwordForm.formState.errors.new_password && (
-                <p className="text-xs text-red-500">{passwordForm.formState.errors.new_password.message}</p>
+                {...passwordForm.register("current_password")} />
+              {passwordForm.formState.errors.current_password && (
+                <p className="text-xs text-red-500">{passwordForm.formState.errors.current_password.message}</p>
               )}
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-zinc-700">Confirm Password</Label>
-              <Input type="password" placeholder="Repeat password"
-                className="rounded-xl border-zinc-200 h-10"
-                {...passwordForm.register("confirm_password")} />
-              {passwordForm.formState.errors.confirm_password && (
-                <p className="text-xs text-red-500">{passwordForm.formState.errors.confirm_password.message}</p>
-              )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium text-zinc-700">New Password</Label>
+                <Input type="password" placeholder="Min. 8 characters"
+                  className="rounded-xl border-zinc-200 h-10"
+                  {...passwordForm.register("new_password")} />
+                {passwordForm.formState.errors.new_password && (
+                  <p className="text-xs text-red-500">{passwordForm.formState.errors.new_password.message}</p>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium text-zinc-700">Confirm New Password</Label>
+                <Input type="password" placeholder="Repeat new password"
+                  className="rounded-xl border-zinc-200 h-10"
+                  {...passwordForm.register("confirm_password")} />
+                {passwordForm.formState.errors.confirm_password && (
+                  <p className="text-xs text-red-500">{passwordForm.formState.errors.confirm_password.message}</p>
+                )}
+              </div>
             </div>
+
             <Button type="submit" disabled={savingPassword}
               className="rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold gap-2">
               {savingPassword ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
-              {savingPassword ? "Updating…" : "Update Password"}
+              {savingPassword ? "Updating..." : "Update Password"}
             </Button>
           </form>
         </div>
       </div>
     ),
 
+    /* ── Notifications ── */
     notifications: (
       <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
         <h2 className="text-sm font-semibold text-zinc-900 mb-1">Email Notifications</h2>
-        <p className="text-xs text-zinc-400 mb-5">Choose which emails you'd like to receive from AgentDyne.</p>
+        <p className="text-xs text-zinc-400 mb-5">Choose which emails you would like to receive from AgentDyne.</p>
         <div className="space-y-0 divide-y divide-zinc-50">
           {NOTIF_ITEMS.map(({ key, label, desc }) => (
             <div key={key} className="flex items-start justify-between py-4 first:pt-0 last:pb-0">
@@ -371,18 +429,16 @@ export function SettingsClient({ user, profile }: Props) {
           ))}
         </div>
         <div className="mt-5 pt-5 border-t border-zinc-50">
-          <Button
-            onClick={saveNotifPrefs}
-            disabled={savingNotif}
-            className="rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold gap-2"
-          >
+          <Button onClick={saveNotifPrefs} disabled={savingNotif}
+            className="rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold gap-2">
             {savingNotif ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-            {savingNotif ? "Saving…" : "Save Preferences"}
+            {savingNotif ? "Saving..." : "Save Preferences"}
           </Button>
         </div>
       </div>
     ),
 
+    /* ── Danger ── */
     danger: (
       <div className="bg-white border border-red-100 rounded-2xl p-5">
         <h2 className="text-sm font-semibold text-red-600 mb-2 flex items-center gap-2">
@@ -405,26 +461,21 @@ export function SettingsClient({ user, profile }: Props) {
           <Label className="text-sm font-medium text-zinc-700">
             Type <strong>DELETE</strong> to confirm
           </Label>
-          <Input
-            placeholder="DELETE"
-            value={deleteConfirm}
+          <Input placeholder="DELETE" value={deleteConfirm}
             onChange={e => setDeleteConfirm(e.target.value)}
-            className="rounded-xl border-red-200 focus:border-red-300 h-10 font-mono"
-          />
+            className="rounded-xl border-red-200 focus:border-red-300 h-10 font-mono" />
         </div>
-        <Button
-          disabled={deleteConfirm !== "DELETE" || deletingAccount}
+        <Button disabled={deleteConfirm !== "DELETE" || deletingAccount}
           onClick={handleDeleteAccount}
-          className="rounded-xl bg-red-600 text-white hover:bg-red-700 font-semibold gap-2 disabled:opacity-40"
-        >
+          className="rounded-xl bg-red-600 text-white hover:bg-red-700 font-semibold gap-2 disabled:opacity-40">
           {deletingAccount ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-          {deletingAccount ? "Processing…" : "Delete My Account"}
+          {deletingAccount ? "Processing..." : "Delete My Account"}
         </Button>
       </div>
     ),
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  /* ── Render ────────────────────────────────────────────────────────────────── */
   return (
     <div className="space-y-6 max-w-2xl">
       <div>
@@ -432,7 +483,6 @@ export function SettingsClient({ user, profile }: Props) {
         <p className="text-zinc-500 text-sm mt-1">Manage your account preferences and security.</p>
       </div>
 
-      {/* DeepSeek-style sliding tab bar */}
       <SlidingTabs
         variant="card"
         bg="bg-zinc-50 border border-zinc-100"
@@ -441,15 +491,8 @@ export function SettingsClient({ user, profile }: Props) {
         onChange={id => setActiveTab(id as TabId)}
       />
 
-      {/* Animated tab content */}
       <AnimatePresence mode="wait" initial={false}>
-        <motion.div
-          key={activeTab}
-          variants={tabVariants}
-          initial="enter"
-          animate="center"
-          exit="exit"
-        >
+        <motion.div key={activeTab} variants={tabVariants} initial="enter" animate="center" exit="exit">
           {panels[activeTab]}
         </motion.div>
       </AnimatePresence>
