@@ -1,7 +1,7 @@
 import Link from "next/link"
 import { Navbar } from "@/components/layout/navbar"
 import { Footer } from "@/components/layout/footer"
-import { ArrowRight, Clock, TrendingUp, Zap, Brain, Layers, Shield, Globe, DollarSign, GitMerge, Cpu, Lock } from "lucide-react"
+import { ArrowRight, Clock, TrendingUp, Zap, Brain, Layers, Shield, Globe, DollarSign, GitMerge, Cpu, Lock, CreditCard, Gauge, MessageSquareCode } from "lucide-react"
 import type { Metadata } from "next"
 
 export const metadata: Metadata = {
@@ -25,6 +25,34 @@ interface Post {
 }
 
 const POSTS: Post[] = [
+  {
+    slug:     "agentic-commerce-ap2-agent-payments-2026",
+    title:    "Agentic Commerce Has Arrived: What AP2 and Agent Payments Mean for Builders",
+    excerpt:  "Google's Agent Payments Protocol (AP2), Visa's Trusted Agent Protocol, and Mastercard's Agent Pay all shipped within months of each other in 2026. For the first time, an AI agent can hold a cryptographically-scoped mandate to spend real money on a user's behalf. Here's what that infrastructure actually looks like, and why AgentDyne is treating it as a first-class capability, not a bolt-on.",
+    date:     "June 24, 2026",
+    readMin:  9,
+    category: "Architecture",
+    icon:     CreditCard,
+    featured: true,
+  },
+  {
+    slug:     "inference-cost-collapse-small-models-eating-agent-market",
+    title:    "The Great Inference Cost Collapse: Why Cheap Models Are Eating the Agent Market",
+    excerpt:  "Frontier-model token prices have fallen roughly 10x in eighteen months while small-model quality kept closing the gap. That combination is quietly rewriting agent unit economics — the agents winning the AgentDyne leaderboard today are model-routed, not model-loyal. We break down the real cost curves and what they mean for how you should be building.",
+    date:     "June 18, 2026",
+    readMin:  8,
+    category: "Business",
+    icon:     Gauge,
+  },
+  {
+    slug:     "context-engineering-is-the-new-prompt-engineering",
+    title:    "Context Engineering Is the New Prompt Engineering",
+    excerpt:  "\"Prompt engineering\" described a skill that mostly evaporated as models got instruction-following right by default. The discipline that replaced it — deciding what information an agent sees, in what order, from which tools, at what point in a task — is a systems problem, not a wordsmithing one. Here's how that shift shows up concretely in how we'd build an agent on AgentDyne today.",
+    date:     "June 12, 2026",
+    readMin:  9,
+    category: "Engineering",
+    icon:     MessageSquareCode,
+  },
   {
     slug:     "a2a-protocol-agent-to-agent-communication",
     title:    "A2A vs MCP: The Two Protocols Defining How AI Agents Talk to Each Other",
@@ -60,7 +88,6 @@ const POSTS: Post[] = [
     readMin:  7,
     category: "Architecture",
     icon:     Layers,
-    featured: true,
   },
   {
     slug:     "mcp-the-usb-c-of-ai-tools",

@@ -129,11 +129,40 @@ async function handleStripeEvent(event: Stripe.Event, supabase: any): Promise<vo
       }
 
       const priceId = sub.items.data[0]?.price?.id
-      let planKey   = "starter"
+      // ✅ Bug fix: previously defaulted silently to "starter" when no env var
+      // matched the Stripe price ID (typo'd env var, a price created directly
+      // in the Stripe dashboard, or a custom Enterprise contract). That meant a
+      // paying Enterprise customer could quietly get downgraded to Starter
+      // entitlements with no alert anywhere. Now: no match → queue to the
+      // failed_webhooks dead-letter table for manual review instead of guessing.
+      let planKey: string | null = null
 
       for (const key of Object.keys(PLAN_QUOTAS)) {
         const envKey = `STRIPE_${key.toUpperCase()}_PRICE_ID`
         if (process.env[envKey] === priceId) { planKey = key; break }
+      }
+
+      if (!planKey) {
+        console.error(
+          `[stripe-webhook] Unrecognized price ID "${priceId}" for user ${userId} — ` +
+          `no STRIPE_<PLAN>_PRICE_ID env var matches. Refusing to silently assign a plan.`
+        )
+        await supabase.from("failed_webhooks").insert({
+          event_id:   event.id,
+          event_type: event.type,
+          payload:    event as any,
+          error:      `Unrecognized Stripe price ID "${priceId}" — no matching STRIPE_<PLAN>_PRICE_ID env var. User ${userId} was NOT auto-assigned a plan. Manual review required.`,
+        })
+        // Notify the user their upgrade is being reviewed rather than silently
+        // downgrading their entitlements to Starter.
+        await supabase.from("notifications").insert({
+          user_id:    userId,
+          title:      "Subscription update pending review",
+          body:       "We're finalizing your plan setup — this may take a few minutes. Contact support if this persists.",
+          type:       "subscription_update",
+          action_url: "/billing",
+        })
+        return
       }
 
       await supabase.from("profiles").update({

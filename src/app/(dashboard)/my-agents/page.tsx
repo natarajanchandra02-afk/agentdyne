@@ -9,6 +9,12 @@ import { Loader2, Bot } from "lucide-react"
 export default function MyAgentsPage() {
   const [agents, setAgents] = useState<any[] | null>(null)
   const [error,  setError]  = useState<string | null>(null)
+  // ✅ Bug fix: fetch subscription_plan so MyAgentsClient can pre-flight-check
+  // the plan BEFORE running the fake "evaluation harness" loading state.
+  // The actual plan check on the server is instant — showing a 5–15s loading
+  // toast before telling a free user they can't publish wastes their time and
+  // makes the block feel arbitrary instead of expected.
+  const [isFreePlan, setIsFreePlan] = useState<boolean | null>(null)
   const router = useRouter()
   const { user, loading: authLoading } = useUser()
 
@@ -40,6 +46,14 @@ export default function MyAgentsPage() {
         if (fetchErr) { setError(fetchErr.message); setAgents([]) }
         else           { setAgents(data || []) }
       })
+
+    // ✅ Bug fix: fetch plan alongside agents so the submit-for-review flow
+    // can skip straight to an upgrade prompt for free users.
+    supabase.from("profiles").select("subscription_plan").eq("id", user.id).single()
+      .then(({ data }) => {
+        if (!cancelled) setIsFreePlan(!data?.subscription_plan || data.subscription_plan === "free")
+      })
+      .catch(() => { if (!cancelled) setIsFreePlan(false) })
 
     return () => { cancelled = true }
   }, [user, authLoading])
@@ -107,5 +121,5 @@ export default function MyAgentsPage() {
     )
   }
 
-  return <MyAgentsClient agents={agents} />
+  return <MyAgentsClient agents={agents} isFreePlan={!!isFreePlan} />
 }

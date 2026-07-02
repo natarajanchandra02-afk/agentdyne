@@ -234,7 +234,7 @@ function AgentCard({ agent, onSubmitReview, onArchive, onDelete }: {
 
 // ─── Main My-Agents Client ────────────────────────────────────────────────────
 
-export function MyAgentsClient({ agents: init }: { agents: any[] }) {
+export function MyAgentsClient({ agents: init, isFreePlan = false }: { agents: any[]; isFreePlan?: boolean }) {
   const [agents, setAgents] = useState(() =>
     // Sort by status priority: active → in_review → draft → suspended → archived
     [...init].sort((a, b) => {
@@ -262,6 +262,23 @@ export function MyAgentsClient({ agents: init }: { agents: any[] }) {
   })
 
   const submitForReview = async (id: string) => {
+    // ✅ Bug fix: pre-flight plan check BEFORE the loading toast.
+    // Previously ran a fake "Running evaluation harness (5–15s)…" spinner
+    // for every user, even though the server's plan gate rejects free users
+    // instantly — before any actual evaluation work happens. That made a
+    // known, immediate restriction feel like a slow, arbitrary failure.
+    if (isFreePlan) {
+      toast.custom(() => (
+        <div className="flex items-center gap-3 bg-white border border-zinc-200 rounded-xl px-4 py-3 shadow-lg">
+          <span className="text-sm text-zinc-700">Publishing requires Starter plan or above.</span>
+          <a href="/billing?upgrade=starter" className="text-xs font-bold text-primary whitespace-nowrap hover:underline">
+            Upgrade →
+          </a>
+        </div>
+      ), { duration: 6000 })
+      return
+    }
+
     // Run the evaluation harness BEFORE submitting (non-negotiable gate)
     const loadingToast = toast.loading("Running evaluation harness (5–15s)…")
     try {

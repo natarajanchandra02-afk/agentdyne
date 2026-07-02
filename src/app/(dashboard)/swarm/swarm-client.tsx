@@ -814,6 +814,12 @@ export default function SwarmClient() {
   const [result,setResult]           = useState<SwarmResult|null>(null)
   const [error,setError]             = useState<string|null>(null)
   const [copied,setCopied]           = useState(false)
+  // ✅ Bug 13 fix: fetch real plan to show a CONTEXTUAL banner (not a hard gate).
+  // Per Apple HIG / Material Design: let users explore the builder freely so they
+  // understand the value, then gate only the costly action (Launch) — which already
+  // happens via UpgradeModal below when the API returns 402. null = still loading.
+  const [isFreePlan,setIsFreePlan]         = useState<boolean|null>(null)
+  const [bannerDismissed,setBannerDismissed] = useState(false)
 
   useEffect(()=>{
     setAgLoading(true)
@@ -823,6 +829,10 @@ export default function SwarmClient() {
         .eq("seller_id",user.id).eq("status","active")
         .order("created_at",{ascending:false}).limit(50)
         .then(({data})=>{setAgents(data??[]);setAgLoading(false)})
+      // ✅ Bug 13 fix: fetch real subscription plan for the contextual banner
+      supabase.from("profiles").select("subscription_plan").eq("id",user.id).single()
+        .then(({data})=>{setIsFreePlan(!data?.subscription_plan || data.subscription_plan==="free")})
+        .catch(()=>setIsFreePlan(false))
     })
     fetch("/api/swarm").then(r=>r.json()).then(d=>setSessions(d.sessions??[])).catch(()=>{})
     supabase.from("swarm_templates").select("id,name,mode,description,agent_roles")
@@ -988,6 +998,37 @@ export default function SwarmClient() {
           </button>
         </div>
       </header>
+
+      {/* ✅ Bug 13 fix: contextual upgrade banner for free-plan users.
+       * NOT a hard gate — the full builder below remains fully explorable
+       * (pick agents, configure mode, preview the graph). Only the actual
+       * "Launch Swarm" action is gated, via the existing UpgradeModal that
+       * fires when the API returns 402. This matches Apple HIG / Material
+       * Design guidance: show the value before asking for payment. */}
+      <AnimatePresence>
+        {isFreePlan && !bannerDismissed && (
+          <motion.div
+            initial={{ opacity:0, height:0 }} animate={{ opacity:1, height:"auto" }} exit={{ opacity:0, height:0 }}
+            className="flex-shrink-0 overflow-hidden"
+          >
+            <div className="flex items-center gap-3 px-5 py-2.5"
+              style={{ background:`linear-gradient(135deg,${C.brandBg},${C.violetBg})`, borderBottom:`1px solid ${C.brandBd}` }}>
+              <Crown style={{ width:14, height:14, color:C.brand, flexShrink:0 }}/>
+              <p className="text-xs flex-1" style={{ color:C.brandDk }}>
+                <span className="font-bold">Free plan</span> — build and preview swarms freely below. Launching requires Starter.
+              </p>
+              <button type="button" onClick={()=>router.push("/billing?upgrade=starter")}
+                className="flex items-center gap-1.5 rounded-lg font-bold text-[11px] text-white flex-shrink-0"
+                style={{ background:C.brand, padding:"5px 11px" }}>
+                <Rocket style={{ width:10, height:10 }}/> Upgrade
+              </button>
+              <button type="button" onClick={()=>setBannerDismissed(true)} className="flex-shrink-0" aria-label="Dismiss">
+                <X style={{ width:13, height:13, color:C.brand, opacity:0.6 }}/>
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="flex flex-1 overflow-hidden">
         {/* ── Left panel ── */}

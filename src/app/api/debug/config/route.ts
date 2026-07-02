@@ -53,12 +53,25 @@ function check(
 }
 
 export async function GET(req: NextRequest) {
-  // Safety: disable in production if flag is set
-  const disableInProd = process.env.DISABLE_DEBUG_ENDPOINTS === "true"
-  const isProd        = process.env.NODE_ENV === "production"
+  // ✅ Bug fix: flipped from opt-out to opt-in for production safety.
+  // Previously this endpoint stayed LIVE in production unless someone
+  // explicitly set DISABLE_DEBUG_ENDPOINTS=true — an easy thing to forget
+  // when deploying, and .env.example even listed it as commented-out under
+  // "optional overrides." That meant anyone who found this URL on the live
+  // domain could see exactly which of your API keys, Stripe keys, and
+  // Supabase config were SET vs MISSING — real reconnaissance value handed
+  // to an attacker for free, even with no secret values actually exposed.
+  //
+  // New default: in production, this endpoint is OFF unless an operator
+  // explicitly opts back in with ALLOW_DEBUG_ENDPOINTS_IN_PROD=true.
+  const isProd            = process.env.NODE_ENV === "production"
+  const explicitlyAllowed = process.env.ALLOW_DEBUG_ENDPOINTS_IN_PROD === "true"
 
-  if (isProd && disableInProd) {
-    return NextResponse.json({ error: "Debug endpoints are disabled in production" }, { status: 403 })
+  if (isProd && !explicitlyAllowed) {
+    return NextResponse.json(
+      { error: "Debug endpoints are disabled in production. Set ALLOW_DEBUG_ENDPOINTS_IN_PROD=true to enable temporarily." },
+      { status: 403 }
+    )
   }
 
   // Only show full details to localhost or known internal IPs

@@ -75,9 +75,13 @@ export default function HomePage() {
         return { label: "Go to marketplace", href: "/marketplace" }
       return { label: `Upgrade to ${planKey}`, href: `/billing?upgrade=${planKey.toLowerCase()}` }
     }
+    // ✅ Bug fix: removed "trial" language from CTA labels — same false-claim
+    // pattern already fixed on /pricing and /signup. Stripe checkout never sets
+    // trial_period_days, so "Start free trial" was never true. This is the
+    // homepage's own copy of the same CTA logic — third occurrence found.
     if (planKey === "Free")    return { label: "Get started free", href: "/signup" }
-    if (planKey === "Starter") return { label: "Start free trial", href: "/signup?plan=starter" }
-    return { label: "Start Pro trial", href: "/signup?plan=pro" }
+    if (planKey === "Starter") return { label: "Get started with Starter", href: "/signup?plan=starter" }
+    return { label: "Get started with Pro", href: "/signup?plan=pro" }
   }
   return (
     <div className="min-h-screen bg-white">

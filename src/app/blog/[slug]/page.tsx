@@ -37,6 +37,205 @@ function CODE(src: string): string {
 
 const ARTICLES: Record<string, Article> = {
 
+  // ─── NEW ARTICLES: JUNE 2026 — AI MARKET TRENDS ───────────────────────────────
+
+  "agentic-commerce-ap2-agent-payments-2026": {
+    slug:     "agentic-commerce-ap2-agent-payments-2026",
+    title:    "Agentic Commerce Has Arrived: What AP2 and Agent Payments Mean for Builders",
+    excerpt:  "Google's Agent Payments Protocol (AP2), Visa's Trusted Agent Protocol, and Mastercard's Agent Pay all shipped within months of each other in 2026. For the first time, an AI agent can hold a cryptographically-scoped mandate to spend real money on a user's behalf.",
+    date:     "June 24, 2026",
+    readMin:  9,
+    category: "Architecture",
+    author:   { name: "Ravi Nataraj", role: "CEO, AgentDyne" },
+    content:
+      "## The Missing Piece\n\n" +
+      "For two years, the agent ecosystem solved every problem except one: money. Agents could read your calendar, draft your emails, query your database, and call other agents. What they could not do, safely, was buy something on your behalf.\n\n" +
+      "Every workaround was a hack. Store a saved card and let the agent submit a checkout form like a very fast human. Give the agent a pre-loaded gift card and hope it didn't overspend. Route every purchase through a human approval click, which defeats the point of automation in the first place.\n\n" +
+      "In the first half of 2026, that gap closed. Google published the Agent Payments Protocol (AP2) as an open extension to A2A. Visa shipped its Trusted Agent Protocol. Mastercard announced Agent Pay. All three converge on the same idea, implemented slightly differently: a **mandate** — a cryptographically signed, scoped, revocable permission that lets an agent spend within explicit limits without a human in the loop for every transaction.\n\n" +
+      "## What a Mandate Actually Is\n\n" +
+      "A mandate is not a stored credit card. It's closer to an OAuth scope crossed with a spending limit, signed by the user and verifiable by every party in the transaction chain.\n\n" +
+      CODE(
+        "{\n" +
+        "  \"mandate_id\": \"mnd_8f2a91\",\n" +
+        "  \"issuer\": \"user_2b91c4\",\n" +
+        "  \"agent_id\": \"agent_travel-booker-pro\",\n" +
+        "  \"scope\": {\n" +
+        "    \"category\": [\"travel\", \"lodging\"],\n" +
+        "    \"max_per_transaction\": 800.00,\n" +
+        "    \"max_total\": 3000.00,\n" +
+        "    \"currency\": \"USD\",\n" +
+        "    \"expires_at\": \"2026-07-15T00:00:00Z\",\n" +
+        "    \"merchant_allowlist\": [\"united.com\", \"marriott.com\", \"*.expedia.com\"]\n" +
+        "  },\n" +
+        "  \"signature\": \"ed25519:9c3f...a71b\"\n" +
+        "}"
+      ) + "\n\n" +
+      "This mandate says: this specific agent can spend up to $800 per transaction, $3,000 total, only on travel and lodging, only at a named set of merchants, only until mid-July. The signature makes it tamper-evident — a merchant or payment processor can verify the mandate was actually issued by the user, not fabricated by a compromised agent.\n\n" +
+      "## The Transaction Flow\n\n" +
+      CODE(
+        "User                Agent                 Payment Network        Merchant\n" +
+        "  |                    |                        |                    |\n" +
+        "  |- issue mandate --->|                        |                    |\n" +
+        "  |  (signed, scoped)  |                        |                    |\n" +
+        "  |                    |                        |                    |\n" +
+        "  |                    |-- find flight, price ----------------------->|\n" +
+        "  |                    |<-------------------------------- availability|\n" +
+        "  |                    |                        |                    |\n" +
+        "  |                    |-- present mandate ---->|                    |\n" +
+        "  |                    |   + transaction intent |                    |\n" +
+        "  |                    |                        |-- verify signature |\n" +
+        "  |                    |                        |-- check scope      |\n" +
+        "  |                    |                        |-- check limits     |\n" +
+        "  |                    |<-- authorization ------|                    |\n" +
+        "  |                    |                        |                    |\n" +
+        "  |                    |-- complete purchase ------------------------>|\n" +
+        "  |<-- receipt + audit trail ------------------------------------------|"
+      ) + "\n\n" +
+      "Every step is logged. Every mandate has an immutable audit trail. Critically, the merchant and payment network verify the mandate independently — the agent cannot forge a larger scope than what the user actually signed, even if the agent itself is compromised.\n\n" +
+      "## Why This Matters More Than It Sounds\n\n" +
+      "It's tempting to read this as a payments-industry footnote. It isn't. Scoped, verifiable spending authority is the precondition for an entire category of agent that could not exist before: agents that *negotiate, compare, and transact* without a human clicking \"confirm\" on every step.\n\n" +
+      "Concretely, this unlocks:\n\n" +
+      "- **Procurement agents** that compare vendor quotes and place orders within a pre-approved budget\n" +
+      "- **Subscription management agents** that can actually cancel and re-subscribe services, not just recommend it\n" +
+      "- **Travel and logistics agents** that book and rebook without a human refreshing a tab\n" +
+      "- **Agent-to-agent commerce** — one agent paying another agent for a completed task, which is the missing rail for a true agent economy\n\n" +
+      "That last one is the one to watch. Once agents can pay agents, the AgentDyne marketplace stops being a place where humans discover agents and becomes a place where agents can discover and pay *each other* mid-task, autonomously, within the bounds their human set.\n\n" +
+      "## The Trust Problem AP2 Doesn't Solve\n\n" +
+      "Scoped spending authority is necessary but not sufficient. A mandate limits *how much* an agent can spend and *where* — it says nothing about whether the agent is making a *good* purchasing decision within that scope. An agent with a legitimate $800 mandate can still book a bad flight, choose an overpriced hotel, or fall for a merchant-side dark pattern.\n\n" +
+      "This is why we think agent **reputation and evaluation infrastructure** — the kind AgentDyne's registry and composite scoring already provide — becomes more important, not less, as payment infrastructure matures. Spending authority without a track record is just a bigger blast radius for a mediocre agent.\n\n" +
+      "## What We're Building\n\n" +
+      "AgentDyne agents that request commerce capabilities will declare it explicitly in their manifest, the same way they declare MCP tool access today:\n\n" +
+      CODE(
+        "{\n" +
+        "  \"capabilities\": [\"summarise\", \"travel_search\"],\n" +
+        "  \"payment_capable\": true,\n" +
+        "  \"requires_mandate_scope\": [\"travel\", \"lodging\"],\n" +
+        "  \"max_single_transaction_suggested\": 500.00\n" +
+        "}"
+      ) + "\n\n" +
+      "The mandate itself is issued and revoked by the user through the AgentDyne billing dashboard — never stored by the agent, never visible to the agent's builder, and scoped tighter than the platform's own execution quotas. An agent asking for commerce capability without a clear, narrow reason will not clear marketplace review. This is deliberately conservative: payment rails are the one part of the agent economy where \"move fast\" is the wrong instinct.\n\n" +
+      "## What Builders Should Do Now\n\n" +
+      "You do not need to implement AP2 yourself to benefit from this shift. What's worth doing today:\n\n" +
+      "1. **Design output schemas that separate recommendation from action.** An agent that outputs \"book this flight\" as a structured, reviewable object is one mandate integration away from executing it directly.\n" +
+      "2. **Think about your agent's blast radius now.** If your agent could eventually transact, what's the smallest reasonable scope it would need? That's your future mandate request.\n" +
+      "3. **Build trust signals into your agent's behaviour**, not just its output. Composite quality score, response consistency, and error handling all become more valuable in a world where a bad decision costs real money, not just a bad answer.\n\n" +
+      "Agentic commerce is not a 2027 roadmap item. The protocols shipped this year. The infrastructure to use them responsibly is what separates the agents that get trusted with a wallet from the ones that don't.",
+  },
+
+  "inference-cost-collapse-small-models-eating-agent-market": {
+    slug:     "inference-cost-collapse-small-models-eating-agent-market",
+    title:    "The Great Inference Cost Collapse: Why Cheap Models Are Eating the Agent Market",
+    excerpt:  "Frontier-model token prices have fallen roughly 10x in eighteen months while small-model quality kept closing the gap. That combination is quietly rewriting agent unit economics.",
+    date:     "June 18, 2026",
+    readMin:  8,
+    category: "Business",
+    author:   { name: "Anya Krishnan", role: "CTO, AgentDyne" },
+    content:
+      "## A Curve Worth Looking At Twice\n\n" +
+      "Every few months someone on the team pulls up the same chart: blended cost per million tokens for a \"good enough for production\" model, plotted over time. It has been falling since 2023 and it has not stopped.\n\n" +
+      "What's changed recently is not that the line keeps going down — everyone expected that. What's changed is the **slope of quality at the low end**. Eighteen months ago, the cheapest usable models were meaningfully worse at anything requiring multi-step reasoning. Today, the gap between a frontier model and a fast, cheap model on a well-scoped, single-purpose task has narrowed to the point of being irrelevant for a large share of what agents actually do in production.\n\n" +
+      "## The Economics, Concretely\n\n" +
+      "Take a representative AgentDyne workload: a support-ticket classifier that reads an incoming message and outputs a category plus urgency score. It is not a creative task. It does not require deep reasoning. It requires reading comprehension and consistent structured output.\n\n" +
+      "| Approach | Model tier | Cost per 1M calls | P50 latency |\n" +
+      "|---|---|---|---|\n" +
+      "| Frontier-only (2024 default) | Top-tier flagship | ~$4,800 | 1.8s |\n" +
+      "| Frontier-only (2026 pricing) | Top-tier flagship | ~$1,200 | 1.1s |\n" +
+      "| Fast-tier (2026) | Cheapest usable model | ~$85 | 0.3s |\n\n" +
+      "Even holding the task and the model family constant, moving from flagship to fast-tier is roughly a 14x cost reduction and a 6x latency improvement, for a task where the accuracy delta between tiers is now within noise on our eval suite.\n\n" +
+      "That is not a rounding error. At meaningful volume, it's the difference between an agent that is economically viable to run for free and one that has to be metered.\n\n" +
+      "## Why This Isn't \"Just Use the Cheap Model\"\n\n" +
+      "The naive conclusion — always use the cheapest model — is wrong, and the reason why is the actual insight. Task difficulty is not uniform within a single agent, let alone across an agent portfolio. A support-ticket classifier is a fast-tier task. The financial risk assessment two steps later in the same pipeline is not.\n\n" +
+      "This is why the trend line isn't \"cheap models win,\" it's **model routing wins**. The agents climbing the AgentDyne leaderboard fastest right now are not the ones built on the most expensive model — they're the ones that decompose a task well enough to send each sub-step to the cheapest model that can handle it reliably, and reserve the expensive model for the one or two steps that actually need it.\n\n" +
+      "We covered this pattern in depth in our microagents piece, but the cost collapse changes the calculus of *when it's worth doing*. Eighteen months ago, splitting a task into a routed pipeline saved meaningful money but added real engineering overhead. Today the price gap between tiers is wide enough that the overhead pays for itself almost immediately, even on modest-volume agents.\n\n" +
+      "## What This Does to Pricing\n\n" +
+      "The second-order effect is on how agents get priced in the marketplace. A builder pricing per-call has to account for the fact that their input cost is now a moving target, and it's been moving in one direction only.\n\n" +
+      CODE(
+        "// Naive: hardcode a per-call price and hope margins hold\n" +
+        "const PRICE_PER_CALL = 0.02  // set once, six months ago\n\n" +
+        "// Better: price relative to a cost floor that gets recalculated\n" +
+        "const marginTarget = 0.65  // 65% gross margin\n" +
+        "const estimatedCost = await estimateCallCost(agentConfig)\n" +
+        "const pricePerCall = estimatedCost / (1 - marginTarget)"
+      ) + "\n\n" +
+      "Agents priced against a static cost assumption from a year ago are, functionally, pricing themselves out of the market or leaving money on the table — usually the latter, since builders tend to price conservatively and forget to revisit it once the underlying cost has fallen.\n\n" +
+      "## What This Means for the Free Tier\n\n" +
+      "There's a reason free-plan quotas across the industry have been quietly rising rather than shrinking, despite usage growth. A free-tier execution routed to a fast-tier model costs a platform a fraction of what it cost when the only viable model was a flagship. The economics of giving away meaningful free usage got dramatically better, not worse, even as usage volume climbed.\n\n" +
+      "This is a genuinely different environment than the one most \"AI is expensive to run\" intuitions were formed in. Compute budgets that made sense in 2024 are frequently over-provisioned for the same workload in 2026 — worth revisiting rather than assuming they still hold.\n\n" +
+      "## The Part That Doesn't Get Cheaper\n\n" +
+      "One thing the cost collapse has not touched: the cost of being wrong. A fast, cheap model that occasionally produces a malformed or subtly incorrect output can cost more in downstream cleanup than the token savings were worth, especially in a multi-step pipeline where an early error compounds.\n\n" +
+      "This is the argument for output schema validation and eval suites being non-negotiable in a cost-routed world, not optional polish. When the cheap path is genuinely ten times cheaper, the temptation to route everything there is strong. The discipline that keeps that safe is exactly the production checklist we've written about elsewhere: schema validation catches drift before it costs you, and an eval suite tells you precisely which steps can safely move down a tier and which can't.\n\n" +
+      "## Where This Goes Next\n\n" +
+      "We don't think the cost curve is done falling, and we don't think quality convergence at the low end is done either. The practical implication for anyone building on AgentDyne right now: architect for model routing from day one, even if you start every step on the same model. The switching cost of moving a well-isolated microagent to a cheaper tier later is small. The switching cost of untangling a monolithic prompt to make that possible after the fact is not.",
+  },
+
+  "context-engineering-is-the-new-prompt-engineering": {
+    slug:     "context-engineering-is-the-new-prompt-engineering",
+    title:    "Context Engineering Is the New Prompt Engineering",
+    excerpt:  "\"Prompt engineering\" described a skill that mostly evaporated as models got instruction-following right by default. The discipline that replaced it is a systems problem, not a wordsmithing one.",
+    date:     "June 12, 2026",
+    readMin:  9,
+    category: "Engineering",
+    author:   { name: "Priya Sharma", role: "Head of Engineering, AgentDyne" },
+    content:
+      "## A Job Title That Quietly Disappeared\n\n" +
+      "In 2023, \"prompt engineer\" was a real job posting. The skill it described — finding the specific magic phrasing that reliably got a model to behave — was valuable because models were inconsistent, and small wording changes produced large behavioural swings.\n\n" +
+      "That skill has mostly evaporated, not because prompting stopped mattering, but because it stopped being the bottleneck. Modern frontier and near-frontier models follow clear, well-structured instructions reliably enough that hunting for the one magic phrase is rarely where an agent's problems actually live anymore.\n\n" +
+      "What replaced it is a discipline with a less catchy but more accurate name: **context engineering** — the deliberate design of exactly what information an agent sees, from where, in what order, and at what point in its task.\n\n" +
+      "## Why This Is a Systems Problem, Not a Writing Problem\n\n" +
+      "A prompt is one artifact. Context is everything the model actually sees at inference time: the system prompt, yes, but also retrieved documents, tool call results, conversation history, injected metadata, and the order all of it arrives in. For any non-trivial agent, the system prompt is a small fraction of the total context — and increasingly, it's not the part that determines whether the agent succeeds or fails.\n\n" +
+      CODE(
+        "What actually reaches the model at inference time:\n\n" +
+        "+-------------------------------------------------------+\n" +
+        "|  System prompt              (~5% of tokens, static)   |\n" +
+        "|  Retrieved RAG chunks        (~30%, dynamic)          |\n" +
+        "|  Tool call results           (~25%, dynamic)          |\n" +
+        "|  Conversation history        (~30%, dynamic)          |\n" +
+        "|  Injected metadata/state     (~10%, dynamic)          |\n" +
+        "+-------------------------------------------------------+\n\n" +
+        "  95% of what determines behaviour is decided\n" +
+        "  BEFORE the model ever runs -- by what your\n" +
+        "  application chose to assemble and in what order."
+      ) + "\n\n" +
+      "Prompt engineering optimises the 5%. Context engineering optimises the other 95% — and it turns out that's where most production failures actually come from.\n\n" +
+      "## The Failure Modes Context Engineering Actually Fixes\n\n" +
+      "We see the same handful of problems repeatedly when auditing agents that \"worked in testing\" but degrade in production:\n\n" +
+      "**Context dilution.** A RAG agent retrieves 8 chunks when the answer only needed 2. The relevant information is now buried in noise, and the model's attention gets spread thin across irrelevant text. This looks like a hallucination but is actually a retrieval-and-assembly problem — exactly what our RAG chunking work addressed, but at the point of *injection*, not just retrieval.\n\n" +
+      "**Stale context ordering.** Conversation history gets appended chronologically by default, which means the most relevant recent instruction can end up buried under older, less relevant turns. Models tend to weight recent and prominent context more heavily — put the important thing last, not first, and don't assume chronological order is the right order.\n\n" +
+      "**Tool result bloat.** A tool call returns a 4,000-token JSON blob when the agent needed three fields from it. Every subsequent step now pays the token cost and the attention cost of that bloat. Structured extraction *before* the result re-enters context, not after, is the fix.\n\n" +
+      "**Missing negative context.** Agents are told what to do but not what they already tried and failed at. In a multi-step or retry scenario, omitting a compact summary of prior failed attempts means the model repeats the same mistake with fresh confidence every time.\n\n" +
+      "## What Context Engineering Looks Like Concretely\n\n" +
+      "In practice, this is less about clever prompt phrasing and more about a few boring, disciplined choices, applied consistently:\n\n" +
+      CODE(
+        "// Prompt engineering mindset (2023):\n" +
+        "// \"Let's try rephrasing the instruction to be more emphatic\"\n" +
+        "systemPrompt = \"You MUST always cite your sources. This is CRITICAL.\"\n\n" +
+        "// Context engineering mindset (2026):\n" +
+        "// \"Let's control what evidence reaches the model and how it's structured\"\n" +
+        "const relevantChunks = await retrieveTopK(query, { k: 3, minSimilarity: 0.7 })\n" +
+        "const structuredContext = relevantChunks.map(c => ({\n" +
+        "  source: c.documentTitle,\n" +
+        "  claim:  c.content,\n" +
+        "  id:     c.chunkId,   // model cites this ID, not free text\n" +
+        "}))\n" +
+        "// Citation becomes a structural requirement of the output schema,\n" +
+        "// not a hope expressed in the system prompt"
+      ) + "\n\n" +
+      "The second version doesn't ask the model to be careful. It removes the opportunity to be careless by controlling what's available and what shape the answer has to take.\n\n" +
+      "## The Practical Checklist\n\n" +
+      "When we audit an agent's context engineering on AgentDyne, we're checking a short, concrete list:\n\n" +
+      "1. **Is every piece of injected context necessary for this specific step?** If a tool result or RAG chunk isn't load-bearing for the current decision, it's diluting attention, not helping.\n" +
+      "2. **Is the most important instruction positioned where the model weights it most heavily** — typically last, immediately before the model needs to act on it?\n" +
+      "3. **Are tool results extracted down to the fields that matter** before they re-enter context, rather than passed through raw?\n" +
+      "4. **Does the agent know what it already tried**, in a retry or multi-turn scenario, so it doesn't repeat a dead end?\n" +
+      "5. **Is the output schema doing structural work** — like forcing citations to reference a chunk ID rather than free text — instead of relying on an instruction the model might drop under pressure?\n\n" +
+      "None of these are prompt-wording questions. All of them are pipeline and data-flow questions, which is exactly why this discipline sits closer to backend engineering than to writing.\n\n" +
+      "## Why This Matters for Multi-Agent Systems Specifically\n\n" +
+      "Context engineering gets harder, and more important, the moment you move from a single agent to a pipeline or swarm. In a chained pipeline, each node's output becomes the next node's input context — which means every design choice above compounds across the chain. A verbose, poorly-structured output from Node 2 doesn't just cost Node 2 quality; it dilutes every downstream node that has to consume it.\n\n" +
+      "This is the same underlying reason output schemas mattered more than system prompts in our pipeline reliability findings from last year — schemas are the mechanism by which good context engineering gets enforced structurally, node to node, instead of relying on every agent in the chain independently \"writing a good prompt.\"\n\n" +
+      "## The Skill That Actually Transfers\n\n" +
+      "If you spent 2023 getting good at prompt engineering, the good news is the underlying instinct — thinking carefully about what a model needs to succeed — was never wasted. What's changed is where that instinct needs to be applied: not in finding the right words, but in designing the right data flow. That's a more durable skill, and it's the one we'd invest in learning if you're building agents for the next few years, not the next few months.",
+  },
+
   "why-microagents-beat-monolithic-ai": {
     slug:     "why-microagents-beat-monolithic-ai",
     title:    "Why Microagents Beat Monolithic AI: The Case for Composable Intelligence",

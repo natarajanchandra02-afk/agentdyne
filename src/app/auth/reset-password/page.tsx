@@ -65,26 +65,43 @@ export default function ResetPasswordPage() {
               <p className="text-sm text-zinc-500 mb-6">Choose a strong password for your account.</p>
               <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
                 <div className="space-y-1.5">
-                  <Label className="text-sm font-medium text-zinc-700">New Password</Label>
+                  <Label htmlFor="rp-password" className="text-sm font-medium text-zinc-700">New Password</Label>
                   <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                    <Input type="password" placeholder="Min. 8 characters"
-                      className="pl-10 h-10 rounded-xl border-zinc-200" {...register("password")} />
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" aria-hidden="true" />
+                    <Input
+                      id="rp-password"
+                      type="password"
+                      autoComplete="new-password"
+                      placeholder="Min. 8 characters"
+                      className="pl-10 h-10 rounded-xl border-zinc-200"
+                      aria-invalid={!!errors.password}
+                      aria-describedby={errors.password ? "rp-password-error" : undefined}
+                      {...register("password")}
+                    />
                   </div>
-                  {errors.password && <p className="text-xs text-red-500">{errors.password.message}</p>}
+                  {errors.password && <p id="rp-password-error" role="alert" className="text-xs text-red-500">{errors.password.message}</p>}
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-sm font-medium text-zinc-700">Confirm Password</Label>
+                  <Label htmlFor="rp-confirm" className="text-sm font-medium text-zinc-700">Confirm Password</Label>
                   <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                    <Input type="password" placeholder="Repeat password"
-                      className="pl-10 h-10 rounded-xl border-zinc-200" {...register("confirm")} />
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" aria-hidden="true" />
+                    <Input
+                      id="rp-confirm"
+                      type="password"
+                      autoComplete="new-password"
+                      placeholder="Repeat password"
+                      className="pl-10 h-10 rounded-xl border-zinc-200"
+                      aria-invalid={!!errors.confirm}
+                      aria-describedby={errors.confirm ? "rp-confirm-error" : undefined}
+                      {...register("confirm")}
+                    />
                   </div>
-                  {errors.confirm && <p className="text-xs text-red-500">{errors.confirm.message}</p>}
+                  {errors.confirm && <p id="rp-confirm-error" role="alert" className="text-xs text-red-500">{errors.confirm.message}</p>}
                 </div>
                 <Button type="submit" disabled={loading}
+                  aria-busy={loading}
                   className="w-full h-10 rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold gap-2">
-                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Lock className="h-4 w-4" aria-hidden="true" />}
                   {loading ? "Updating…" : "Update Password"}
                 </Button>
               </form>

@@ -51,8 +51,13 @@ function BillingPageInner() {
             if (d.url) {
               window.location.href = d.url
             } else {
-              // Stripe not configured or plan not found — show billing page normally
-              const msg = d.error || "Checkout unavailable. Please configure Stripe price IDs."
+              // ✅ Bug fix: no longer surfaces internal env var names to the customer.
+              // Previously showed "Please configure Stripe price IDs" from the server
+              // as-is, which could contain env var names depending on the API error.
+              // Now shows a generic, actionable message; full technical detail goes
+              // to console for developers, not the UI.
+              console.error("[billing] Checkout unavailable:", d.error)
+              const msg = "Checkout is temporarily unavailable. Please try again in a moment or contact support."
               setUpgradeError(msg)
               toast.error(msg)
               setAutoUpgrading(false)
@@ -114,9 +119,6 @@ function BillingPageInner() {
       {upgradeError && (
         <div className="mb-4 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-xs text-amber-700">
           <strong>Checkout unavailable:</strong> {upgradeError}
-          {upgradeError.includes("price ID") && (
-            <span> Set <code className="font-mono">STRIPE_PRO_PRICE_ID</code> and <code className="font-mono">STRIPE_STARTER_PRICE_ID</code> in your environment variables.</span>
-          )}
         </div>
       )}
       <BillingClient {...data} />

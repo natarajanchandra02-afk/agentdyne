@@ -69,18 +69,27 @@ export default function ForgotPasswordPage() {
 
               <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
                 <div className="space-y-1.5">
-                  <Label className="text-sm font-medium text-zinc-700">Email address</Label>
+                  <Label htmlFor="fp-email" className="text-sm font-medium text-zinc-700">Email address</Label>
                   <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
-                    <Input type="email" placeholder="you@company.com"
-                      className="pl-10 h-10 rounded-xl border-zinc-200" {...register("email")} />
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" aria-hidden="true" />
+                    <Input
+                      id="fp-email"
+                      type="email"
+                      autoComplete="email"
+                      placeholder="you@company.com"
+                      className="pl-10 h-10 rounded-xl border-zinc-200"
+                      aria-invalid={!!errors.email}
+                      aria-describedby={errors.email ? "fp-email-error" : undefined}
+                      {...register("email")}
+                    />
                   </div>
-                  {errors.email && <p className="text-xs text-red-500">{errors.email.message}</p>}
+                  {errors.email && <p id="fp-email-error" role="alert" className="text-xs text-red-500">{errors.email.message}</p>}
                 </div>
 
                 <Button type="submit" disabled={loading}
+                  aria-busy={loading}
                   className="w-full h-10 rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold">
-                  {loading ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Sending…</> : "Send Reset Link"}
+                  {loading ? <><Loader2 className="h-4 w-4 animate-spin mr-2" aria-hidden="true" />Sending…</> : "Send Reset Link"}
                 </Button>
               </form>
 
