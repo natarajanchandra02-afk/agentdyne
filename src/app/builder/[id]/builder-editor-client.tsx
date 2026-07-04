@@ -473,7 +473,17 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
     defaultTab === "rag" ? "behavior" : (defaultTab as EditorTabId) || "overview"
   )
   const [mcpSelected,    setMcpSelected]  = useState<string[]>(() => Array.isArray(agent.mcp_server_ids) ? agent.mcp_server_ids : [])
-  const [knowledgeItems, setKnowledge]    = useState<KnowledgeItem[]>([])
+  // ✅ Bug fix: knowledgeItems was always initialized to [] regardless of what
+  // was already saved. mcpSelected and guardrails (right below) both correctly
+  // hydrate from the agent record on mount — this one silently didn't, so a
+  // seller who added RAG sources, saved, and reloaded the page would see an
+  // empty Knowledge Base section even though their data was safely persisted
+  // to input_schema.knowledgeSources and still being used at runtime. Looked
+  // exactly like data loss without being data loss.
+  const [knowledgeItems, setKnowledge]    = useState<KnowledgeItem[]>(() => {
+    const saved = agent.input_schema?.knowledgeSources
+    return Array.isArray(saved) ? saved : []
+  })
   const [guardrails,     setGuardrails]   = useState<GuardrailsCfg>(() => {
     const s = agent.security_config ?? agent.guardrails_config
     return s ? { ...DEFAULT_GUARDRAILS, ...s } : DEFAULT_GUARDRAILS

@@ -3,6 +3,7 @@ export const runtime = 'edge'
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { apiRateLimit } from "@/lib/rate-limit"
+import { PLAN_MAX_PIPELINE_STEPS } from "@/lib/constants"
 
 /**
  * GET /api/pipelines   — list the user's pipelines
@@ -62,6 +63,27 @@ export async function POST(req: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+    // ✅ Bug fix: plan gate — pipelines require Starter+.
+    // FEATURE_FLAGS.PIPELINES_FREE_ENABLED already existed as "false" but was
+    // never actually checked anywhere, so free-plan users could create
+    // pipelines with no restriction despite pricing advertising this as a
+    // paid-tier feature.
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("subscription_plan")
+      .eq("id", user.id)
+      .single()
+    const plan     = profile?.subscription_plan ?? "free"
+    const maxSteps = PLAN_MAX_PIPELINE_STEPS[plan] ?? 0
+
+    if (maxSteps === 0) {
+      return NextResponse.json({
+        error:   "Pipelines require a Starter plan or above.",
+        code:    "PLAN_REQUIRED",
+        upgrade: "/pricing",
+      }, { status: 402 })
+    }
+
     const body = await req.json()
     const { name, description, dag, is_public, timeout_seconds, tags } = body
 
@@ -75,6 +97,18 @@ export async function POST(req: NextRequest) {
         { error: "dag must have { nodes: [], edges: [] }" },
         { status: 400 }
       )
+    }
+
+    // ✅ Bug fix: plan-tiered step limit enforced on creation too, not just
+    // on later PATCH saves — a Starter user could otherwise create a
+    // pipeline with 20 pre-populated nodes via a direct API call.
+    if (dag.nodes.length > maxSteps) {
+      return NextResponse.json({
+        error:   `Your ${plan} plan allows up to ${maxSteps} pipeline step${maxSteps === 1 ? "" : "s"}. This pipeline has ${dag.nodes.length}.`,
+        code:    "STEP_LIMIT_EXCEEDED",
+        limit:   maxSteps,
+        upgrade: "/pricing",
+      }, { status: 402 })
     }
 
     // BUG FIX: allow empty DAG on creation — users build nodes in the pipeline editor after

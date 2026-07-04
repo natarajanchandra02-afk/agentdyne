@@ -277,6 +277,34 @@ export async function middleware(req: NextRequest) {
     }
   }
 
+  // ✅ MFA (AAL2) enforcement — server-side, not just a client-side login step.
+  // Without this, a session that authenticated at AAL1 (password only, factor
+  // not yet challenged) could still reach every protected route directly by
+  // URL, completely bypassing the login page's MFA challenge screen. This
+  // check makes the requirement real rather than cosmetic: any account with a
+  // verified TOTP factor MUST satisfy AAL2 before touching a protected page,
+  // no matter how the request got there.
+  if (isProtected && user && supabaseConfigured) {
+    try {
+      const supabaseAal = createServerClient(supabaseUrl!, supabaseKey!, {
+        cookies: { getAll() { return req.cookies.getAll() }, setAll() {} },
+      })
+      const { data: aal } = await supabaseAal.auth.mfa.getAuthenticatorAssuranceLevel()
+      if (aal && aal.nextLevel === "aal2" && aal.currentLevel !== aal.nextLevel) {
+        const loginUrl = new URL("/login", req.url)
+        loginUrl.searchParams.set("next", pathname)
+        loginUrl.searchParams.set("mfa", "required")
+        const res = NextResponse.redirect(loginUrl)
+        applyHeaders(res, buildSecurityHeaders(isProd, false))
+        return res
+      }
+    } catch {
+      // If the AAL check itself fails (network hiccup, etc.), fail OPEN rather
+      // than locking every user out of the platform on a transient error —
+      // the login page's own MFA step is still a second, independent layer.
+    }
+  }
+
   if (isAuthOnly && user) {
     const safeNext = sanitizeRedirect(req.nextUrl.searchParams.get("next"))
     const res = NextResponse.redirect(new URL(safeNext, req.url))

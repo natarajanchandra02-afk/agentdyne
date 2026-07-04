@@ -83,6 +83,21 @@ export const MAX_CAPABILITY_TAGS      = 20
 export const EVAL_SCORE_REJECT        = 70
 export const EVAL_SCORE_FAST_TRACK    = 85
 
+// ✅ Bug fix: plan-tiered pipeline step limits — SINGLE SOURCE OF TRUTH.
+// Previously /api/pipelines/[id] PATCH enforced a flat 50-node cap for every
+// plan, and /api/pipelines POST had no plan check at all despite
+// FEATURE_FLAGS.PIPELINES_FREE_ENABLED already existing (and being false).
+// Free-plan users could create and save pipelines with up to 50 steps, while
+// pricing.tsx and stripe.ts both advertise "Pipelines (up to 5 steps)" as a
+// paid Starter-tier differentiator. The feature you were charging for wasn't
+// actually gated at the API level.
+export const PLAN_MAX_PIPELINE_STEPS: Record<string, number> = {
+  free:       0,   // pipelines require Starter+ (matches FEATURE_FLAGS.PIPELINES_FREE_ENABLED)
+  starter:    5,   // matches "Pipelines (up to 5 steps)" in stripe.ts PLANS.starter.features
+  pro:        50,  // matches "Full pipelines (unlimited steps)" — 50 is the platform safety ceiling
+  enterprise: 50,
+}
+
 // ── Feature flags ──────────────────────────────────────────────────────────
 export const FEATURE_FLAGS = {
   FREE_CAN_PUBLISH:       false,

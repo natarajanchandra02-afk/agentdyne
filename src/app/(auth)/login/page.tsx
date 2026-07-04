@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { useEffect } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
@@ -9,8 +10,8 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import {
   Loader2, Mail, Lock, Github, Chrome,
-  Code2, BarChart3, Megaphone, TrendingUp,
-  AlertTriangle, ExternalLink, Copy, Check,
+  Sparkles, Zap, ShieldCheck, Store,
+  AlertTriangle, ExternalLink, Copy, Check, KeyRound,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -24,11 +25,18 @@ const schema = z.object({
 })
 type FormData = z.infer<typeof schema>
 
-const PANEL_STATS = [
-  { icon: Code2,      color: "text-blue-500",   bg: "bg-blue-50",   label: "1,840 Coding agents"    },
-  { icon: BarChart3,  color: "text-indigo-500",  bg: "bg-indigo-50", label: "1,100 Data agents"      },
-  { icon: Megaphone,  color: "text-pink-500",    bg: "bg-pink-50",   label: "1,230 Marketing agents" },
-  { icon: TrendingUp, color: "text-green-500",   bg: "bg-green-50",  label: "980 Finance agents"     },
+// ✅ Bug fix: replaced fabricated per-category agent counts ("1,840 Coding
+// agents", "12,400+ production-ready AI agents", etc.) with qualitative,
+// non-numeric value props. Same class of issue already fixed on the
+// homepage — a specific, precise-looking number that isn't real undermines
+// trust the moment someone checks it, and there's no honest number here yet
+// worth leading with. These describe real, shipped platform capabilities
+// instead of unverifiable scale claims.
+const VALUE_PROPS = [
+  { icon: Zap,         color: "text-blue-500",   bg: "bg-blue-50",   label: "Deploy in one line of code" },
+  { icon: ShieldCheck, color: "text-indigo-500", bg: "bg-indigo-50", label: "Sandboxed & rate-limited execution" },
+  { icon: Store,        color: "text-pink-500",   bg: "bg-pink-50",   label: "Publish and monetize your agents" },
+  { icon: Sparkles,     color: "text-green-500",  bg: "bg-green-50",  label: "Compose multi-agent workflows visually" },
 ]
 
 // ─── Config-error banner ─────────────────────────────────────────────────────
@@ -72,7 +80,6 @@ function ConfigErrorBanner() {
             The <code className="bg-amber-100 px-1 rounded font-mono">SUPABASE_SERVICE_ROLE_KEY</code> alone is not enough — the browser client uses the anon key.
           </p>
 
-          {/* Variable status */}
           <div className="mt-3 space-y-1.5">
             {vars.map(v => {
               const isSet = v.val !== "(not set)" && !v.val.includes("your-project")
@@ -87,7 +94,6 @@ function ConfigErrorBanner() {
             })}
           </div>
 
-          {/* Steps */}
           <div className="mt-3 text-xs text-amber-800 space-y-1">
             <p className="font-semibold">How to fix:</p>
             <ol className="list-decimal list-inside space-y-0.5 ml-1">
@@ -141,9 +147,45 @@ export default function LoginPage() {
   const [loading,      setLoading]      = useState(false)
   const [oauthLoading, setOauthLoading] = useState<string | null>(null)
 
+  // ✅ MFA challenge step — added alongside the settings-page enrollment UI.
+  // After signInWithPassword succeeds, Supabase issues a session at AAL1.
+  // If the account has a verified TOTP factor, getAuthenticatorAssuranceLevel()
+  // reports nextLevel:"aal2" while currentLevel is still "aal1" — meaning the
+  // password alone isn't sufficient and a code challenge is required before
+  // the session can actually access protected routes. This mirrors the
+  // server-side enforcement added in middleware.ts, so this step can't be
+  // skipped by disabling JS or hitting a protected URL directly — middleware
+  // would just bounce back here.
+  const [mfaRequired, setMfaRequired] = useState(false)
+  const [mfaFactorId, setMfaFactorId] = useState("")
+  const [mfaCode,      setMfaCode]     = useState("")
+  const [mfaVerifying, setMfaVerifying] = useState(false)
+
   const { register, handleSubmit, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
   })
+
+  // ✅ Handles the case where middleware bounced an already-signed-in-at-AAL1
+  // session back here (e.g. they hit a protected URL directly, or refreshed
+  // mid-session before completing their MFA challenge). Reading window.location
+  // directly instead of useSearchParams() avoids needing a Suspense boundary
+  // for this whole page just for one param check.
+  useEffect(() => {
+    if (!configured) return
+    const params = new URLSearchParams(window.location.search)
+    if (params.get("mfa") !== "required") return
+
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (!user) return // no session at all — just show the normal login form
+      const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
+      if (aal && aal.nextLevel === "aal2" && aal.currentLevel !== aal.nextLevel) {
+        const { data: factors } = await supabase.auth.mfa.listFactors()
+        const factor = factors?.totp?.find(f => f.status === "verified")
+        if (factor) { setMfaFactorId(factor.id); setMfaRequired(true) }
+      }
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configured])
 
   const onSubmit = async (data: FormData) => {
     if (!configured) {
@@ -154,10 +196,25 @@ export default function LoginPage() {
     try {
       const { error } = await supabase.auth.signInWithPassword(data)
       if (error) throw error
+
+      // Check whether this account requires a second factor before granting
+      // access. currentLevel !== nextLevel means a verified factor exists
+      // and hasn't been satisfied yet in this session.
+      const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
+      if (aal && aal.nextLevel === "aal2" && aal.currentLevel !== aal.nextLevel) {
+        const { data: factors } = await supabase.auth.mfa.listFactors()
+        const factor = factors?.totp?.find(f => f.status === "verified")
+        if (factor) {
+          setMfaFactorId(factor.id)
+          setMfaRequired(true)
+          setLoading(false)
+          return
+        }
+      }
+
       router.push("/dashboard")
       router.refresh()
     } catch (err: any) {
-      // Surface the exact Supabase error (bad credentials, email not confirmed, etc.)
       const msg = err?.message ?? "Login failed"
       if (msg.includes("Invalid login credentials")) {
         toast.error("Wrong email or password. Try again.")
@@ -168,8 +225,31 @@ export default function LoginPage() {
       } else {
         toast.error(msg)
       }
-    } finally {
       setLoading(false)
+    }
+  }
+
+  const verifyMfaCode = async () => {
+    if (mfaCode.length !== 6) { toast.error("Enter the 6-digit code"); return }
+    setMfaVerifying(true)
+    try {
+      const { data: challenge, error: challengeErr } = await supabase.auth.mfa.challenge({ factorId: mfaFactorId })
+      if (challengeErr) throw challengeErr
+
+      const { error: verifyErr } = await supabase.auth.mfa.verify({
+        factorId:    mfaFactorId,
+        challengeId: challenge.id,
+        code:        mfaCode,
+      })
+      if (verifyErr) throw verifyErr
+
+      router.push("/dashboard")
+      router.refresh()
+    } catch (err: any) {
+      toast.error(err.message ?? "Invalid code — check your authenticator app and try again")
+      setMfaCode("")
+    } finally {
+      setMfaVerifying(false)
     }
   }
 
@@ -191,6 +271,50 @@ export default function LoginPage() {
     }
   }
 
+  // ── MFA challenge screen — shown in place of the form after password succeeds ──
+  if (mfaRequired) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center px-6">
+        <div className="w-full max-w-sm text-center">
+          <div className="w-14 h-14 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center mx-auto mb-5">
+            <KeyRound className="h-7 w-7 text-indigo-500" />
+          </div>
+          <h2 className="text-2xl font-bold text-zinc-900 mb-2">Two-factor authentication</h2>
+          <p className="text-zinc-500 text-sm leading-relaxed mb-6">
+            Enter the 6-digit code from your authenticator app.
+          </p>
+          <div className="flex items-center justify-center gap-2 mb-4">
+            <Input
+              value={mfaCode}
+              onChange={e => setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              onKeyDown={e => e.key === "Enter" && verifyMfaCode()}
+              placeholder="000000"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              autoFocus
+              className="rounded-xl border-zinc-200 h-12 font-mono text-center text-lg tracking-widest w-40"
+              maxLength={6}
+            />
+          </div>
+          <Button
+            onClick={verifyMfaCode}
+            disabled={mfaVerifying || mfaCode.length !== 6}
+            className="w-full h-10 rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold gap-2 disabled:opacity-40"
+          >
+            {mfaVerifying ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {mfaVerifying ? "Verifying…" : "Verify"}
+          </Button>
+          <button
+            onClick={() => { setMfaRequired(false); setMfaCode(""); setMfaFactorId("") }}
+            className="text-xs text-zinc-400 hover:text-zinc-600 mt-4 transition-colors"
+          >
+            ← Back to sign in
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-white flex">
 
@@ -198,7 +322,6 @@ export default function LoginPage() {
       <div className="flex-1 flex items-center justify-center px-6 py-12">
         <div className="w-full max-w-sm">
 
-          {/* Logo */}
           <div className="mb-8">
             <Link href="/">
               <Image
@@ -211,10 +334,8 @@ export default function LoginPage() {
             <p className="text-zinc-500 text-sm mt-1.5">Sign in to your AgentDyne account</p>
           </div>
 
-          {/* Config error banner — shown ONLY when env vars are missing */}
           {!configured && <ConfigErrorBanner />}
 
-          {/* OAuth buttons */}
           <div className="grid grid-cols-2 gap-3 mb-6">
             {[
               { provider: "google" as const, icon: Chrome, label: "Google" },
@@ -242,7 +363,6 @@ export default function LoginPage() {
             <div className="flex-1 h-px bg-zinc-100" />
           </div>
 
-          {/* Email / password form */}
           <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="login-email" className="text-sm font-medium text-zinc-700">Email</Label>
@@ -309,7 +429,7 @@ export default function LoginPage() {
       <div className="hidden lg:flex flex-1 bg-zinc-50 border-l border-zinc-100 items-center justify-center p-12">
         <div className="max-w-sm text-center">
           <div className="grid grid-cols-2 gap-3 mb-8">
-            {PANEL_STATS.map(item => (
+            {VALUE_PROPS.map(item => (
               <div key={item.label} className="bg-white rounded-2xl border border-zinc-100 p-4 text-left shadow-sm">
                 <div className={`w-8 h-8 rounded-xl ${item.bg} flex items-center justify-center mb-2`}>
                   <item.icon className={`h-4 w-4 ${item.color}`} aria-hidden="true" />
@@ -320,7 +440,7 @@ export default function LoginPage() {
           </div>
           <h3 className="text-xl font-bold text-zinc-900 mb-2">The AI Agent Economy</h3>
           <p className="text-sm text-zinc-500 leading-relaxed">
-            12,400+ production-ready AI agents. Deploy any in one line of code.
+            Deploy, compose, and monetize AI agents — all from one platform.
           </p>
         </div>
       </div>

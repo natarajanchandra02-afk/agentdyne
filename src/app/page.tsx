@@ -14,31 +14,41 @@ import { Footer } from "@/components/layout/footer"
 import { useUser } from "@/hooks/use-user"
 import { formatNumber } from "@/lib/utils"
 
+// ✅ Bug fix: replaced fabricated traction numbers with true, verifiable
+// facts about the platform itself. "10 Production Agents" and "1 Verified
+// Builder" undercut the "global marketplace" pitch sitting right above them
+// — a specific, precise-looking number that turns out to be tiny is worse
+// for trust than no number at all. These are real architectural facts that
+// don't need to wait for traction to be true.
 const STATS = [
-  { label: "Production Agents", value: "10",   suffix: "" },
-  { label: "Verified Builders", value: "1",    suffix: "" },
-  { label: "MCP Integrations",  value: "40",   suffix: "+" },
-  { label: "Models Supported",  value: "6",    suffix: "" },
+  { label: "Model Providers",     value: "6",  suffix: "" },
+  { label: "MCP Integrations",    value: "40", suffix: "+" },
+  { label: "Platform Fee",        value: "20", suffix: "%" },
+  { label: "Sandboxed Execution", value: "100",suffix: "%" },
 ]
 
 const FEATURES = [
   { icon: Zap,      title: "Instant Deployment",  desc: "Publish agents in minutes. Auto-scaled execution with sub-100ms cold starts globally." },
-  { icon: Globe,    title: "Global Marketplace",  desc: "Reach developers in 127 countries. Local payment methods, regional pricing built in." },
-  { icon: Shield,   title: "Sandboxed & Secure",  desc: "Every agent runs in an isolated sandbox. Full audit logs, compliance tools, SOC2 ready." },
+  { icon: Globe,    title: "Global Marketplace",  desc: "Local payment methods and regional pricing built in from day one." },
+  { icon: Shield,   title: "Sandboxed & Secure",  desc: "Every agent runs in an isolated sandbox with full audit logs and rate-limited execution." },
   { icon: BarChart3,title: "Revenue Analytics",   desc: "Real-time earnings dashboard. Track calls, revenue, ratings. Automated monthly payouts." },
   { icon: Code2,    title: "MCP Native",          desc: "40+ verified MCP server integrations. Connect databases, APIs, browsers, and more." },
   { icon: Cpu,      title: "Multi-Model Runtime", desc: "Claude, GPT-4o, Gemini — run any model. Switch without changing your integration." },
 ]
 
+// ✅ Bug fix: removed fabricated per-category counts (1840, 1230, etc.)
+// from the rendered UI below. Kept as category metadata in case real counts
+// get wired in from the marketplace API later — just not displayed as if
+// they were real today.
 const CATEGORIES = [
-  { name: "Coding",           icon: Code2,    count: 1840, color: "bg-blue-50   text-blue-600",   ring: "group-hover:ring-blue-200"   },
-  { name: "Marketing",        icon: Megaphone,     count: 1230, color: "bg-pink-50   text-pink-600",   ring: "group-hover:ring-pink-200"   },
-  { name: "Finance",          icon: TrendingUp,    count: 980,  color: "bg-green-50  text-green-600",  ring: "group-hover:ring-green-200"  },
-  { name: "Data Analysis",    icon: BarChart3,     count: 1100, color: "bg-indigo-50 text-indigo-600", ring: "group-hover:ring-indigo-200" },
-  { name: "Customer Support", icon: Headphones,    count: 760,  color: "bg-cyan-50   text-cyan-600",   ring: "group-hover:ring-cyan-200"   },
-  { name: "Research",         icon: FlaskConical,  count: 890,  color: "bg-teal-50   text-teal-600",   ring: "group-hover:ring-teal-200"   },
-  { name: "Legal",            icon: Scale,         count: 540,  color: "bg-violet-50 text-violet-600", ring: "group-hover:ring-violet-200" },
-  { name: "DevOps",           icon: Settings2,     count: 670,  color: "bg-slate-50  text-slate-600",  ring: "group-hover:ring-slate-200"  },
+  { name: "Coding",           icon: Code2,        color: "bg-blue-50   text-blue-600",   ring: "group-hover:ring-blue-200"   },
+  { name: "Marketing",        icon: Megaphone,    color: "bg-pink-50   text-pink-600",   ring: "group-hover:ring-pink-200"   },
+  { name: "Finance",          icon: TrendingUp,   color: "bg-green-50  text-green-600",  ring: "group-hover:ring-green-200"  },
+  { name: "Data Analysis",    icon: BarChart3,    color: "bg-indigo-50 text-indigo-600", ring: "group-hover:ring-indigo-200" },
+  { name: "Customer Support", icon: Headphones,   color: "bg-cyan-50   text-cyan-600",   ring: "group-hover:ring-cyan-200"   },
+  { name: "Research",         icon: FlaskConical, color: "bg-teal-50   text-teal-600",   ring: "group-hover:ring-teal-200"   },
+  { name: "Legal",            icon: Scale,        color: "bg-violet-50 text-violet-600", ring: "group-hover:ring-violet-200" },
+  { name: "DevOps",           icon: Settings2,    color: "bg-slate-50  text-slate-600",  ring: "group-hover:ring-slate-200"  },
 ]
 
 const TESTIMONIALS = [
@@ -202,9 +212,13 @@ export default function HomePage() {
           </FadeUp>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
             {[
+              // ✅ Bug fix: cta field here was dead code (planCta() below is what
+              // actually renders), but still said "Start free trial" / "Start
+              // Pro trial" — confusing for anyone editing this later to think
+              // trials exist. Corrected to match reality even though unused.
               { name: "Free",       price: "$0",    period: "/mo", calls: "50 lifetime calls",  features: ["Platform agents only", "Playground access", "Community support", "No credit card needed"],  highlight: false, cta: "Get started free" },
-              { name: "Starter",    price: "$19",   period: "/mo", calls: "500 calls/month",    features: ["All free + premium agents", "API access", "Pipelines (5 steps)", "Email support"],           highlight: false, cta: "Start free trial" },
-              { name: "Pro",        price: "$79",   period: "/mo", calls: "5,000 calls/month",  features: ["All agents", "Priority execution", "Full pipelines", "Advanced analytics"],               highlight: true,  cta: "Start Pro trial" },
+              { name: "Starter",    price: "$19",   period: "/mo", calls: "500 calls/month",    features: ["All free + premium agents", "API access", "Pipelines (5 steps)", "Email support"],           highlight: false, cta: "Get started with Starter" },
+              { name: "Pro",        price: "$79",   period: "/mo", calls: "5,000 calls/month",  features: ["All agents", "Priority execution", "Full pipelines", "Advanced analytics"],               highlight: true,  cta: "Get started with Pro" },
               { name: "Enterprise", price: "Custom",period: "",    calls: "Unlimited",           features: ["Custom SLA", "Dedicated infra", "SSO / SAML", "Custom contracts"],                       highlight: false, cta: "Contact sales" },
             ].map((plan, i) => (
             <FadeUp key={plan.name} delay={i * 0.08}>

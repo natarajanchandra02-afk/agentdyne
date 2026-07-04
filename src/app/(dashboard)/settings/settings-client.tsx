@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -8,7 +8,7 @@ import { z } from "zod"
 import { AnimatePresence, motion } from "framer-motion"
 import {
   User, Lock, Bell, Trash2, Loader2, Check, Camera,
-  ShieldCheck, AlertTriangle,
+  ShieldCheck, AlertTriangle, Smartphone, Copy, X, KeyRound,
 } from "lucide-react"
 import { Button }    from "@/components/ui/button"
 import { Input }     from "@/components/ui/input"
@@ -33,10 +33,6 @@ const profileSchema = z.object({
   company: z.string().max(80).optional(),
 })
 
-// ✅ Bug 9 fix: added current_password field.
-// Previously only asked for new + confirm, so anyone with an active session
-// (stolen laptop, shared computer) could silently change the password.
-// Industry standard requires re-verification of current password.
 const passwordSchema = z.object({
   current_password: z.string().min(1, "Current password is required"),
   new_password:     z.string().min(8, "Minimum 8 characters"),
@@ -78,6 +74,17 @@ const tabVariants = {
 
 interface Props { user: SupabaseUser; profile: any }
 
+/* ── MFA types ────────────────────────────────────────────────────────────────  */
+
+type MfaStage = "idle" | "enrolling" | "verifying"
+
+interface TotpFactor {
+  id:         string
+  status:     "verified" | "unverified"
+  created_at: string
+  friendly_name?: string
+}
+
 /* ── Main component ──────────────────────────────────────────────────────────  */
 
 export function SettingsClient({ user, profile }: Props) {
@@ -94,6 +101,109 @@ export function SettingsClient({ user, profile }: Props) {
   const [savingNotif,     setSavingNotif]     = useState(false)
   const [deletingAccount, setDeletingAccount] = useState(false)
   const [deleteConfirm,   setDeleteConfirm]   = useState("")
+
+  // ── MFA state ──────────────────────────────────────────────────────────────────
+  // Implemented via Supabase Auth's built-in TOTP MFA (auth.mfa.*). No new
+  // infrastructure — Supabase already stores and verifies factors server-side.
+  // Server-side enforcement lives in middleware.ts (AAL2 gate on protected
+  // routes) and login/page.tsx (challenge step after password sign-in) —
+  // this UI is the enroll/manage surface, not the only place MFA is checked.
+  const [mfaLoading,    setMfaLoading]    = useState(true)
+  const [mfaFactor,     setMfaFactor]     = useState<TotpFactor | null>(null)
+  const [mfaStage,      setMfaStage]      = useState<MfaStage>("idle")
+  const [qrCodeSvg,     setQrCodeSvg]     = useState("")
+  const [totpSecret,    setTotpSecret]    = useState("")
+  const [pendingFactorId, setPendingFactorId] = useState("")
+  const [verifyCode,    setVerifyCode]    = useState("")
+  const [mfaBusy,       setMfaBusy]       = useState(false)
+  const [removeConfirm, setRemoveConfirm] = useState(false)
+
+  useEffect(() => {
+    supabase.auth.mfa.listFactors().then(({ data, error }) => {
+      if (!error) {
+        const verified = data?.totp?.find(f => f.status === "verified")
+        setMfaFactor(verified ? (verified as unknown as TotpFactor) : null)
+      }
+      setMfaLoading(false)
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const startMfaEnroll = async () => {
+    setMfaBusy(true)
+    try {
+      // Clean up any abandoned unverified factor from a previous attempt —
+      // Supabase allows multiple TOTP factors per user, but a single-factor
+      // UX (matching most consumer apps) is simpler and avoids orphaned,
+      // never-verified factors accumulating silently.
+      const { data: existing } = await supabase.auth.mfa.listFactors()
+      const stale = existing?.totp?.find(f => f.status === "unverified")
+      if (stale) await supabase.auth.mfa.unenroll({ factorId: stale.id })
+
+      const { data, error } = await supabase.auth.mfa.enroll({ factorType: "totp" })
+      if (error) throw error
+      setQrCodeSvg(data.totp.qr_code)
+      setTotpSecret(data.totp.secret)
+      setPendingFactorId(data.id)
+      setMfaStage("verifying")
+    } catch (e: any) {
+      toast.error(e.message ?? "Could not start MFA enrollment")
+    } finally {
+      setMfaBusy(false)
+    }
+  }
+
+  const cancelMfaEnroll = async () => {
+    if (pendingFactorId) {
+      await supabase.auth.mfa.unenroll({ factorId: pendingFactorId }).catch(() => {})
+    }
+    setMfaStage("idle"); setQrCodeSvg(""); setTotpSecret(""); setPendingFactorId(""); setVerifyCode("")
+  }
+
+  const verifyMfaEnroll = async () => {
+    if (verifyCode.length !== 6) { toast.error("Enter the 6-digit code"); return }
+    setMfaBusy(true)
+    try {
+      const { data: challenge, error: challengeErr } = await supabase.auth.mfa.challenge({ factorId: pendingFactorId })
+      if (challengeErr) throw challengeErr
+
+      const { error: verifyErr } = await supabase.auth.mfa.verify({
+        factorId:    pendingFactorId,
+        challengeId: challenge.id,
+        code:        verifyCode,
+      })
+      if (verifyErr) throw verifyErr
+
+      toast.success("Two-factor authentication enabled")
+      setMfaFactor({ id: pendingFactorId, status: "verified", created_at: new Date().toISOString() })
+      setMfaStage("idle"); setQrCodeSvg(""); setTotpSecret(""); setPendingFactorId(""); setVerifyCode("")
+    } catch (e: any) {
+      toast.error(e.message ?? "Invalid code — check your authenticator app and try again")
+    } finally {
+      setMfaBusy(false)
+    }
+  }
+
+  const removeMfa = async () => {
+    if (!mfaFactor) return
+    setMfaBusy(true)
+    try {
+      const { error } = await supabase.auth.mfa.unenroll({ factorId: mfaFactor.id })
+      if (error) throw error
+      setMfaFactor(null)
+      setRemoveConfirm(false)
+      toast.success("Two-factor authentication disabled")
+    } catch (e: any) {
+      toast.error(e.message ?? "Could not disable two-factor authentication")
+    } finally {
+      setMfaBusy(false)
+    }
+  }
+
+  const copySecret = async () => {
+    await navigator.clipboard.writeText(totpSecret).catch(() => {})
+    toast.success("Secret copied")
+  }
 
   const [notifPrefs, setNotifPrefs] = useState<Record<string, boolean>>(() => ({
     ...DEFAULT_NOTIF_PREFS,
@@ -135,13 +245,10 @@ export function SettingsClient({ user, profile }: Props) {
     }
   }
 
-  // ── Password update (Bug 9 fix) ───────────────────────────────────────────────
+  // ── Password update ───────────────────────────────────────────────────────────
   const savePassword = async (data: PasswordForm) => {
     setSavingPassword(true)
     try {
-      // ✅ Re-authenticate with current password before allowing the change.
-      // Previously the form had no current_password field, meaning anyone
-      // with an active session could silently take over the account.
       const { error: signInErr } = await supabase.auth.signInWithPassword({
         email:    user.email!,
         password: data.current_password,
@@ -191,23 +298,19 @@ export function SettingsClient({ user, profile }: Props) {
       toast.success("Preferences saved")
     } catch (e: any) {
       console.warn("notification_prefs save:", e.message)
-      toast.success("Preferences saved") // column may not exist yet — still show success
+      toast.success("Preferences saved")
     } finally {
       setSavingNotif(false)
     }
   }
 
-  // ── Delete account (Bug 10 fix) ───────────────────────────────────────────────
+  // ── Delete account ─────────────────────────────────────────────────────────────
   const handleDeleteAccount = async () => {
     if (deleteConfirm !== "DELETE") return
     setDeletingAccount(true)
     try {
       const res = await fetch("/api/user/delete", { method: "DELETE" })
       if (res.ok) {
-        // ✅ Bug 10 fix: sign out ONLY after confirmed deletion.
-        // Previously signout was called before checking res.ok, so if deletion
-        // failed the user would be logged out with their account still intact —
-        // leaving them locked out with no obvious recovery path.
         await fetch("/api/auth/signout", { method: "POST" }).catch(() => {})
         window.location.href = "/?account_deleted=1"
       } else {
@@ -257,8 +360,6 @@ export function SettingsClient({ user, profile }: Props) {
     )
   }
 
-  // ✅ Bug 11 fix: derive verified state from actual Supabase email_confirmed_at
-  // Previously always showed "Verified" badge regardless of real verification status.
   const isEmailVerified = !!user.email_confirmed_at
 
   // ── Tab panels ────────────────────────────────────────────────────────────────
@@ -339,7 +440,6 @@ export function SettingsClient({ user, profile }: Props) {
           <div className="flex items-center gap-3">
             <Input value={user.email || ""} readOnly
               className="rounded-xl border-zinc-200 bg-zinc-50 text-zinc-500 h-10 flex-1" />
-            {/* ✅ Bug 11 fix: verified badge derived from real email_confirmed_at */}
             {isEmailVerified ? (
               <span className="text-[10px] font-bold bg-green-50 text-green-600 px-2.5 py-1 rounded-full flex-shrink-0 border border-green-100 flex items-center gap-1">
                 <ShieldCheck className="h-3 w-3" /> Verified
@@ -361,14 +461,13 @@ export function SettingsClient({ user, profile }: Props) {
           </p>
         </div>
 
-        {/* Password change (Bug 9 fix: current password field) */}
+        {/* Password change */}
         <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
           <h2 className="text-sm font-semibold text-zinc-900 mb-1">Change Password</h2>
           <p className="text-xs text-zinc-400 mb-4 leading-relaxed">
             Your current password is required to verify your identity before making this change.
           </p>
           <form onSubmit={passwordForm.handleSubmit(savePassword)} className="space-y-4">
-            {/* ✅ Bug 9 fix: current_password field added */}
             <div className="space-y-1.5">
               <Label className="text-sm font-medium text-zinc-700">Current Password</Label>
               <Input type="password" placeholder="Enter your current password"
@@ -406,6 +505,118 @@ export function SettingsClient({ user, profile }: Props) {
               {savingPassword ? "Updating..." : "Update Password"}
             </Button>
           </form>
+        </div>
+
+        {/* ── Two-factor authentication ─────────────────────────────────────── */}
+        <div className="bg-white border border-zinc-100 rounded-2xl p-5" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+          <div className="flex items-start justify-between mb-1">
+            <div>
+              <h2 className="text-sm font-semibold text-zinc-900 flex items-center gap-2">
+                <Smartphone className="h-4 w-4 text-zinc-400" /> Two-Factor Authentication
+              </h2>
+              <p className="text-xs text-zinc-400 mt-1 leading-relaxed max-w-md">
+                Require a 6-digit code from an authenticator app in addition to your password.
+                Recommended if you have API keys, sell agents, or receive payouts.
+              </p>
+            </div>
+            {!mfaLoading && mfaFactor && (
+              <span className="text-[10px] font-bold bg-green-50 text-green-600 px-2.5 py-1 rounded-full flex-shrink-0 border border-green-100 flex items-center gap-1 mt-0.5">
+                <ShieldCheck className="h-3 w-3" /> Enabled
+              </span>
+            )}
+          </div>
+
+          {mfaLoading ? (
+            <div className="h-10 bg-zinc-50 rounded-xl animate-pulse mt-4" />
+          ) : mfaStage === "idle" && !mfaFactor ? (
+            <Button onClick={startMfaEnroll} disabled={mfaBusy}
+              className="rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold gap-2 mt-4">
+              {mfaBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+              Enable Two-Factor Authentication
+            </Button>
+          ) : mfaStage === "verifying" ? (
+            <div className="mt-4 bg-zinc-50 border border-zinc-100 rounded-xl p-4 space-y-4">
+              <div>
+                <p className="text-xs font-semibold text-zinc-700 mb-2">1. Scan this QR code</p>
+                <p className="text-xs text-zinc-400 mb-3">
+                  Use Google Authenticator, 1Password, Authy, or any TOTP app.
+                </p>
+                {qrCodeSvg && (
+                  <div
+                    className="w-40 h-40 bg-white rounded-xl border border-zinc-200 p-2 mx-auto sm:mx-0"
+                    dangerouslySetInnerHTML={{ __html: qrCodeSvg }}
+                  />
+                )}
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold text-zinc-700 mb-2">
+                  Can't scan? Enter this code manually
+                </p>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 text-xs font-mono bg-white border border-zinc-200 rounded-lg px-3 py-2 text-zinc-600 break-all">
+                    {totpSecret}
+                  </code>
+                  <button type="button" onClick={copySecret}
+                    className="flex-shrink-0 p-2 rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50 transition-colors"
+                    aria-label="Copy secret">
+                    <Copy className="h-3.5 w-3.5 text-zinc-500" />
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold text-zinc-700 mb-2">2. Enter the 6-digit code</p>
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={verifyCode}
+                    onChange={e => setVerifyCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    placeholder="000000"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    className="rounded-xl border-zinc-200 h-10 font-mono text-center tracking-widest w-32"
+                    maxLength={6}
+                  />
+                  <Button onClick={verifyMfaEnroll} disabled={mfaBusy || verifyCode.length !== 6}
+                    className="rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold gap-2 disabled:opacity-40">
+                    {mfaBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                    Verify & Enable
+                  </Button>
+                  <Button variant="outline" onClick={cancelMfaEnroll} disabled={mfaBusy}
+                    className="rounded-xl border-zinc-200">
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : mfaFactor ? (
+            <div className="mt-4 flex items-center justify-between bg-green-50 border border-green-100 rounded-xl px-4 py-3">
+              <div>
+                <p className="text-xs font-semibold text-green-800">Authenticator app connected</p>
+                <p className="text-[11px] text-green-600 mt-0.5">
+                  Enabled {new Date(mfaFactor.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                </p>
+              </div>
+              {!removeConfirm ? (
+                <button onClick={() => setRemoveConfirm(true)}
+                  className="text-xs font-semibold text-red-500 hover:text-red-600 transition-colors flex-shrink-0">
+                  Remove
+                </button>
+              ) : (
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className="text-[11px] text-zinc-500">Are you sure?</span>
+                  <button onClick={removeMfa} disabled={mfaBusy}
+                    className="text-xs font-bold text-red-600 hover:underline disabled:opacity-40">
+                    {mfaBusy ? "…" : "Yes, remove"}
+                  </button>
+                  <button onClick={() => setRemoveConfirm(false)}
+                    className="text-xs text-zinc-400 hover:text-zinc-600">
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
       </div>
     ),

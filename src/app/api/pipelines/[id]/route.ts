@@ -3,6 +3,7 @@ export const runtime = 'edge'
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { apiRateLimit } from "@/lib/rate-limit"
+import { PLAN_MAX_PIPELINE_STEPS } from "@/lib/constants"
 
 // Pure cycle detection (Kahn's algorithm) — O(V+E), no DB needed
 function detectCycle(nodeIds: string[], edges: Array<{ from: string; to: string }>): boolean {
@@ -113,8 +114,31 @@ export async function PATCH(
       const dag = updates.dag as any
       if (!Array.isArray(dag.nodes) || !Array.isArray(dag.edges))
         return NextResponse.json({ error: "dag must have { nodes: [], edges: [] }" }, { status: 400 })
-      if (dag.nodes.length > 50)
-        return NextResponse.json({ error: "Pipeline cannot exceed 50 nodes" }, { status: 400 })
+
+      // ✅ Bug fix: plan-tiered step limit, replacing the old flat 50-node cap.
+      // Previously every plan — including Free, which per FEATURE_FLAGS.
+      // PIPELINES_FREE_ENABLED shouldn't have pipelines at all — could save
+      // up to 50 steps. pricing.tsx and stripe.ts both advertise "Pipelines
+      // (up to 5 steps)" as a Starter-tier differentiator; this is the actual
+      // enforcement point since the pipeline editor saves nodes via this route.
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("subscription_plan")
+        .eq("id", user.id)
+        .single()
+      const plan     = profile?.subscription_plan ?? "free"
+      const maxSteps = PLAN_MAX_PIPELINE_STEPS[plan] ?? 0
+
+      if (dag.nodes.length > maxSteps) {
+        return NextResponse.json({
+          error:   maxSteps === 0
+            ? "Pipelines require a Starter plan or above."
+            : `Your ${plan} plan allows up to ${maxSteps} pipeline step${maxSteps === 1 ? "" : "s"}. This pipeline has ${dag.nodes.length}.`,
+          code:    maxSteps === 0 ? "PLAN_REQUIRED" : "STEP_LIMIT_EXCEEDED",
+          limit:   maxSteps,
+          upgrade: "/pricing",
+        }, { status: 402 })
+      }
 
       // ── Cycle detection on save (not just at execute time) ──────────────────
       // DeepSeek audit: running O(n²) cycle detection on every execution

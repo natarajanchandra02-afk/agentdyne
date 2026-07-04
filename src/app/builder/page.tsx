@@ -583,7 +583,7 @@ function BuilderInner() {
                         <p className="text-xs font-semibold text-zinc-500">After creation you can also:</p>
                         <div className="grid grid-cols-1 gap-1.5">
                           {[
-                            { icon: Database, color: "text-blue-500",   text: "Attach a knowledge base (RAG) in the Knowledge tab" },
+                            { icon: Database, color: "text-blue-500",   text: "Attach a knowledge base (RAG) in the Behavior tab" },
                             { icon: Layers,   color: "text-violet-500", text: "Add MCP tools — Slack, GitHub, Supabase, and 40+ more" },
                             { icon: GitMerge, color: "text-green-500",  text: "Chain into a pipeline in Pipeline Studio" },
                           ].map(h => (

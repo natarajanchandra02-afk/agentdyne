@@ -103,11 +103,43 @@ function QuickRunModal({ pipeline, onClose }: { pipeline: Pipeline; onClose: () 
   const [input,   setInput]   = useState('{"input": ""}')
   const [running, setRunning] = useState(false)
   const [result,  setResult]  = useState<{ output: any; latency: number; cost: number } | null>(null)
+  // ✅ Live per-node progress — same pattern as Compose's handleRun.
+  // Previously this modal did one blocking await fetch(POST /execute) and
+  // showed nothing but a "Running…" spinner until the entire pipeline
+  // finished. pipeline_step_checkpoints now writes real progress mid-run
+  // (once its RLS fix landed), so this polls it on a separate connection
+  // while the long POST is still in flight.
+  const [liveSteps, setLiveSteps] = useState<Array<{ nodeId: string; status: string }>>([])
 
   const nodeCount = pipeline.dag?.nodes?.length ?? 0
 
   const run = async () => {
-    setRunning(true); setResult(null)
+    setRunning(true); setResult(null); setLiveSteps([])
+
+    const runStartedAt = new Date().toISOString()
+    let pollTimer: ReturnType<typeof setInterval> | null = null
+    let discoveredExecId: string | null = null
+    const stopPolling = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
+
+    pollTimer = setInterval(async () => {
+      try {
+        if (!discoveredExecId) {
+          const r = await fetch(
+            `/api/pipelines/${pipeline.id}/executions/latest?createdAfter=${encodeURIComponent(runStartedAt)}`
+          )
+          const d = await r.json()
+          if (d.executionId) discoveredExecId = d.executionId
+          return
+        }
+        const r = await fetch(`/api/pipelines/${pipeline.id}/executions/${discoveredExecId}/steps`)
+        if (!r.ok) return
+        const d = await r.json()
+        setLiveSteps((d.steps ?? []).map((s: any) => ({ nodeId: s.nodeId, status: s.status })))
+      } catch {
+        // Polling hiccup isn't fatal — the authoritative result still lands below.
+      }
+    }, 700)
+
     try {
       let parsed: unknown
       try { parsed = JSON.parse(input) } catch { parsed = input }
@@ -121,7 +153,10 @@ function QuickRunModal({ pipeline, onClose }: { pipeline: Pipeline; onClose: () 
       toast.success(`Done in ${data.summary?.total_latency_ms}ms`)
     } catch (err: any) {
       toast.error(err.message)
-    } finally { setRunning(false) }
+    } finally {
+      stopPolling()
+      setRunning(false)
+    }
   }
 
   return (
@@ -162,6 +197,33 @@ function QuickRunModal({ pipeline, onClose }: { pipeline: Pipeline; onClose: () 
                 className="w-full rounded-xl bg-zinc-900 text-white hover:bg-zinc-700 font-semibold gap-2">
                 {running ? <><Loader2 className="h-4 w-4 animate-spin" /> Running…</> : <><Play className="h-4 w-4" /> Run Pipeline</>}
               </Button>
+              {/* ✅ Real per-node progress while running, not a frozen spinner */}
+              {running && liveSteps.length > 0 && (
+                <div className="space-y-1">
+                  {pipeline.dag.nodes.map((node, i) => {
+                    const step = liveSteps.find(s => s.nodeId === (node as any).id)
+                    const status = step?.status ?? (i === liveSteps.length ? "started" : "pending")
+                    return (
+                      <div key={i} className="flex items-center gap-2 text-xs">
+                        {status === "success" ? (
+                          <CheckCircle className="h-3.5 w-3.5 text-green-500 flex-shrink-0" />
+                        ) : status === "failed" ? (
+                          <AlertCircle className="h-3.5 w-3.5 text-red-500 flex-shrink-0" />
+                        ) : status === "started" ? (
+                          <Loader2 className="h-3.5 w-3.5 text-primary animate-spin flex-shrink-0" />
+                        ) : (
+                          <div className="h-3.5 w-3.5 rounded-full border-2 border-zinc-200 flex-shrink-0" />
+                        )}
+                        <span className={cn(
+                          status === "pending" ? "text-zinc-400" : "text-zinc-700 font-medium"
+                        )}>
+                          {node.label || `Step ${i + 1}`}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
               {result && (
                 <div className="space-y-2">
                   <div className="flex items-center gap-3 text-xs text-zinc-400">
@@ -748,7 +810,7 @@ function PipelinesPageInner() {
         )}
 
         {/* ── Tabs + header ─────────────────────────────────────────────────── */}
-        {hasPipelines && (
+        {hasPipelines ? (
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-center gap-1 bg-zinc-50 border border-zinc-100 rounded-xl p-1">
               {(["mine", "public"] as const).map(t => (
@@ -768,7 +830,14 @@ function PipelinesPageInner() {
               </Button>
             </div>
           </div>
-        )}
+        ) : !loading ? (
+          <div className="flex justify-end">
+            <button onClick={() => setShowNew(true)}
+              className="text-xs text-zinc-400 hover:text-zinc-700 font-medium flex items-center gap-1.5 transition-colors">
+              <Plus className="h-3.5 w-3.5" /> Or start with a blank pipeline
+            </button>
+          </div>
+        ) : null}
 
         {/* ── Pipeline list ─────────────────────────────────────────────────── */}
         {error && (

@@ -536,6 +536,62 @@ function ComposeInner() {
     startRef.current = Date.now()
     setNodeResults([])
 
+    // ✅ Real live progress, not a fake spinner that jumps to 100%.
+    //
+    // Previously this function did one blocking `await fetch(POST /execute)`
+    // and only set nodeResults once the ENTIRE run finished — LiveExecution
+    // rendered an almost-empty list the whole time, then everything appeared
+    // at once. The execute route itself was already writing real per-node
+    // progress to pipeline_step_checkpoints as it went (once the RLS fix
+    // landed) — this just had nothing polling it.
+    //
+    // Fix: fire the POST without fully awaiting it first, and in parallel
+    // poll for the executionId (via /executions/latest) then for its steps
+    // (via /executions/[id]/steps) on a separate connection. Cloudflare
+    // Workers serves concurrent requests fine, so this genuinely shows
+    // progress WHILE the long-running POST is still in flight.
+    const runStartedAt = new Date().toISOString()
+    let pollTimer: ReturnType<typeof setInterval> | null = null
+    let discoveredExecId: string | null = null
+
+    const stopPolling = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
+
+    pollTimer = setInterval(async () => {
+      try {
+        if (!discoveredExecId) {
+          // Phase 1: find the executionId this run created
+          const r = await fetch(
+            `/api/pipelines/${runPipelineId}/executions/latest?createdAfter=${encodeURIComponent(runStartedAt)}`
+          )
+          const d = await r.json()
+          if (d.executionId) discoveredExecId = d.executionId
+          return
+        }
+        // Phase 2: poll real per-node progress.
+        // Steps still "started" (in-flight) are deliberately left OUT of the
+        // array — LiveExecution's own index-based fallback (i === nodeResults.length)
+        // already renders whichever node comes next as "running", so we only need
+        // to feed it nodes that have truly finished (success/failed/skipped).
+        const r = await fetch(`/api/pipelines/${runPipelineId}/executions/${discoveredExecId}/steps`)
+        if (!r.ok) return
+        const d = await r.json()
+        const finishedSteps: NodeResult[] = (d.steps ?? [])
+          .filter((s: any) => s.status !== "started")
+          .map((s: any) => ({
+            node_id:    s.nodeId,
+            agent_name: plan.nodes.find(n => n.id === s.nodeId)?.label ?? s.nodeId,
+            status:     s.status,
+            latency_ms: s.latencyMs ?? 0,
+            cost:       s.costUsd ?? 0,
+            error:      s.error ?? undefined,
+          }))
+        setNodeResults(finishedSteps)
+      } catch {
+        // Polling hiccup is not fatal — the authoritative result still lands
+        // when the main POST below resolves. Just skip this tick.
+      }
+    }, 700)
+
     try {
       const res  = await fetch(`/api/pipelines/${runPipelineId}/execute`, {
         method:  "POST",
@@ -545,6 +601,7 @@ function ComposeInner() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? `Execution failed (HTTP ${res.status})`)
 
+      // Authoritative final result always wins over anything polling assembled
       setNodeResults(data.node_results ?? [])
       setOutput(data.output ?? data.result)
       setLatencyMs(Date.now() - startRef.current)
@@ -553,6 +610,7 @@ function ComposeInner() {
     } catch (err: any) {
       setErrorMsg(err.message); setStage("error")
     } finally {
+      stopPolling()
       setRunning(false)
     }
   }, [plan, pipelineId, goal])
