@@ -1,7 +1,7 @@
 # AgentDyne Platform
 
 The world's premier microagent marketplace — discover, deploy, and monetise AI agents.
-Built with Next.js 15, Supabase, Stripe, and MCP-native integrations.
+Built with Next.js 14, Supabase, Stripe, and MCP-native integrations.
 
 ---
 

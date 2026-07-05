@@ -9,7 +9,16 @@ const PROTECTED_PATHS = [
   "/pipelines", "/executions", "/swarm",
   // ✅ Bug fix: added all routes that require auth
   "/collections", "/revenue",
-  "/integrations", "/compose",
+  "/compose",
+  // ✅ Bug fix: "/integrations" REMOVED from this list.
+  // It was added here to close an auth gap on the DASHBOARD's integrations
+  // page — but that page is now just a redirect to the PUBLIC catalog at
+  // app/integrations/page.tsx (same fix, applied during the routing-conflict
+  // cleanup). Since Next.js route groups like (dashboard) are invisible in
+  // the actual URL, both pages resolve to the exact same path: /integrations.
+  // Protecting that path here meant every logged-out visitor — including
+  // anyone just browsing the public MCP catalog, same as /marketplace or
+  // /pricing — was silently redirected to /login instead of seeing the page.
 ]
 
 const AUTH_ONLY_PATHS = ["/login", "/signup", "/forgot-password"]
