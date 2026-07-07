@@ -104,8 +104,13 @@ export async function PATCH(req: NextRequest) {
   if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 })
 
   // Audit log + seller notification (fire-and-forget)
+  // ✅ Bug fix: actor_type was "user" — inconsistent with the ban/unban audit
+  // entries (which correctly use "admin"). This route only runs for admins
+  // (requireAdmin() gates it above), so the actor genuinely is an admin;
+  // fixed so a query filtering audit_logs by actor_type='admin' actually
+  // catches every admin action, not just some of them.
   admin.from("audit_logs").insert({
-    user_id: user!.id, actor_type: "user", actor_id: user!.id,
+    user_id: user!.id, actor_type: "admin", actor_id: user!.id,
     action: mapped.log, resource: "agents", resource_id: agent_id,
     payload: { reason: reason ?? null, previous_status: agent.status, new_status: mapped.status, agent_name: agent.name },
   }).then(() => {})

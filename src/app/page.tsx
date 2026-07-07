@@ -52,9 +52,18 @@ const CATEGORIES = [
 ]
 
 const TESTIMONIALS = [
-  { name: "Sarah Chen",    role: "CTO, Finova",  avatar: "SC", text: "AgentDyne cut our AI development time by 80%. We integrated 6 production agents in a single sprint.", stars: 5 },
-  { name: "Marcus Okafor", role: "AI Lead",       avatar: "MO", text: "The marketplace quality is unmatched. Every agent we've deployed has been production-ready from day one.", stars: 5 },
-  { name: "Priya Sharma",  role: "Founder",       avatar: "PS", text: "Made $12K in my first month as a seller. The platform handles payments, hosting, support — everything.", stars: 5 },
+  // ✅ Founder decision: replaced fabricated named testimonials (a specific
+  // "$12K in my first month" claim attributed to a named person) with an
+  // honest early-stage framing. At this stage, real traction numbers are
+  // near zero — a precise-sounding fake quote is a bigger liability than no
+  // quote at all if it's ever noticed, and it's the same class of trust
+  // issue as the fabricated stats already removed elsewhere. This reframes
+  // around what's actually true today (real features, real 20% fee
+  // structure, real automation) rather than inventing a softer lie or a new
+  // unverified incentive.
+  { icon: Zap,      title: "Built by builders, for builders",   text: "We built AgentDyne because publishing an AI agent shouldn't require standing up your own billing, hosting, and support infrastructure. It handles all of that so you can focus on the agent itself." },
+  { icon: Shield,   title: "You keep 80% of every sale",         text: "No hidden fees, no surprise deductions. A flat 20% platform fee — the same rate for every seller, from your first sale to your thousandth." },
+  { icon: TrendingUp, title: "Early feedback shapes the roadmap", text: "We're in active development and building alongside our first cohort of sellers. If you're an early adopter, your feedback directly shapes what we build next." },
 ]
 
 function FadeUp({ children, delay = 0 }: { children: React.ReactNode; delay?: number }) {
@@ -274,28 +283,28 @@ export default function HomePage() {
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
           <FadeUp>
             <div className="text-center mb-12">
-              <h2 className="text-4xl font-bold tracking-tight text-zinc-900">Loved by builders worldwide</h2>
+              {/* ✅ Bug fix: heading still said "Loved by builders worldwide" —
+               * itself a vague, unverifiable trust claim at odds with the
+               * honest early-stage reframing applied to the content below it.
+               * Updated to match. */}
+              <h2 className="text-4xl font-bold tracking-tight text-zinc-900">Built in the open, from day one</h2>
             </div>
           </FadeUp>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            {/* ✅ Bug fix: this render block still referenced the OLD testimonial
+             * shape (t.stars, t.avatar, t.name, t.role) after the TESTIMONIALS
+             * array itself was updated to the new { icon, title, text } shape.
+             * Silently broken — rendered as empty star rows, blank avatar
+             * circles, and blank name/role lines, with no error since React
+             * just renders undefined as nothing. */}
             {TESTIMONIALS.map((t, i) => (
-              <FadeUp key={t.name} delay={i * 0.1}>
+              <FadeUp key={t.title} delay={i * 0.1}>
                 <div className="bg-white border border-zinc-100 rounded-2xl p-6">
-                  <div className="flex gap-0.5 mb-4">
-                    {Array.from({ length: t.stars }).map((_, j) => (
-                      <Star key={j} className="h-4 w-4 fill-yellow-400 text-yellow-400" />
-                    ))}
+                  <div className="w-10 h-10 rounded-xl bg-primary/8 flex items-center justify-center mb-4">
+                    <t.icon className="h-5 w-5 text-primary" />
                   </div>
-                  <p className="text-sm text-zinc-600 leading-relaxed mb-5">"{t.text}"</p>
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
-                      {t.avatar}
-                    </div>
-                    <div>
-                      <p className="font-semibold text-sm text-zinc-900">{t.name}</p>
-                      <p className="text-xs text-zinc-400">{t.role}</p>
-                    </div>
-                  </div>
+                  <p className="font-semibold text-zinc-900 mb-2">{t.title}</p>
+                  <p className="text-sm text-zinc-500 leading-relaxed">{t.text}</p>
                 </div>
               </FadeUp>
             ))}

@@ -14,7 +14,7 @@ import {
   TrendingUp, TrendingDown, Activity, BarChart3, Layers,
   Clock, Flame, Target, Brain, AlertTriangle, Timer,
   Sparkles, Cpu, Star, Package, Server, Inbox,
-  SkipForward, WifiOff, CreditCard, Gauge,
+  SkipForward, WifiOff, CreditCard, Gauge, Network,
 } from "lucide-react"
 import { SlidingTabs }               from "@/components/ui/sliding-tabs"
 import { Input }                     from "@/components/ui/input"
@@ -24,6 +24,14 @@ import { DashboardSidebar }          from "@/components/dashboard/sidebar"
 import { formatCurrency, formatNumber, formatRelativeTime, getInitials, cn } from "@/lib/utils"
 import { createClient }              from "@/lib/supabase/client"
 import toast                         from "react-hot-toast"
+// ✅ Wired in: these existed as a fully-built file that was never imported
+// anywhere (its own header comment even said "imported into admin-client.tsx
+// as new tabs" — that step was never done). Cleaned up their fake-data
+// fallback paths first (see swarm-admin-panels.tsx for details) before
+// wiring them in here. SelfImprovingPlatform deliberately excluded — its
+// core mechanic is fabricated, not just missing a connection; see that
+// file's header comment for what a real version needs.
+import { SwarmIntelligenceDashboard, AgentGenomeLeaderboard } from "./swarm-admin-panels"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1231,6 +1239,7 @@ export function AdminClient({
     { id:"economics",  label:"Economics",      icon:TrendingUp },
     { id:"executions", label:"Exec Health",    icon:Activity },
     { id:"routing",    label:"Routing",        icon:Brain },
+    { id:"swarm",      label:"Swarm Intel",    icon:Network },
     { id:"credits",    label:"Credits",        icon:Flame },
     { id:"queue",      label:"Queue",          icon:Server },
     { id:"marketplace",label:"Marketplace",    icon:Package },
@@ -1306,6 +1315,12 @@ export function AdminClient({
               {activeTab==="economics"  && <EconomicsPanel econ={economics}/>}
               {activeTab==="executions" && <ExecHealthPanel health={execHealth}/>}
               {activeTab==="routing"    && <RoutingPanel routing={routing}/>}
+              {activeTab==="swarm"      && (
+                <div className="space-y-6">
+                  <SwarmIntelligenceDashboard/>
+                  <AgentGenomeLeaderboard/>
+                </div>
+              )}
               {activeTab==="credits"    && <CreditMonitor credits={credits}/>}
               {activeTab==="queue"      && <QueueDashboard queue={queue}/>}
               {activeTab==="marketplace"&& <MarketplacePanel mkt={marketplace}/>}

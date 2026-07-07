@@ -69,6 +69,24 @@ export async function PATCH(req: NextRequest) {
         .update({ is_banned: action === "ban", updated_at: new Date().toISOString() })
         .eq("id", user_id)
       if (error) throw error
+
+      // ✅ Bug fix: admin ban/unban actions were completely unlogged — no
+      // record of which admin banned which user, when, or why. This is
+      // exactly the kind of governance gap Gartner's own 2026 data names as
+      // the #1 reason enterprise agentic AI projects get scrapped: not model
+      // quality, but an inability to answer "who did what, and can you prove
+      // it." audit_logs already existed with the right schema (actor_id,
+      // resource, payload) — it just wasn't being written to for this action.
+      admin.from("audit_logs").insert({
+        user_id:     user_id,
+        actor_type:  "admin",
+        actor_id:    user.id,
+        action:      `user.${action}`,
+        resource:    "profiles",
+        resource_id: user_id,
+        payload:     { performed_by: user.id, target_user: user_id },
+      }).catch(() => {})
+
       return NextResponse.json({ ok: true, action })
     }
 

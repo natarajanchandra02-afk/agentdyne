@@ -80,36 +80,40 @@ export function SwarmIntelligenceDashboard() {
       setRuns(runsRes.data ?? [])
       setLoading(false)
     }).catch(() => {
-      // Fallback to mock data for demo
-      setStats({
-        total_runs: 847,
-        success_rate: 91.4,
-        avg_agents_per_swarm: 4.8,
-        avg_outcome_score: 84,
-        consensus_failures: 23,
-        mode_stats: {
-          debate:      { count: 312, success_rate: 91 },
-          parallel:    { count: 298, success_rate: 96 },
-          orchestrate: { count: 237, success_rate: 89 },
-        },
-      })
+      // ✅ Bug fix: previously fell back to confident fake numbers ("847 runs,
+      // 91.4% success") on any RPC error, indistinguishable from real data.
+      // An honest empty state is correct here — a wrong number is worse than
+      // no number.
+      setStats(null)
       setRuns([])
       setLoading(false)
     })
   }, [])
 
-  // Chart data from runs or mock
-  const modeBarData = [
-    { mode: "Debate",      runs: stats?.mode_stats?.debate?.count ?? 312,      rate: stats?.mode_stats?.debate?.success_rate ?? 91, color: "#3b82f6" },
-    { mode: "Parallel",    runs: stats?.mode_stats?.parallel?.count ?? 298,    rate: stats?.mode_stats?.parallel?.success_rate ?? 96, color: "#6366f1" },
-    { mode: "Orchestrate", runs: stats?.mode_stats?.orchestrate?.count ?? 237, rate: stats?.mode_stats?.orchestrate?.success_rate ?? 89, color: "#8b5cf6" },
-  ]
+  // Chart data from real stats only — no fake fallback numbers.
+  // ✅ Bug fix: these used to default to hardcoded counts (312/298/237,
+  // 91%/96%/89%) whenever stats was missing, which is indistinguishable
+  // from real data to anyone looking at the dashboard.
+  const modeBarData = stats ? [
+    { mode: "Debate",      runs: stats.mode_stats?.debate?.count ?? 0,      rate: stats.mode_stats?.debate?.success_rate ?? 0,      color: "#3b82f6" },
+    { mode: "Parallel",    runs: stats.mode_stats?.parallel?.count ?? 0,    rate: stats.mode_stats?.parallel?.success_rate ?? 0,    color: "#6366f1" },
+    { mode: "Orchestrate", runs: stats.mode_stats?.orchestrate?.count ?? 0, rate: stats.mode_stats?.orchestrate?.success_rate ?? 0, color: "#8b5cf6" },
+  ] : []
 
-  // Recent swarm runs timeline
-  const recent30 = Array.from({ length: 30 }, (_, i) => ({
-    day: `Day ${i + 1}`,
-    runs: Math.floor(20 + Math.random() * 40),
-    success: Math.floor(85 + Math.random() * 12),
+  // ✅ Bug fix: previously Math.random()-generated fake daily run counts on
+  // every single render, regardless of whether real data existed — the chart
+  // would visibly change each time the page reloaded. Now derived from real
+  // `runs` (the last 50 actual swarm_run_metrics rows), grouped by day.
+  const dailyMap = new Map<string, { runs: number; success: number }>()
+  for (const r of runs) {
+    const day = new Date(r.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+    const entry = dailyMap.get(day) ?? { runs: 0, success: 0 }
+    entry.runs += 1
+    if (r.success) entry.success += 1
+    dailyMap.set(day, entry)
+  }
+  const recent30 = Array.from(dailyMap.entries()).map(([day, v]) => ({
+    day, runs: v.runs, success: v.runs > 0 ? Math.round((v.success / v.runs) * 100) : 0,
   }))
 
   if (loading) return (
@@ -120,13 +124,13 @@ export function SwarmIntelligenceDashboard() {
 
   return (
     <div className="space-y-5">
-      {/* KPI strip */}
+      {/* KPI strip — ✅ all defaults are now 0/honest, not fabricated numbers */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        <KpiMini label="Total Swarm Runs"      value={formatNumber(stats?.total_runs ?? 847)}         sub="all time"               icon={Network}   color="text-primary"      bg="bg-primary/8" />
-        <KpiMini label="Success Rate"           value={`${stats?.success_rate ?? 91.4}%`}              sub="last 30 days"           icon={CheckCircle2} color="text-green-600"  bg="bg-green-50" />
-        <KpiMini label="Avg Agents / Swarm"     value={String(stats?.avg_agents_per_swarm ?? 4.8)}     sub="per session"            icon={Bot}       color="text-blue-600"     bg="bg-blue-50" />
-        <KpiMini label="Avg Outcome Score"      value={`${stats?.avg_outcome_score ?? 84}/100`}        sub="post-exec insights"     icon={Star}      color="text-amber-600"    bg="bg-amber-50" />
-        <KpiMini label="Consensus Failures"     value={String(stats?.consensus_failures ?? 23)}        sub="debate mode only"       icon={AlertTriangle} color="text-red-600" bg="bg-red-50" />
+        <KpiMini label="Total Swarm Runs"      value={formatNumber(stats?.total_runs ?? 0)}         sub="all time"               icon={Network}   color="text-primary"      bg="bg-primary/8" />
+        <KpiMini label="Success Rate"           value={stats ? `${stats.success_rate ?? 0}%` : "—"}              sub="last 30 days"           icon={CheckCircle2} color="text-green-600"  bg="bg-green-50" />
+        <KpiMini label="Avg Agents / Swarm"     value={stats ? String(stats.avg_agents_per_swarm ?? 0) : "—"}     sub="per session"            icon={Bot}       color="text-blue-600"     bg="bg-blue-50" />
+        <KpiMini label="Avg Outcome Score"      value={stats ? `${stats.avg_outcome_score ?? 0}/100` : "—"}        sub="post-exec insights"     icon={Star}      color="text-amber-600"    bg="bg-amber-50" />
+        <KpiMini label="Consensus Failures"     value={String(stats?.consensus_failures ?? 0)}        sub="debate mode only"       icon={AlertTriangle} color="text-red-600" bg="bg-red-50" />
       </div>
 
       {/* Charts row */}
@@ -178,35 +182,26 @@ export function SwarmIntelligenceDashboard() {
         </div>
       </div>
 
-      {/* Consensus failure analysis */}
-      <SectionCard title="Consensus Failure Analysis" sub="Debate mode — where agents disagree most" icon={AlertTriangle}>
-        <div className="px-5 py-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {[
-              { topic: "Market Predictions", failures: 8, total: 34, pct: 24 },
-              { topic: "Technical Feasibility", failures: 6, total: 28, pct: 21 },
-              { topic: "Risk Assessment", failures: 5, total: 41, pct: 12 },
-              { topic: "Competitive Analysis", failures: 4, total: 37, pct: 11 },
-              { topic: "Financial Projections", failures: 3, total: 22, pct: 14 },
-              { topic: "Legal & Compliance", failures: 2, total: 15, pct: 13 },
-            ].map(row => (
-              <div key={row.topic} className="flex items-center justify-between py-2 border-b border-zinc-50 last:border-0">
-                <div>
-                  <p className="text-xs font-semibold text-zinc-800">{row.topic}</p>
-                  <p className="text-[10px] text-zinc-400">{row.failures} failures / {row.total} runs</p>
-                </div>
-                <span className={cn(
-                  "text-[11px] font-bold px-2 py-0.5 rounded-full",
-                  row.pct > 20 ? "bg-red-50 text-red-600" :
-                  row.pct > 12 ? "bg-amber-50 text-amber-600" : "bg-green-50 text-green-600",
-                )}>
-                  {row.pct}%
-                </span>
-              </div>
-            ))}
+      {/* ✅ Bug fix: this section was unconditionally hardcoded — fake topics
+       * ("Market Predictions", "Technical Feasibility"...) with fake failure
+       * counts, rendered regardless of whether the RPC above succeeded or
+       * failed. It wasn't a fallback for an error case; it was permanent
+       * fake data sitting right next to a real KPI strip, which is exactly
+       * the kind of thing that erodes trust the moment anyone notices —
+       * same class of issue as the homepage stats fixed earlier. Removed
+       * until there's a real query to back it (e.g. grouping swarm_run_metrics
+       * by a stored disagreement/topic field, if one exists). */}
+      {stats?.consensus_failures > 0 && (
+        <SectionCard title="Consensus Failures" sub="Debate mode — real count from swarm_run_metrics" icon={AlertTriangle}>
+          <div className="px-5 py-4">
+            <p className="text-2xl font-bold text-red-600 tabular-nums">{stats.consensus_failures}</p>
+            <p className="text-xs text-zinc-400 mt-1">
+              Runs where debate mode agents failed to reach consensus. Per-topic breakdown requires
+              tagging swarm sessions with a subject — not yet tracked.
+            </p>
           </div>
-        </div>
-      </SectionCard>
+        </SectionCard>
+      )}
     </div>
   )
 }
@@ -221,10 +216,14 @@ export function AgentGenomeLeaderboard() {
     const supabase = createClient()
     supabase.rpc("get_agent_genome_leaderboard", { p_limit: 10 })
       .then(({ data }) => {
-        setData(data ?? fallbackGenome)
+        // ✅ Bug fix: previously fell back to 5 confident-looking fake
+        // configurations ("rag-sonnet-mcp-1", 97% success, etc.) whenever
+        // the query returned nothing — indistinguishable from a real
+        // leaderboard. Empty state now shown honestly instead.
+        setData(data ?? [])
         setLoading(false)
       })
-      .catch(() => { setData(fallbackGenome); setLoading(false) })
+      .catch(() => { setData([]); setLoading(false) })
   }, [])
 
   const fallbackGenome = [
@@ -238,6 +237,17 @@ export function AgentGenomeLeaderboard() {
   if (loading) return (
     <div className="flex items-center justify-center py-20">
       <div className="w-6 h-6 border-2 border-zinc-200 border-t-primary rounded-full animate-spin" />
+    </div>
+  )
+
+  // ✅ Bug fix: Math.max()/reduce() on an empty array either return
+  // -Infinity or throw — a real possible state now that fake fallback data
+  // has been removed above.
+  if (data.length === 0) return (
+    <div className="bg-white border border-zinc-100 rounded-2xl p-16 text-center" style={{ boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+      <Dna className="h-8 w-8 text-zinc-300 mx-auto mb-3" />
+      <p className="text-sm font-semibold text-zinc-500">No swarm configurations tracked yet</p>
+      <p className="text-xs text-zinc-400 mt-1">The leaderboard populates once swarms have run enough times to compare architectures.</p>
     </div>
   )
 
@@ -356,6 +366,28 @@ export function AgentGenomeLeaderboard() {
 
 // ─── Tier 6: Self-Improving Platform ─────────────────────────────────────────
 
+// ⚠️ NOT PRODUCTION READY — deliberately NOT wired into admin-client.tsx.
+//
+// Unlike the two components above (which had real backing data/RPCs and just
+// needed their fake-fallback paths cleaned up), this component's core
+// mechanic is entirely fabricated:
+//   - success_rate / avg_rating / failure_count / retention_score are all
+//     Math.random() on EVERY render, even for real agents pulled from the
+//     database — the numbers change on every page reload.
+//   - generateRecs() decides which "AI recommendation" to show via
+//     Math.random() > 0.6, not any actual evaluation of the agent.
+//   - pushRecommendation() does nothing but await a setTimeout and show a
+//     success toast — the "Push to builder" button has no real effect.
+//
+// Wiring this in as-is would mean an admin (or an enterprise buyer during a
+// demo) sees confident AI-generated recommendations and a working-looking
+// "push" action that are both completely theatrical — worse than no tab.
+//
+// What a real version needs first:
+//   1. Real success_rate/rating/failure_count from execution_traces (which
+//      now actually gets written — see execute/route.ts) + reviews.
+//   2. A real recommendation heuristic, not a random boolean.
+//   3. pushRecommendation() writing a suggestion the builder actually sees.
 export function SelfImprovingPlatform() {
   const [agents,   setAgents]   = useState<any[]>([])
   const [loading,  setLoading]  = useState(true)

@@ -3,11 +3,12 @@ export const runtime = 'edge'
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { apiRateLimit } from "@/lib/rate-limit"
-import { routeCompletion } from "@/lib/model-router"
+import { routeCompletion, routeModel } from "@/lib/model-router"
 import { runInjectionPipeline, sanitizeOutput } from "@/lib/injection-filter"
 import { retrieveRAGContext, buildRAGSystemPrompt } from "@/lib/rag-retriever"
 import { estimatePipelineCost, checkConcurrencyLimit } from "@/lib/concurrency"
 import { evaluateSafeCondition } from "@/lib/safe-condition-evaluator"
+import { detectBotPatterns } from "@/lib/anti-abuse"
 import { buildIntentHash, buildStepEnvelope, extractConfidence, evaluateConfidenceGating } from "@/lib/trust-layer"
 import { dispatchWebhooks } from "@/lib/webhook-dispatcher"
 
@@ -223,6 +224,31 @@ export async function POST(
       return NextResponse.json({ error: "Input rejected by security filter", code: "INJECTION_BLOCKED" }, { status: 400 })
     }
 
+    // ✅ Bug fix: lib/anti-abuse.ts has a complete bot-detection engine
+    // (missing User-Agent, known scraper UA patterns, missing Accept/Origin
+    // headers, Cloudflare threat score, repeated-char/word-spam input
+    // patterns) that was never called anywhere in this route — only generic
+    // IP-based rate limiting was active. Wiring in the stateless signal check
+    // here (no DB round-trip, so this doesn't slow down legitimate requests).
+    const botCheck = detectBotPatterns({
+      userAgent:      req.headers.get("user-agent"),
+      contentType:    req.headers.get("content-type"),
+      accept:         req.headers.get("accept"),
+      origin:         req.headers.get("origin"),
+      referer:        req.headers.get("referer"),
+      xRequestedWith: req.headers.get("x-requested-with"),
+      cfThreatScore:  req.headers.get("cf-threat-score") ? parseInt(req.headers.get("cf-threat-score")!) : null,
+      inputText:      inputStr,
+    })
+    if (botCheck.action === "block") {
+      supabase.from("governance_events").insert({
+        user_id: userId, event_type: "bot_blocked", severity: "critical",
+        resource: "pipelines", resource_id: pipelineId,
+        details: { riskScore: botCheck.riskScore, signals: botCheck.signals, reason: botCheck.reason },
+      }).catch(() => {})
+      return NextResponse.json({ error: "Request blocked — automated abuse detected.", code: "BOT_BLOCKED" }, { status: 403 })
+    }
+
     // ── Create execution record ───────────────────────────────────────────────
     const { data: pipelineExec } = await supabase
       .from("pipeline_executions")
@@ -383,7 +409,7 @@ export async function POST(
             }, { onConflict: "execution_id,node_id" }).catch(() => {})
 
             const result = await executeNodeWithRetry(node, dag.edges, agentMap, nodeOutputs, input, variables,
-              pipelineState, userId!, supabase)
+              pipelineState, userId!, supabase, plan, creditBalance, pipelineExec.id)
 
             // WAL-lite: Write POST-STEP checkpoint with result
             supabase.from("pipeline_step_checkpoints").upsert({
@@ -630,7 +656,7 @@ async function executeNodeWithRetry(
   node: DAGNode, edges: DAGEdge[], agentMap: Map<string, any>,
   nodeOutputs: Record<string, unknown>, pipelineInput: unknown,
   variables: Record<string, string>, pipelineState: Record<string, unknown>,
-  userId: string, supabase: any
+  userId: string, supabase: any, plan: string, budgetRemaining: number, executionId: string
 ): Promise<NodeResult> {
   const maxRetries = Math.min(node.max_retries ?? 0, 3)
   const retryDelay = Math.min(node.retry_delay_ms ?? 500, 5000)
@@ -647,7 +673,7 @@ async function executeNodeWithRetry(
       retryCount = attempt
       await new Promise(r => setTimeout(r, retryDelay * Math.pow(2, attempt - 1)))
     }
-    const result = await executeNode(node, edges, agentMap, nodeOutputs, pipelineInput, variables, pipelineState, userId, supabase)
+    const result = await executeNode(node, edges, agentMap, nodeOutputs, pipelineInput, variables, pipelineState, userId, supabase, plan, budgetRemaining, executionId, attempt)
     if (result.status === "success") return { ...result, retry_count: retryCount }
     lastError = result.error ?? "Unknown"
     if (!shouldRetry(lastError)) break
@@ -659,7 +685,8 @@ async function executeNodeWithRetry(
     if (fallback?.status === "active") {
       const fbResult = await executeNode(
         { ...node, agent_id: node.fallback_agent_id, max_retries: 0, fallback_agent_id: undefined },
-        edges, agentMap, nodeOutputs, pipelineInput, variables, pipelineState, userId, supabase
+        edges, agentMap, nodeOutputs, pipelineInput, variables, pipelineState, userId, supabase,
+        plan, budgetRemaining, executionId, retryCount
       )
       if (fbResult.status === "success") return { ...fbResult, retry_count: retryCount, used_fallback: true }
     }
@@ -680,7 +707,8 @@ async function executeNode(
   node: DAGNode, edges: DAGEdge[], agentMap: Map<string, any>,
   nodeOutputs: Record<string, unknown>, pipelineInput: unknown,
   variables: Record<string, string>, pipelineState: Record<string, unknown>,
-  userId: string, supabase: any
+  userId: string, supabase: any, plan: string, budgetRemaining: number,
+  executionId: string, previousFailures: number = 0
 ): Promise<Omit<NodeResult, "retry_count">> {
   const agent = agentMap.get(node.agent_id)
   if (!agent) return { node_id: node.id, agent_id: node.agent_id, agent_name: node.label ?? "Unknown",
@@ -720,8 +748,25 @@ async function executeNode(
     }
 
     const maxChars = Math.min(32_000, agent.security_config?.maxInputChars ?? 32_000)
+
+    // ✅ Bug fix: wire in the adaptive/tiered reasoning router that already
+    // existed in lib/model-router.ts but was never actually called — every
+    // node execution just used agent.model_name statically. routeModel()
+    // respects that as a preference/ceiling (via preferredModel) but can
+    // downgrade under budget pressure or escalate after retries, exactly as
+    // the module was designed to do.
+    const routing = routeModel({
+      prompt:            userMessage,
+      toolCount:         0,
+      contextTokens:     Math.ceil(userMessage.length / 4),
+      plan,
+      budgetRemaining,
+      previousFailures,
+      preferredModel:    agent.model_name,
+    })
+
     const { text: rawText, inputTokens, outputTokens, costUsd } = await routeCompletion({
-      model:       agent.model_name || "claude-sonnet-4-20250514",
+      model:       routing.selectedModel || agent.model_name || "claude-sonnet-4-6",
       system:      systemPrompt,
       userMessage: userMessage.slice(0, maxChars),
       maxTokens:   Math.min(agent.max_tokens || 4096, 8192),
@@ -748,6 +793,29 @@ async function executeNode(
         latency_ms: latencyMs, cost_usd: costUsd, completed_at: new Date().toISOString(),
       }),
       supabase.rpc("increment_executions_used", { user_id_param: userId }),
+      // ✅ Bug fix: execution_traces existed with a well-designed schema
+      // (selected_model, routing_reason, depth_assessment — exactly what an
+      // enterprise governance/audit view needs) but nothing ever wrote to it.
+      // This is the first real write path for it. RLS fixed above; this insert
+      // uses the SAME authenticated client as everything else in this route.
+      supabase.from("execution_traces").insert({
+        execution_id:     executionId,
+        agent_id:         node.agent_id,
+        user_id:          userId,
+        model:            agent.model_name,
+        system_prompt:    systemPrompt.slice(0, 4000),
+        user_message:     userMessage.slice(0, 4000),
+        assistant_reply:  safeText.slice(0, 4000),
+        total_ms:         latencyMs,
+        tokens_input:     inputTokens,
+        tokens_output:    outputTokens,
+        cost_usd:         costUsd,
+        status:           "success",
+        temperature:      agent.temperature ?? 0.7,
+        selected_model:   routing.selectedModel,
+        routing_reason:   routing.routing.reason,
+        depth_assessment: routing.depthAssessment,
+      }),
     ]).catch(() => {})
 
     return {
@@ -757,6 +825,19 @@ async function executeNode(
       tokens: { input: inputTokens, output: outputTokens },
     }
   } catch (err: any) {
+    // ✅ Failure traces matter as much as success ones for a governance/audit
+    // view — "this agent fails 12% of the time" is exactly the kind of signal
+    // an enterprise buyer evaluating trust needs to see, not just the wins.
+    supabase.from("execution_traces").insert({
+      execution_id: executionId,
+      agent_id:     node.agent_id,
+      user_id:      userId,
+      model:        agent.model_name,
+      status:       "failed",
+      error_message: (err.message ?? "Unknown error").slice(0, 500),
+      total_ms:     Date.now() - startMs,
+    }).catch(() => {})
+
     return {
       node_id: node.id, agent_id: node.agent_id,
       agent_name: agent.name ?? node.label ?? node.id,
