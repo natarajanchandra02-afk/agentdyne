@@ -65,6 +65,8 @@ export type {
   PipelineExecuteRequest,
   PipelineExecuteResponse,
   PipelineNodeResult,
+  PipelineProgressChunk,
+  PipelineStepProgress,
   PricingModel,
   Review,
   SellerProfile,

@@ -14,7 +14,7 @@ import {
   ResponsiveContainer, CartesianGrid, Cell,
 } from "recharts"
 import {
-  Network, Brain, Dna, Lightbulb, CheckCircle2, AlertTriangle,
+  Network, Brain, Dna, Lightbulb, CheckCircle2, CheckCircle, AlertTriangle,
   TrendingUp, TrendingDown, Zap, Cpu, MemoryStick, GitBranch,
   Star, ArrowUpRight, RefreshCw, ChevronRight, Bot,
 } from "lucide-react"

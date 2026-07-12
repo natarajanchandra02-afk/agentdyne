@@ -41,6 +41,7 @@ import type {
   SwarmSession,
   PipelineExecuteRequest,
   PipelineExecuteResponse,
+  PipelineProgressChunk,
   BrowserExecuteRequest,
   BrowserExecuteResponse,
 } from "./types.js"
@@ -151,6 +152,93 @@ export class AgentDyne {
       `/api/pipelines/${pipelineId}/execute`,
       request,
     ) as Promise<PipelineExecuteResponse>
+  }
+
+  /**
+   * Execute a pipeline with LIVE per-node progress, instead of blocking
+   * until the entire multi-node run finishes.
+   *
+   * Under the hood: fires the same execute call as runPipeline() without
+   * blocking on it, then polls the pipeline's execution record (on a
+   * separate connection) to discover the execution id and stream real
+   * per-node status as it lands — the exact mechanism powering live
+   * progress in the AgentDyne dashboard itself (Compose, Pipeline Studio).
+   * No SSE, no websockets — plain polling, which works identically in any
+   * JS runtime this SDK supports (Node, Workers, Deno, Bun, browsers).
+   *
+   * @example
+   * for await (const chunk of client.streamPipeline("pipeline-id", { input: "..." })) {
+   *   if (chunk.type === "step") {
+   *     for (const s of chunk.steps) console.log(s.nodeId, s.status)
+   *   }
+   *   if (chunk.type === "done") console.log("Final output:", chunk.final?.output)
+   * }
+   */
+  async *streamPipeline(
+    pipelineId: string,
+    request:    PipelineExecuteRequest,
+    options:    { intervalMs?: number; timeoutMs?: number } = {},
+  ): AsyncGenerator<PipelineProgressChunk, void, unknown> {
+    const { intervalMs = 700, timeoutMs = 300_000 } = options
+    const runStartedAt = new Date().toISOString()
+
+    // Fire the real execute call — do NOT await it yet, so polling can run
+    // concurrently while this long-running request is still in flight.
+    const execPromise = this._http.post(
+      `/api/pipelines/${pipelineId}/execute`,
+      request,
+    ) as Promise<PipelineExecuteResponse>
+
+    let settled = false
+    execPromise.then(() => { settled = true }).catch(() => { settled = true })
+
+    let executionId: string | null = null
+    const deadline = Date.now() + timeoutMs
+
+    while (!settled && Date.now() < deadline) {
+      try {
+        if (!executionId) {
+          const discover = await this._http.get<{ executionId: string | null; status: string | null }>(
+            `/api/pipelines/${pipelineId}/executions/latest`,
+            { createdAfter: runStartedAt },
+          )
+          if (discover.executionId) executionId = discover.executionId
+        } else {
+          const poll = await this._http.get<{
+            executionId: string; status: string; isDone: boolean
+            steps: PipelineProgressChunk["steps"]
+            final?: PipelineProgressChunk["final"]
+          }>(`/api/pipelines/${pipelineId}/executions/${executionId}/steps`)
+
+          yield { type: "step", steps: poll.steps, isDone: poll.isDone, final: poll.final }
+
+          if (poll.isDone) break
+        }
+      } catch {
+        // A single polling hiccup isn't fatal — the authoritative result
+        // still lands once execPromise resolves below. Just skip this tick.
+      }
+      await new Promise(r => setTimeout(r, intervalMs))
+    }
+
+    // Authoritative final result always wins over anything polling assembled.
+    try {
+      const result = await execPromise
+      yield {
+        type: "done", isDone: true, steps: [],
+        final: {
+          output:         result.output,
+          errorMessage:   result.status === "failed" ? "Pipeline execution failed" : null,
+          totalCostUsd:   parseFloat(result.summary?.total_cost_usd ?? "0"),
+          totalLatencyMs: result.summary?.total_latency_ms ?? 0,
+          totalTokensIn:  result.summary?.total_tokens?.input ?? 0,
+          totalTokensOut: result.summary?.total_tokens?.output ?? 0,
+          completedAt:    new Date().toISOString(),
+        },
+      }
+    } catch (err: any) {
+      yield { type: "error", isDone: true, steps: [], error: err?.message ?? String(err) }
+    }
   }
 
   /**

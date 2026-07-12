@@ -25,9 +25,27 @@ export async function POST(req: NextRequest) {
         metadata:     { userId: user.id },
       })
       accountId = account.id
-      await supabase.from("profiles")
+
+      // ✅ Bug fix: this write's result was never checked. If it silently
+      // failed (network blip, transient DB error), the code continued anyway
+      // — generating a valid Stripe onboarding link for an account_id that
+      // was never actually saved. The user would complete onboarding
+      // successfully on Stripe's side, but the account.updated webhook could
+      // never match it back to their profile (queries by
+      // stripe_connect_account_id), permanently and silently, not just a
+      // timing issue. Now fails loudly instead of proceeding on a write that
+      // may not have happened.
+      const { error: saveErr } = await supabase.from("profiles")
         .update({ stripe_connect_account_id: accountId })
         .eq("id", user.id)
+
+      if (saveErr) {
+        console.error("[billing/connect] Failed to save stripe_connect_account_id:", saveErr.message)
+        return NextResponse.json(
+          { error: "Could not save your Connect account. Please try again — do not proceed to Stripe onboarding yet." },
+          { status: 500 }
+        )
+      }
     }
 
     const link = await stripe.accountLinks.create({

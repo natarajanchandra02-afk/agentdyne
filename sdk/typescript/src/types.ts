@@ -203,6 +203,41 @@ export interface PipelineExecuteResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Pipeline live progress (polling-based streaming)
+// ---------------------------------------------------------------------------
+
+export interface PipelineStepProgress {
+  nodeId:      string
+  agentId:     string
+  stepIndex:   number
+  status:      "started" | "success" | "failed" | "skipped"
+  latencyMs:   number | null
+  costUsd:     number | null
+  tokensIn:    number | null
+  tokensOut:   number | null
+  retryCount:  number | null
+  error:       string | null
+  startedAt:   string | null
+  completedAt: string | null
+}
+
+export interface PipelineProgressChunk {
+  type:  "step" | "done" | "error"
+  steps: PipelineStepProgress[]
+  isDone: boolean
+  final?: {
+    output:         unknown
+    errorMessage:   string | null
+    totalCostUsd:   number
+    totalLatencyMs: number
+    totalTokensIn:  number
+    totalTokensOut: number
+    completedAt:    string
+  }
+  error?: string
+}
+
+// ---------------------------------------------------------------------------
 // Browser agent (Gap 5 / P3)
 // ---------------------------------------------------------------------------
 

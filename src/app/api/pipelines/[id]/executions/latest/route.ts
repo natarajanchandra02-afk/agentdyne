@@ -27,6 +27,23 @@ export const runtime = "edge"
 
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { validateApiKey, extractRawKey } from "@/lib/api-key-auth"
+
+// ✅ Bug fix: this route only checked supabase.auth.getUser() (cookie
+// session) — an SDK caller authenticating with a Bearer/X-Api-Key header
+// would get 401 Unauthorized, since createClient()'s session has no
+// knowledge of API key headers at all. Added the same validateApiKey()
+// fallback used by the properly-built /api/execute route, so SDK polling
+// actually works, not just browser sessions.
+async function resolveUserId(req: NextRequest, supabase: any): Promise<string | null> {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (user?.id) return user.id
+
+  const rawKey = extractRawKey(req)
+  if (!rawKey) return null
+  const result = await validateApiKey(supabase, rawKey, { required: ["execute"] })
+  return result.valid ? result.userId : null
+}
 
 export async function GET(
   req: NextRequest,
@@ -40,8 +57,8 @@ export async function GET(
   }
 
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  const userId = await resolveUserId(req, supabase)
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   // Only match executions created after this timestamp — passed by the client
   // as the moment it fired the POST /execute request. Prevents a burst of
@@ -56,7 +73,7 @@ export async function GET(
     .from("pipeline_executions")
     .select("id, status, created_at")
     .eq("pipeline_id", pipelineId)
-    .eq("user_id", user.id)
+    .eq("user_id", userId)
     .gte("created_at", createdAfter.toISOString())
     .order("created_at", { ascending: false })
     .limit(1)

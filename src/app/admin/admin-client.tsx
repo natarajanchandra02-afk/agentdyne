@@ -32,6 +32,7 @@ import toast                         from "react-hot-toast"
 // core mechanic is fabricated, not just missing a connection; see that
 // file's header comment for what a real version needs.
 import { SwarmIntelligenceDashboard, AgentGenomeLeaderboard } from "./swarm-admin-panels"
+import { GovernancePanel } from "./governance-panel"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1236,6 +1237,7 @@ export function AdminClient({
 
   const tabs = [
     { id:"cockpit",    label:"Command Center", icon:Gauge },
+    { id:"governance", label:"Governance",      icon:ShieldCheck },
     { id:"economics",  label:"Economics",      icon:TrendingUp },
     { id:"executions", label:"Exec Health",    icon:Activity },
     { id:"routing",    label:"Routing",        icon:Brain },
@@ -1312,6 +1314,7 @@ export function AdminClient({
             <motion.div key={activeTab} variants={fade} initial="enter" animate="center" exit="exit">
 
               {activeTab==="cockpit"    && <CommandCenter stats={stats} execHealth={execHealth} credits={credits} queue={queue} pendingCount={pendingCount} flaggedCount={flaggedCount}/>}
+              {activeTab==="governance" && <GovernancePanel/>}
               {activeTab==="economics"  && <EconomicsPanel econ={economics}/>}
               {activeTab==="executions" && <ExecHealthPanel health={execHealth}/>}
               {activeTab==="routing"    && <RoutingPanel routing={routing}/>}

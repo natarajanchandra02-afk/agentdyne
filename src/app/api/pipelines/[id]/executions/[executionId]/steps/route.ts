@@ -28,6 +28,18 @@ export const runtime = "edge"
 
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { validateApiKey, extractRawKey } from "@/lib/api-key-auth"
+
+// ✅ Bug fix: cookie-only auth, same class of fix as the /latest route —
+// an SDK caller with a Bearer/X-Api-Key header would 401 here otherwise.
+async function resolveUserId(req: NextRequest, supabase: any): Promise<string | null> {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (user?.id) return user.id
+  const rawKey = extractRawKey(req)
+  if (!rawKey) return null
+  const result = await validateApiKey(supabase, rawKey, { required: ["execute"] })
+  return result.valid ? result.userId : null
+}
 
 export async function GET(
   req: NextRequest,
@@ -41,8 +53,8 @@ export async function GET(
   }
 
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  const userId = await resolveUserId(req, supabase)
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   // Ownership check via the execution record itself — cheaper than re-checking
   // pipeline ownership, and correctly scopes to "this specific run", not just
@@ -58,7 +70,7 @@ export async function GET(
   if (execErr || !execution) {
     return NextResponse.json({ error: "Execution not found" }, { status: 404 })
   }
-  if (execution.user_id !== user.id) {
+  if (execution.user_id !== userId) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }
 
@@ -68,7 +80,7 @@ export async function GET(
     .from("pipeline_step_checkpoints")
     .select("node_id, agent_id, step_index, status, latency_ms, cost_usd, tokens_input, tokens_output, retry_count, error_message, started_at, completed_at")
     .eq("execution_id", executionId)
-    .eq("user_id", user.id)
+    .eq("user_id", userId)
     .order("step_index", { ascending: true })
 
   if (stepsErr) {

@@ -785,38 +785,44 @@ async function executeNode(
       ? outputParsed as Record<string, unknown>
       : { text: safeText }
 
-    Promise.all([
-      supabase.from("executions").insert({
+    Promise.resolve().then(async () => {
+      // ✅ Bug fix: execution_traces.execution_id was previously set to
+      // pipelineExec.id (the whole pipeline RUN's id) — but /executions/[id]
+      // (the already-built customer-facing trace detail page) queries
+      // execution_traces where execution_id = executions.id, the per-NODE
+      // row's own id. Those are different ID domains; the page's lookup
+      // could never match for a pipeline-sourced trace. The schema was
+      // clearly designed around the per-node id (that's the only way the
+      // page's existing query makes sense) — capturing the real id here now.
+      const { data: execRow } = await supabase.from("executions").insert({
         agent_id: node.agent_id, user_id: userId, status: "success",
         input:    typeof nodeInput === "object" ? nodeInput : { text: String(nodeInput) },
         output:   outputJson, tokens_input: inputTokens, tokens_output: outputTokens,
         latency_ms: latencyMs, cost_usd: costUsd, completed_at: new Date().toISOString(),
-      }),
-      supabase.rpc("increment_executions_used", { user_id_param: userId }),
-      // ✅ Bug fix: execution_traces existed with a well-designed schema
-      // (selected_model, routing_reason, depth_assessment — exactly what an
-      // enterprise governance/audit view needs) but nothing ever wrote to it.
-      // This is the first real write path for it. RLS fixed above; this insert
-      // uses the SAME authenticated client as everything else in this route.
-      supabase.from("execution_traces").insert({
-        execution_id:     executionId,
-        agent_id:         node.agent_id,
-        user_id:          userId,
-        model:            agent.model_name,
-        system_prompt:    systemPrompt.slice(0, 4000),
-        user_message:     userMessage.slice(0, 4000),
-        assistant_reply:  safeText.slice(0, 4000),
-        total_ms:         latencyMs,
-        tokens_input:     inputTokens,
-        tokens_output:    outputTokens,
-        cost_usd:         costUsd,
-        status:           "success",
-        temperature:      agent.temperature ?? 0.7,
-        selected_model:   routing.selectedModel,
-        routing_reason:   routing.routing.reason,
-        depth_assessment: routing.depthAssessment,
-      }),
-    ]).catch(() => {})
+      }).select("id").single()
+
+      await Promise.all([
+        supabase.rpc("increment_executions_used", { user_id_param: userId }),
+        supabase.from("execution_traces").insert({
+          execution_id:     execRow?.id ?? executionId, // fallback keeps the row from being orphaned if the insert above ever fails
+          agent_id:         node.agent_id,
+          user_id:          userId,
+          model:            agent.model_name,
+          system_prompt:    systemPrompt.slice(0, 4000),
+          user_message:     userMessage.slice(0, 4000),
+          assistant_reply:  safeText.slice(0, 4000),
+          total_ms:         latencyMs,
+          tokens_input:     inputTokens,
+          tokens_output:    outputTokens,
+          cost_usd:         costUsd,
+          status:           "success",
+          temperature:      agent.temperature ?? 0.7,
+          selected_model:   routing.selectedModel,
+          routing_reason:   routing.routing.reason,
+          depth_assessment: routing.depthAssessment,
+        }),
+      ])
+    }).catch(() => {})
 
     return {
       node_id: node.id, agent_id: node.agent_id, agent_name: agent.name ?? node.label ?? node.id,
@@ -828,14 +834,31 @@ async function executeNode(
     // ✅ Failure traces matter as much as success ones for a governance/audit
     // view — "this agent fails 12% of the time" is exactly the kind of signal
     // an enterprise buyer evaluating trust needs to see, not just the wins.
-    supabase.from("execution_traces").insert({
-      execution_id: executionId,
-      agent_id:     node.agent_id,
-      user_id:      userId,
-      model:        agent.model_name,
-      status:       "failed",
-      error_message: (err.message ?? "Unknown error").slice(0, 500),
-      total_ms:     Date.now() - startMs,
+    //
+    // ✅ Bug fix: this path previously only wrote to execution_traces, never
+    // to executions — meaning failed pipeline nodes silently never appeared
+    // in the customer-facing /executions history at all (that page reads
+    // from `executions`). A user's failure rate looked artificially better
+    // than reality, and the "Failed" filter count on that page underreported
+    // pipeline failures entirely. Same execution_id linkage fix as the
+    // success path applies here too.
+    Promise.resolve().then(async () => {
+      const { data: execRow } = await supabase.from("executions").insert({
+        agent_id: node.agent_id, user_id: userId, status: "failed",
+        input: null, // error may occur before nodeInput is computed, so this is never reliably available here
+        error_message: (err.message ?? "Unknown error").slice(0, 500),
+        latency_ms: Date.now() - startMs, cost_usd: 0, completed_at: new Date().toISOString(),
+      }).select("id").single()
+
+      await supabase.from("execution_traces").insert({
+        execution_id: execRow?.id ?? executionId,
+        agent_id:     node.agent_id,
+        user_id:      userId,
+        model:        agent.model_name,
+        status:       "failed",
+        error_message: (err.message ?? "Unknown error").slice(0, 500),
+        total_ms:     Date.now() - startMs,
+      })
     }).catch(() => {})
 
     return {
