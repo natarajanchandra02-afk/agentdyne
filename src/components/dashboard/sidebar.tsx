@@ -12,6 +12,7 @@ import {
   CreditCard, Settings, HelpCircle,
   LogOut, Zap, ChevronRight, ChevronLeft, ChevronsUpDown,
   Menu, X, ShieldCheck, Crown, Sparkles, Lock, PanelLeftClose, PanelLeftOpen,
+  Radar,
 } from "lucide-react"
 import { cn, getInitials } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -26,6 +27,7 @@ import { useUser } from "@/hooks/use-user"
 const WORKSPACE_NAV = [
   { href: "/dashboard",    icon: LayoutDashboard, label: "Dashboard"   },
   { href: "/my-agents",    icon: Bot,             label: "My Agents"   },
+  { href: "/fleet",        icon: Radar,           label: "Fleet Command", badge: "New" },
   { href: "/executions",   icon: History,         label: "Executions"  },
   { href: "/collections",  icon: FolderOpen,      label: "Collections" },
 ]

@@ -209,12 +209,14 @@ export function shouldEscalateOnConfidence(confidence: number | undefined, curre
   return true
 }
 
-// ─── routeCompletion — Anthropic + OpenAI + Gemini ───────────────────────────
+// ─── routeCompletion / routeStream — Anthropic + OpenAI + Gemini ───────────
 
-export async function routeCompletion(params: {
+export interface LLMCallParams {
   model: string; system: string; userMessage: string
   maxTokens?: number; temperature?: number; tools?: any[]; stream?: boolean
-}): Promise<{ text: string; inputTokens: number; outputTokens: number; costUsd: number; routingMetadata?: { selectedModel: string; estimatedCostUsd: number } }> {
+}
+
+export async function routeCompletion(params: LLMCallParams): Promise<{ text: string; inputTokens: number; outputTokens: number; costUsd: number; routingMetadata?: { selectedModel: string; estimatedCostUsd: number } }> {
   const { model: requestedModel, system, userMessage, maxTokens = 4096, temperature = 0.7, tools, stream = false } = params
 
   const validModels = Object.values(MODELS) as string[]
@@ -327,4 +329,143 @@ export async function routeCompletion(params: {
   }
 
   throw new Error(`Unknown model provider for model: ${model}`)
+}
+
+/**
+ * routeStream
+ *
+ * Streaming counterpart to routeCompletion — calls `onChunk` with each text
+ * delta as it arrives and resolves with final token/cost totals once the
+ * stream ends. Used by the SSE path in /api/agents/[id]/execute (the
+ * `wantsStream && !useMCPLoop` branch).
+ *
+ * Edge-runtime safe: uses fetch + the Web Streams API (ReadableStream reader
+ * + TextDecoder) only — no Node.js http/SDK client, matching every other
+ * function in this file.
+ *
+ * Provider coverage:
+ *   - Anthropic: real SSE streaming (content_block_delta / message_delta)
+ *   - OpenAI:    real SSE streaming (chat.completion.chunk deltas)
+ *   - Gemini:    no streaming implementation yet — falls back to a single
+ *     non-streaming call via routeCompletion, delivered as one chunk. This
+ *     matches the same graceful-degradation pattern routeCompletion already
+ *     uses for Gemini (falls back to Haiku on missing key / provider error).
+ */
+export async function routeStream(
+  params: LLMCallParams,
+  onChunk: (chunk: string) => void,
+): Promise<{ inputTokens: number; outputTokens: number; costUsd: number }> {
+  const { model: requestedModel, system, userMessage, maxTokens = 4096, temperature = 0.7 } = params
+  const validModels = Object.values(MODELS) as string[]
+  const model = validModels.includes(requestedModel) ? requestedModel : MODELS.SONNET
+
+  if (model.startsWith("claude-")) return streamAnthropic(model, system, userMessage, maxTokens, temperature, onChunk)
+  if (model.startsWith("gpt-"))    return streamOpenAI(model, system, userMessage, maxTokens, temperature, onChunk)
+
+  // Gemini fallback — see doc comment above.
+  console.warn(`routeStream: no streaming implementation for ${model} — falling back to a single non-streaming chunk`)
+  const result = await routeCompletion({ ...params, model })
+  if (result.text) onChunk(result.text)
+  return { inputTokens: result.inputTokens, outputTokens: result.outputTokens, costUsd: result.costUsd }
+}
+
+async function streamAnthropic(
+  model: string, system: string, userMessage: string, maxTokens: number, temperature: number,
+  onChunk: (chunk: string) => void,
+): Promise<{ inputTokens: number; outputTokens: number; costUsd: number }> {
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set")
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model, max_tokens: Math.min(maxTokens, 8192), temperature,
+      messages: [{ role: "user", content: userMessage }], system, stream: true,
+    }),
+  })
+  if (!res.ok || !res.body) {
+    const errBody = await res.text().catch(() => "")
+    throw new Error(`Anthropic streaming error ${res.status}: ${errBody.slice(0, 200)}`)
+  }
+
+  let inputTok = 0, outputTok = 0
+  await parseSSE(res.body, (event) => {
+    if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && event.delta.text) {
+      onChunk(event.delta.text as string)
+    } else if (event.type === "message_start") {
+      inputTok = event.message?.usage?.input_tokens ?? 0
+    } else if (event.type === "message_delta") {
+      outputTok = event.usage?.output_tokens ?? outputTok
+    }
+  })
+
+  return { inputTokens: inputTok, outputTokens: outputTok, costUsd: estimateCost(model as ModelId, inputTok, outputTok) }
+}
+
+async function streamOpenAI(
+  model: string, system: string, userMessage: string, maxTokens: number, temperature: number,
+  onChunk: (chunk: string) => void,
+): Promise<{ inputTokens: number; outputTokens: number; costUsd: number }> {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) throw new Error("OPENAI_API_KEY not set")
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model, max_tokens: maxTokens, temperature,
+      messages: [{ role: "system", content: system }, { role: "user", content: userMessage }],
+      stream: true,
+      stream_options: { include_usage: true },  // final chunk carries `usage` totals
+    }),
+  })
+  if (!res.ok || !res.body) throw new Error(`OpenAI streaming error ${res.status}`)
+
+  let inputTok = 0, outputTok = 0, textLen = 0
+  await parseSSE(res.body, (event) => {
+    const delta = event.choices?.[0]?.delta?.content
+    if (typeof delta === "string" && delta.length > 0) { onChunk(delta); textLen += delta.length }
+    if (event.usage) { inputTok = event.usage.prompt_tokens ?? inputTok; outputTok = event.usage.completion_tokens ?? outputTok }
+  })
+
+  // Some OpenAI-compatible endpoints omit stream_options usage; estimate as a
+  // last resort so cost reconciliation never silently reports $0.
+  if (outputTok === 0 && textLen > 0) outputTok = Math.ceil(textLen / 4)
+
+  return { inputTokens: inputTok, outputTokens: outputTok, costUsd: estimateCost(model as ModelId, inputTok, outputTok) }
+}
+
+/**
+ * parseSSE
+ * Minimal `text/event-stream` line parser shared by both providers above.
+ * Both Anthropic and OpenAI send `data: {...}\n\n` frames and terminate with
+ * a literal `data: [DONE]` line — handled generically here so streamAnthropic/
+ * streamOpenAI only deal with already-parsed JSON event objects.
+ */
+async function parseSSE(body: ReadableStream<Uint8Array>, onEvent: (event: any) => void): Promise<void> {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ""
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+
+      const lines = buffer.split("\n")
+      buffer = lines.pop() ?? ""  // keep the last (possibly incomplete) line in the buffer
+
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed.startsWith("data:")) continue
+        const payload = trimmed.slice(5).trim()
+        if (payload === "[DONE]") return
+        try { onEvent(JSON.parse(payload)) } catch { /* ignore malformed/partial frames */ }
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
 }

@@ -1,12 +1,13 @@
 "use client"
 
 /**
- * EditorTabBar — builder tabs: Overview · Behavior · Security · Monetization · Deploy · Improve
- * Deploy tab = Embed Agent (viral distribution)
- * Improve tab = Self-Improving AI version diff panel
+ * EditorTabBar — builder tabs: Overview · Behavior · Security · Monetization · Deploy · Protocols · Improve
+ * Deploy tab     = Embed Agent (viral distribution)
+ * Protocols tab  = MCP hosting + A2A discovery opt-in (Aug 2026 — protocol interop)
+ * Improve tab    = Self-Improving AI version diff panel
  */
 
-import { LayoutDashboard, Brain, ShieldCheck, DollarSign, Globe, Sparkles } from "lucide-react"
+import { LayoutDashboard, Brain, ShieldCheck, DollarSign, Globe, Network, Sparkles } from "lucide-react"
 import { SlidingTabs } from "@/components/ui/sliding-tabs"
 
 export const EDITOR_TABS = [
@@ -15,6 +16,7 @@ export const EDITOR_TABS = [
   { id: "security",     label: "Security",     icon: ShieldCheck     },
   { id: "monetization", label: "Monetization", icon: DollarSign      },
   { id: "deploy",       label: "Deploy",       icon: Globe           },
+  { id: "protocols",    label: "Protocols",    icon: Network         },
   { id: "improve",      label: "Improve",      icon: Sparkles        },
 ] as const
 

@@ -30,6 +30,7 @@ import { MCP_SERVERS, MCP_CATEGORIES, type MCPCategory } from "@/lib/mcp-servers
 import { MAX_SYSTEM_PROMPT_LENGTH, SUPPORTED_MODELS, MODEL_LABELS } from "@/lib/constants"
 import { categoryLabel, cn }                            from "@/lib/utils"
 import { DeployPanel }                                  from "./deploy-panel"
+import { ProtocolPanel }                                from "./protocol-panel"
 import { ImprovePanel }                                 from "./improve-panel"
 import toast                                            from "react-hot-toast"
 
@@ -653,6 +654,15 @@ export function BuilderEditorClient({ agent, defaultTab = "overview" }: { agent:
     // Deploy tab — Embed agent on any website (P1: viral distribution)
     deploy: (
       <DeployPanel
+        agentId={agent.id}
+        agentName={agent.name}
+        isPublic={isLive}
+      />
+    ),
+
+    // Protocols tab — MCP hosting + A2A discovery opt-in (Aug 2026)
+    protocols: (
+      <ProtocolPanel
         agentId={agent.id}
         agentName={agent.name}
         isPublic={isLive}

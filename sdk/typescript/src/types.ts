@@ -126,8 +126,13 @@ export interface ExecuteResponse {
 }
 
 export interface StreamChunk {
-  type: "token" | "start" | "correction" | "done" | "error"
-  /** Incremental text delta (type === "token") */
+  // "delta" is what /api/agents/[id]/execute's SSE stream actually sends
+  // per-token (see the `send({ type: "delta", delta: chunk })` call in that
+  // route) — "token" was the originally documented name but the server
+  // never matched it. Both are accepted so this fix doesn't break any
+  // integration written against either name.
+  type: "token" | "delta" | "start" | "correction" | "done" | "error"
+  /** Incremental text delta (type === "token" or "delta") */
   delta?:       string
   executionId?: string
   error?:       string

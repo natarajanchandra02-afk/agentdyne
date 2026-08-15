@@ -115,7 +115,12 @@ export async function POST(
 
     // ── Content guardrails ─────────────────────────────────────────────────
     const guardResult   = checkInput(userMessage)
-    const { filterResult } = runInjectionPipeline(userMessage, "anon")
+    // "external" (not "user") — anonymous, no-login input is the least-trusted
+    // input this platform accepts, so it gets the same stricter 1.5x injection-
+    // score multiplier as tool/URL content. (Fixes a pre-existing bug: the
+    // literal "anon" isn't a valid source and failed type-check; "external" is
+    // the closest semantic match to the original intent, not a downgrade to "user".)
+    const { filterResult } = runInjectionPipeline(userMessage, "external")
 
     if (!guardResult.allowed || !filterResult.allowed)
       return NextResponse.json({ error: "Input rejected by safety filter." }, { status: 400 })

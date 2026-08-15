@@ -107,6 +107,11 @@ const ENV_SPECS: EnvSpec[] = [
     description: "Email address for admin alerts",
     example:     "support@inteleion.com",
   },
+  {
+    key:         "OTEL_EXPORT_CRON_SECRET",
+    required:    false,
+    description: "Shared secret protecting POST /api/otel/export-batch — required only if you enable pushed OpenTelemetry trace export (pg_cron + pg_net calling that route on a schedule)",
+  },
 ]
 
 /**

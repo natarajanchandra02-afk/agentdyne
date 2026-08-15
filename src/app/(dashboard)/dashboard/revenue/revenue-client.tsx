@@ -88,10 +88,9 @@ function TrendChart({ data }: { data: typeof MONTHLY_TREND }) {
         <div key={d.month} className="flex-1 flex flex-col items-center gap-1.5">
           <motion.div
             className="w-full rounded-t-lg bg-primary/20 hover:bg-primary/40 transition-colors relative group cursor-pointer"
-            style={{ height: `${(d.revenue / max) * 100}%` }}
+            style={{ height: `${(d.revenue / max) * 100}%`, originY: 1 }}
             initial={{ scaleY: 0 }} animate={{ scaleY: 1 }}
             transition={{ delay: i * 0.06, duration: 0.4, ease: "easeOut" }}
-            style={{ height: `${(d.revenue / max) * 100}%`, originY: 1 }}
           >
             {/* Tooltip */}
             <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-zinc-900 text-white text-[10px] font-bold px-2 py-1 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-10">

@@ -224,7 +224,19 @@ export async function POST(
 
     // ── Content guardrails ────────────────────────────────────────────────────
     const guardrailResult = checkInput(userMessage)
-    const { filterResult, score, shouldLog } = runInjectionPipeline(userMessage, "user")
+    // X-AgentDyne-Origin (set by mcp/route.ts and a2a/tasks/route.ts on their
+    // internal calls) marks input relayed through an external MCP client or
+    // A2A orchestrator, not typed directly by the API key owner — the OWASP
+    // ASI07 inter-agent-communication pattern: content laundered through
+    // another system shouldn't inherit first-party trust just because it
+    // arrives on a valid key. Only our own internal fetch calls are trusted
+    // to set this productively — an external caller can send any header
+    // value, but nothing here reads it as privilege-granting, only
+    // privilege-reducing (worst case if spoofed: stricter scoring, never
+    // looser).
+    const requestOrigin = req.headers.get("x-agentdyne-origin")
+    const injectionSource: "user" | "external" = (requestOrigin === "mcp" || requestOrigin === "a2a") ? "external" : "user"
+    const { filterResult, score, shouldLog } = runInjectionPipeline(userMessage, injectionSource)
 
     if (!guardrailResult.allowed || !filterResult.allowed) {
       supabase.from("injection_attempts").insert({

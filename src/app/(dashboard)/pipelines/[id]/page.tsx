@@ -21,13 +21,18 @@ import { createClient } from "@/lib/supabase/client"
 import { cn } from "@/lib/utils"
 import toast from "react-hot-toast"
 import { estimateCost, formatCostForDisplay } from "@/core/execution/costEstimator"
+import { PipelineCanvas } from "./canvas/pipeline-canvas"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type NodeType = "linear" | "parallel" | "branch" | "subagent"
 type NodeStatus = "idle" | "running" | "success" | "failed" | "skipped"
 
-interface DAGNode {
+// Exported for canvas/ (Phase 1 canvas builder) — the list editor below is
+// unaffected; this is a visibility-only change, no runtime behavior differs.
+export type { NodeType, NodeStatus }
+
+export interface DAGNode {
   id:                   string
   agent_id:             string
   label:                string
@@ -40,9 +45,10 @@ interface DAGNode {
   max_retries?:         number
   retry_delay_ms?:      number
   fallback_agent_id?:   string
+  position?:            { x: number; y: number }  // NEW — optional, canvas-view layout only. Absent on older pipelines; auto-laid-out on first canvas open.
 }
 
-interface DAGEdge { from: string; to: string; condition?: string }
+export interface DAGEdge { from: string; to: string; condition?: string }
 
 interface Pipeline {
   id: string; name: string; description: string | null
@@ -67,6 +73,9 @@ interface ExecutionNodeResult {
   error?: string; output?: unknown; input?: unknown
   retry_count?: number; used_fallback?: boolean
 }
+// Exported for canvas/ — live per-node metric badges during a test run
+// (Phase 3). Visibility-only change, same as the DAGNode/NodeType exports above.
+export type { ExecutionNodeResult }
 
 interface ExecutionRun {
   id: string; status: string; created_at: string
@@ -77,14 +86,14 @@ interface ExecutionRun {
 
 // ─── Node type config (human-friendly labels) ────────────────────────────────
 
-const NODE_TYPE_CONFIG: Record<NodeType, { label: string; friendlyLabel: string; desc: string; color: string; bg: string; icon: React.ReactNode }> = {
+export const NODE_TYPE_CONFIG: Record<NodeType, { label: string; friendlyLabel: string; desc: string; color: string; bg: string; icon: React.ReactNode }> = {
   linear:   { label: "Linear",      friendlyLabel: "Sequential",    desc: "Runs one after another",             color: "text-zinc-600",   bg: "bg-zinc-50",   icon: <ArrowRight className="h-3.5 w-3.5" /> },
   parallel: { label: "Run Together", friendlyLabel: "Run Together", desc: "Runs concurrently with grouped nodes", color: "text-blue-600",   bg: "bg-blue-50",   icon: <Zap className="h-3.5 w-3.5" /> },
   branch:   { label: "Condition",    friendlyLabel: "Condition",    desc: "Only runs if condition is true",     color: "text-amber-600",  bg: "bg-amber-50",  icon: <GitBranch className="h-3.5 w-3.5" /> },
   subagent: { label: "Nested Flow",  friendlyLabel: "Nested Flow",  desc: "Delegates to another pipeline",     color: "text-violet-600", bg: "bg-violet-50", icon: <Cpu className="h-3.5 w-3.5" /> },
 }
 
-const NODE_STATUS_CONFIG: Record<NodeStatus, { color: string; bg: string; border: string; label: string }> = {
+export const NODE_STATUS_CONFIG: Record<NodeStatus, { color: string; bg: string; border: string; label: string }> = {
   idle:    { color: "text-zinc-400",  bg: "bg-zinc-50",   border: "border-zinc-100",  label: ""         },
   running: { color: "text-blue-600",  bg: "bg-blue-50",   border: "border-blue-200",  label: "Running…" },
   success: { color: "text-green-600", bg: "bg-green-50",  border: "border-green-200", label: "Done"     },
@@ -857,6 +866,116 @@ function AgentPicker({ onAdd, existingIds }: { onAdd: (a: Agent) => void; existi
   )
 }
 
+// ─── Node settings fields (shared by NodeCard's list-view expander AND the
+//     canvas drawer, so both surfaces render identically and never drift) ───
+
+export function NodeSettingsFields({ node, onChange, currentPipelineId }: {
+  node: DAGNode
+  onChange: (p: Partial<DAGNode>) => void
+  currentPipelineId: string
+}) {
+  const [resExp, setResExp] = useState(false)
+  const hasResilience = (node.max_retries ?? 0) > 0 || !!node.fallback_agent_id
+
+  return (
+    <div className="space-y-4">
+      {/* Pattern selector */}
+      <div className="space-y-2">
+        <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Step behaviour</p>
+        <div className="grid grid-cols-2 gap-1.5">
+          {(Object.entries(NODE_TYPE_CONFIG) as [NodeType, typeof NODE_TYPE_CONFIG[NodeType]][]).map(([type, c]) => (
+            <button key={type} onClick={() => onChange({ node_type: type, condition: type !== "branch" ? undefined : node.condition, parallel_group: type !== "parallel" ? undefined : node.parallel_group })}
+              className={cn("flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition-all text-xs",
+                (node.node_type ?? "linear") === type ? `${c.bg} ${c.color} border-current/20 font-semibold` : "bg-white border-zinc-100 text-zinc-500 hover:border-zinc-200")}>
+              {c.icon}
+              <div>
+                <p className="font-semibold">{c.friendlyLabel}</p>
+                <p className="text-[10px] opacity-70">{c.desc}</p>
+              </div>
+              {(node.node_type ?? "linear") === type && <CheckCircle2 className="h-3.5 w-3.5 ml-auto flex-shrink-0" />}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {node.node_type === "branch" && (
+        <div className="space-y-1.5">
+          <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1.5"><GitBranch className="h-3 w-3 text-amber-500" /> Run if…</label>
+          <ConditionBuilder value={node.condition ?? ""} onChange={v => onChange({ condition: v })} />
+        </div>
+      )}
+
+      {node.node_type === "parallel" && (
+        <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5">
+          <p className="text-[11px] font-semibold text-blue-700 flex items-center gap-1.5"><Zap className="h-3 w-3" /> Group: {node.parallel_group ?? "not set"}</p>
+          <p className="text-[11px] text-blue-600 mt-0.5">Select multiple nodes with checkboxes, then click "Group Parallel".</p>
+        </div>
+      )}
+
+      {node.node_type === "subagent" && (
+        <div className="space-y-1.5">
+          <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1.5"><Cpu className="h-3 w-3 text-violet-500" /> Nested pipeline</label>
+          <SubagentPipelineSelector value={node.sub_pipeline_id ?? ""} currentPipelineId={currentPipelineId}
+            onChange={(id, name) => onChange({ sub_pipeline_id: id, label: node.label || name })} />
+        </div>
+      )}
+
+      <div className="space-y-1.5">
+        <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Extract field from output (optional)</label>
+        <input value={node.output_field ?? ""} onChange={e => onChange({ output_field: e.target.value })}
+          placeholder={`e.g. "result", "text", "items[0].title"`}
+          className="w-full h-9 px-3 rounded-xl border border-zinc-200 bg-white text-xs font-mono focus:outline-none focus:border-zinc-300 transition-all" />
+        <p className="text-[10px] text-zinc-400">Extract a specific field to pass downstream instead of the full output.</p>
+      </div>
+
+      <label className="flex items-center gap-3 cursor-pointer">
+        <div onClick={() => onChange({ continue_on_failure: !node.continue_on_failure })}
+          className={cn("w-8 h-4 rounded-full transition-colors relative flex-shrink-0", node.continue_on_failure ? "bg-primary" : "bg-zinc-200")}>
+          <span className={cn("absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform", node.continue_on_failure ? "translate-x-4" : "translate-x-0.5")} />
+        </div>
+        <div>
+          <p className="text-xs font-medium text-zinc-700">Continue if this step fails</p>
+          <p className="text-[11px] text-zinc-400">Pass null to the next step instead of stopping the pipeline.</p>
+        </div>
+      </label>
+
+      {/* Resilience settings */}
+      <div className="border-t border-zinc-100 pt-3">
+        <button onClick={() => setResExp(r => !r)} className="flex items-center gap-2 w-full text-left mb-2 group">
+          <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-primary transition-colors" />
+          <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider group-hover:text-primary transition-colors flex-1">
+            Retry settings {hasResilience && <span className="text-blue-500 ml-1">(active)</span>}
+          </p>
+          {resExp ? <ChevronUp className="h-3 w-3 text-zinc-400" /> : <ChevronDown className="h-3 w-3 text-zinc-400" />}
+        </button>
+        {resExp && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-[10px] font-medium text-zinc-600">Max retries (0–3)</label>
+                <input type="number" min={0} max={3} value={node.max_retries ?? 0}
+                  onChange={e => onChange({ max_retries: Math.min(3, Math.max(0, parseInt(e.target.value) || 0)) })}
+                  className="w-full h-9 px-3 rounded-xl border border-zinc-200 bg-white text-xs focus:outline-none focus:border-zinc-300 transition-all" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-medium text-zinc-600">Retry delay (ms)</label>
+                <input type="number" min={100} max={5000} step={100} value={node.retry_delay_ms ?? 500}
+                  onChange={e => onChange({ retry_delay_ms: Math.min(5000, Math.max(100, parseInt(e.target.value) || 500)) })}
+                  className="w-full h-9 px-3 rounded-xl border border-zinc-200 bg-white text-xs focus:outline-none focus:border-zinc-300 transition-all" />
+              </div>
+            </div>
+            {(node.max_retries ?? 0) > 0 && (
+              <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-[11px] text-blue-700">
+                Max delay: ~{((node.retry_delay_ms ?? 500) * (Math.pow(2, node.max_retries ?? 0) - 1) / 1000).toFixed(1)}s (exponential backoff)
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── NodeCard ─────────────────────────────────────────────────────────────────
 
 function NodeCard({ node, index, total, agent, nextAgent, isParallelSelected, onParallelSelect, onChange, onRemove, onMoveUp, onMoveDown, onTestNode, currentPipelineId, executionStatus }: {
@@ -868,8 +987,7 @@ function NodeCard({ node, index, total, agent, nextAgent, isParallelSelected, on
   onTestNode: () => void; currentPipelineId: string
   executionStatus?: NodeStatus
 }) {
-  const [exp,    setExp]    = useState(false)
-  const [resExp, setResExp] = useState(false)
+  const [exp, setExp] = useState(false)
   const cfg = NODE_TYPE_CONFIG[node.node_type ?? "linear"]
   const schemaCheck = agent && nextAgent ? schemaCompatible(agent.output_schema, nextAgent.input_schema) : { compatible: true, warnings: [] as string[] }
   const hasResilience = (node.max_retries ?? 0) > 0 || !!node.fallback_agent_id
@@ -933,100 +1051,8 @@ function NodeCard({ node, index, total, agent, nextAgent, isParallelSelected, on
       </div>
 
       {exp && (
-        <div className="border-t border-zinc-50 px-4 py-4 bg-zinc-50/60 space-y-4">
-          {/* Pattern selector */}
-          <div className="space-y-2">
-            <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Step behaviour</p>
-            <div className="grid grid-cols-2 gap-1.5">
-              {(Object.entries(NODE_TYPE_CONFIG) as [NodeType, typeof NODE_TYPE_CONFIG[NodeType]][]).map(([type, c]) => (
-                <button key={type} onClick={() => onChange({ node_type: type, condition: type !== "branch" ? undefined : node.condition, parallel_group: type !== "parallel" ? undefined : node.parallel_group })}
-                  className={cn("flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition-all text-xs",
-                    (node.node_type ?? "linear") === type ? `${c.bg} ${c.color} border-current/20 font-semibold` : "bg-white border-zinc-100 text-zinc-500 hover:border-zinc-200")}>
-                  {c.icon}
-                  <div>
-                    <p className="font-semibold">{c.friendlyLabel}</p>
-                    <p className="text-[10px] opacity-70">{c.desc}</p>
-                  </div>
-                  {(node.node_type ?? "linear") === type && <CheckCircle2 className="h-3.5 w-3.5 ml-auto flex-shrink-0" />}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {node.node_type === "branch" && (
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1.5"><GitBranch className="h-3 w-3 text-amber-500" /> Run if…</label>
-              <ConditionBuilder value={node.condition ?? ""} onChange={v => onChange({ condition: v })} />
-            </div>
-          )}
-
-          {node.node_type === "parallel" && (
-            <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5">
-              <p className="text-[11px] font-semibold text-blue-700 flex items-center gap-1.5"><Zap className="h-3 w-3" /> Group: {node.parallel_group ?? "not set"}</p>
-              <p className="text-[11px] text-blue-600 mt-0.5">Select multiple nodes with checkboxes, then click "Group Parallel".</p>
-            </div>
-          )}
-
-          {node.node_type === "subagent" && (
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1.5"><Cpu className="h-3 w-3 text-violet-500" /> Nested pipeline</label>
-              <SubagentPipelineSelector value={node.sub_pipeline_id ?? ""} currentPipelineId={currentPipelineId}
-                onChange={(id, name) => onChange({ sub_pipeline_id: id, label: node.label || name })} />
-            </div>
-          )}
-
-          <div className="space-y-1.5">
-            <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Extract field from output (optional)</label>
-            <input value={node.output_field ?? ""} onChange={e => onChange({ output_field: e.target.value })}
-              placeholder={`e.g. "result", "text", "items[0].title"`}
-              className="w-full h-9 px-3 rounded-xl border border-zinc-200 bg-white text-xs font-mono focus:outline-none focus:border-zinc-300 transition-all" />
-            <p className="text-[10px] text-zinc-400">Extract a specific field to pass downstream instead of the full output.</p>
-          </div>
-
-          <label className="flex items-center gap-3 cursor-pointer">
-            <div onClick={() => onChange({ continue_on_failure: !node.continue_on_failure })}
-              className={cn("w-8 h-4 rounded-full transition-colors relative flex-shrink-0", node.continue_on_failure ? "bg-primary" : "bg-zinc-200")}>
-              <span className={cn("absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform", node.continue_on_failure ? "translate-x-4" : "translate-x-0.5")} />
-            </div>
-            <div>
-              <p className="text-xs font-medium text-zinc-700">Continue if this step fails</p>
-              <p className="text-[11px] text-zinc-400">Pass null to the next step instead of stopping the pipeline.</p>
-            </div>
-          </label>
-
-          {/* Resilience settings */}
-          <div className="border-t border-zinc-100 pt-3">
-            <button onClick={() => setResExp(r => !r)} className="flex items-center gap-2 w-full text-left mb-2 group">
-              <RefreshCw className="h-3.5 w-3.5 text-zinc-400 group-hover:text-primary transition-colors" />
-              <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider group-hover:text-primary transition-colors flex-1">
-                Retry settings {hasResilience && <span className="text-blue-500 ml-1">(active)</span>}
-              </p>
-              {resExp ? <ChevronUp className="h-3 w-3 text-zinc-400" /> : <ChevronDown className="h-3 w-3 text-zinc-400" />}
-            </button>
-            {resExp && (
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-medium text-zinc-600">Max retries (0–3)</label>
-                    <input type="number" min={0} max={3} value={node.max_retries ?? 0}
-                      onChange={e => onChange({ max_retries: Math.min(3, Math.max(0, parseInt(e.target.value) || 0)) })}
-                      className="w-full h-9 px-3 rounded-xl border border-zinc-200 bg-white text-xs focus:outline-none focus:border-zinc-300 transition-all" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-medium text-zinc-600">Retry delay (ms)</label>
-                    <input type="number" min={100} max={5000} step={100} value={node.retry_delay_ms ?? 500}
-                      onChange={e => onChange({ retry_delay_ms: Math.min(5000, Math.max(100, parseInt(e.target.value) || 500)) })}
-                      className="w-full h-9 px-3 rounded-xl border border-zinc-200 bg-white text-xs focus:outline-none focus:border-zinc-300 transition-all" />
-                  </div>
-                </div>
-                {(node.max_retries ?? 0) > 0 && (
-                  <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-[11px] text-blue-700">
-                    Max delay: ~{((node.retry_delay_ms ?? 500) * (Math.pow(2, node.max_retries ?? 0) - 1) / 1000).toFixed(1)}s (exponential backoff)
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+        <div className="border-t border-zinc-50 px-4 py-4 bg-zinc-50/60">
+          <NodeSettingsFields node={node} onChange={onChange} currentPipelineId={currentPipelineId} />
         </div>
       )}
 
@@ -1076,10 +1102,11 @@ function SingleNodeTestPanel({ agent }: { agent: Agent }) {
   )
 }
 
-function FullPipelineTestPanel({ pipelineId, defaultInput, onNewRun, onNodeStatusChange }: {
+function FullPipelineTestPanel({ pipelineId, defaultInput, onNewRun, onNodeStatusChange, onNodeResults }: {
   pipelineId: string; defaultInput?: string
   onNewRun: (r: ExecutionRun) => void
   onNodeStatusChange?: (statuses: Record<string, NodeStatus>) => void
+  onNodeResults?: (results: ExecutionNodeResult[]) => void
 }) {
   const [input, setInput]   = useState(defaultInput ?? '{"input": "Hello, run this pipeline."}')
   const [running, setR]     = useState(false)
@@ -1089,13 +1116,14 @@ function FullPipelineTestPanel({ pipelineId, defaultInput, onNewRun, onNodeStatu
     setR(true); setResult(null)
     // Clear node statuses
     onNodeStatusChange?.({})
+    onNodeResults?.([])
     try {
       let inp: unknown; try { inp = JSON.parse(input) } catch { inp = input }
       const res  = await fetch(`/api/pipelines/${pipelineId}/execute`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ input: inp }) })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
 
-      // Update node statuses from results
+      // Update node statuses (and live cost/latency/token metrics) from results
       if (data.node_results && onNodeStatusChange) {
         const statuses: Record<string, NodeStatus> = {}
         for (const nr of data.node_results as ExecutionNodeResult[]) {
@@ -1103,6 +1131,7 @@ function FullPipelineTestPanel({ pipelineId, defaultInput, onNewRun, onNodeStatu
         }
         onNodeStatusChange(statuses)
       }
+      if (data.node_results) onNodeResults?.(data.node_results as ExecutionNodeResult[])
 
       const run: ExecutionRun = {
         id:               data.executionId,
@@ -1119,6 +1148,7 @@ function FullPipelineTestPanel({ pipelineId, defaultInput, onNewRun, onNodeStatu
       toast.error(err.message)
       setResult({ id: "err", status: "failed", created_at: new Date().toISOString(), total_latency_ms: 0, total_cost: 0, error_message: err.message })
       onNodeStatusChange?.({})
+      onNodeResults?.([])
     } finally { setR(false) }
   }
 
@@ -1174,6 +1204,15 @@ export default function PipelineEditPage() {
   const [preflightTarget,  setPreflightTarget]  = useState<"run" | "deploy">("run")
   // Live execution status: maps nodeId → status
   const [nodeStatuses,     setNodeStatuses]     = useState<Record<string, NodeStatus>>({})
+  // Live per-node metrics (latency/cost/tokens) during a test run — Phase 3,
+  // sourced from the same node_results the Test tab already receives.
+  const [nodeMetrics,      setNodeMetrics]      = useState<Record<string, ExecutionNodeResult>>({})
+  // Canvas builder (Phase 1) — purely a view toggle; DAGNode[] stays the
+  // single source of truth either way, see canvas/layout.ts header comment.
+  const [diagramView,      setDiagramView]      = useState<"list" | "canvas">("list")
+  // Canvas Phase 2: which node's settings drawer is open (canvas-only — the
+  // list view keeps its own inline expand/collapse via NodeCard's `exp` state)
+  const [canvasSelectedId, setCanvasSelectedId] = useState<string | null>(null)
 
   useEffect(() => {
     if (!id) return
@@ -1241,6 +1280,31 @@ export default function PipelineEditPage() {
     setParallelSelected(new Set())
     toast.success(`${parallelSelected.size} nodes will run in parallel`)
   }
+
+  // Canvas Phase 2: hand-drawing a connection reorders execution order to
+  // match — array order (+ parallel_group) remains the single source of
+  // truth for execution, per the scope doc §5. Moves `toId` to sit
+  // immediately after `fromId` in the array.
+  const reconnectNodes = useCallback((fromId: string, toId: string) => {
+    if (fromId === toId) return
+    setNodes(prev => {
+      const fromIdx = prev.findIndex(n => n.id === fromId)
+      const toIdx   = prev.findIndex(n => n.id === toId)
+      if (fromIdx === -1 || toIdx === -1) return prev
+      const arr = [...prev]
+      const [moved] = arr.splice(toIdx, 1)
+      const newFromIdx = arr.findIndex(n => n.id === fromId)
+      arr.splice(newFromIdx + 1, 0, moved!)
+      return arr
+    })
+    toast.success("Connection updated — execution order changed to match")
+  }, [])
+
+  const handleNodeResults = useCallback((results: ExecutionNodeResult[]) => {
+    const m: Record<string, ExecutionNodeResult> = {}
+    for (const r of results) m[r.node_id] = r
+    setNodeMetrics(m)
+  }, [])
 
   const save = async () => {
     if (!pipeline) return
@@ -1422,9 +1486,45 @@ export default function PipelineEditPage() {
         {activeTab === "builder" && (
           <div className="space-y-4">
 
-            {/* Visual DAG diagram — only shown when nodes exist */}
+            {/* Visual diagram — list-style DAGVisual (default) or the new
+                interactive canvas. Toggle only changes this block; the
+                editable NodeCard list below is unaffected either way. */}
             {nodes.length > 0 && (
-              <DAGVisual nodes={nodes} agentMap={agentMap} nodeStatuses={nodeStatuses} />
+              <div className="space-y-2">
+                <div className="flex items-center justify-end">
+                  <div className="flex items-center gap-1 bg-white border border-zinc-100 rounded-lg p-0.5">
+                    {(["list", "canvas"] as const).map(v => (
+                      <button key={v} onClick={() => setDiagramView(v)}
+                        className={cn("px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all capitalize",
+                          diagramView === v ? "bg-zinc-900 text-white" : "text-zinc-400 hover:text-zinc-700")}>
+                        {v}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {diagramView === "list" ? (
+                  <DAGVisual nodes={nodes} agentMap={agentMap} nodeStatuses={nodeStatuses} />
+                ) : (
+                  <PipelineCanvas
+                    nodes={nodes}
+                    agentMap={agentMap}
+                    nodeStatuses={nodeStatuses}
+                    nodeMetrics={nodeMetrics}
+                    onNodesChange={setNodes}
+                    currentPipelineId={pipeline.id}
+                    selectedNodeId={canvasSelectedId}
+                    onSelectNode={setCanvasSelectedId}
+                    onConnectNodes={reconnectNodes}
+                    parallelSelected={parallelSelected}
+                    onParallelSelectionChange={ids => setParallelSelected(new Set(ids))}
+                    onRemoveNode={nodeId => {
+                      const idx = nodes.findIndex(n => n.id === nodeId)
+                      if (idx !== -1) removeNode(idx)
+                      if (canvasSelectedId === nodeId) setCanvasSelectedId(null)
+                    }}
+                  />
+                )}
+              </div>
             )}
 
             <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
@@ -1576,6 +1676,7 @@ export default function PipelineEditPage() {
                       defaultInput={replayInput ?? undefined}
                       onNewRun={run => { setRuns(prev => [run, ...prev]); setReplayInput(null) }}
                       onNodeStatusChange={setNodeStatuses}
+                      onNodeResults={handleNodeResults}
                     />
                   </>}
             </div>

@@ -229,7 +229,11 @@ export function estimatePipelineCost(
   const estimatedLatency = steps.length * 3_000
 
   return {
-    steps,
+    steps:               estimates,  // BUG FIX: was returning the raw input `steps`
+                                     // array instead of the computed `estimates` —
+                                     // every consumer reading e.g. steps[i].rawCostUsd
+                                     // got `undefined`. estimates IS the CostEstimate[]
+                                     // this return type promises.
     totalRawCostUsd:    parseFloat(totalRaw.toFixed(8)),
     totalUserCostUsd:   parseFloat(totalUser.toFixed(8)),
     worstCaseTotalUsd:  parseFloat(worstCase.toFixed(8)),
