@@ -42,7 +42,22 @@ export function SlidingTabs({
 
   return (
     <div
-      className={cn("relative flex items-center gap-0.5 p-1 rounded-xl", bg, className)}
+      className={cn(
+        "relative flex items-center gap-0.5 p-1 rounded-xl",
+        // Card variant (used by tab bars that can grow past 5-6 items, e.g.
+        // the builder's EditorTabBar) scrolls horizontally instead of
+        // overflowing the rounded container — the bug this fixes: `flex-1`
+        // tabs with text content don't shrink below their natural content
+        // width by default (flexbox's min-width:auto), so once combined tab
+        // width exceeds the container, buttons pushed past the rounded edge
+        // rather than the box adapting. overflow-x-auto + flex-nowrap here,
+        // paired with flex-shrink-0 (not flex-1) on each card-variant button
+        // below, is the standard fix — same pattern Material Design tab bars
+        // use once tabs exceed available width.
+        !isPill && "overflow-x-auto flex-nowrap [&::-webkit-scrollbar]:hidden",
+        bg, className,
+      )}
+      style={!isPill ? { scrollbarWidth: "none", msOverflowStyle: "none" } : undefined}
       role="tablist"
     >
       {tabs.map(tab => {
@@ -61,7 +76,7 @@ export function SlidingTabs({
               "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-1",
               isPill
                 ? "px-4 py-1.5 rounded-full text-sm font-medium"
-                : "flex-1 px-3 py-2 rounded-lg text-sm font-medium",
+                : "flex-shrink-0 px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap",
               isActive
                 ? tab.danger ? "text-red-600" : "text-zinc-900"
                 : tab.danger ? "text-red-400 hover:text-red-500" : "text-zinc-500 hover:text-zinc-800"

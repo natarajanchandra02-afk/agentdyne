@@ -1214,6 +1214,19 @@ export default function PipelineEditPage() {
   // list view keeps its own inline expand/collapse via NodeCard's `exp` state)
   const [canvasSelectedId, setCanvasSelectedId] = useState<string | null>(null)
 
+  // Deep-link support: /pipelines/[id]?view=canvas lands directly in canvas
+  // view (used by Agent Studio's Parallel/Supervisor pattern creation).
+  // Deliberately reads window.location.search in an effect rather than
+  // Next's useSearchParams() — that hook requires a Suspense boundary
+  // somewhere in the tree, and this file (already large, already working,
+  // already using useParams()) has none. This achieves the same one-time
+  // deep-link read with zero risk to the existing render tree.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("view") === "canvas") {
+      setDiagramView("canvas")
+    }
+  }, [])
+
   useEffect(() => {
     if (!id) return
     let cancelled = false

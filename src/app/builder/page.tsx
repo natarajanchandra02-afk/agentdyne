@@ -45,7 +45,7 @@ const MODELS = SUPPORTED_MODELS.map(v => ({
   badge: v.includes("opus") ? "Best" : v.includes("sonnet") ? "Popular" : v.includes("haiku") ? "Fast" : null,
 }))
 
-type AgentType = "single" | "rag" | "pipeline"
+type AgentType = "single" | "rag" | "parallel" | "supervisor"
 
 const AGENT_TYPES = [
   {
@@ -65,14 +65,28 @@ const AGENT_TYPES = [
     color: "bg-green-50 text-green-700 border-green-100",
   },
   {
-    key:   "pipeline" as AgentType,
+    key:   "parallel" as AgentType,
+    icon:  Zap,
+    title: "Parallel Pattern",
+    desc:  "Multiple agents run at the same time on the same input; results combine. Best for fan-out tasks — running several checks or drafts concurrently.",
+    badge: "Visual canvas",
+    color: "bg-blue-50 text-blue-700 border-blue-100",
+  },
+  {
+    key:   "supervisor" as AgentType,
     icon:  GitMerge,
-    title: "Multi-Agent Pipeline",
-    desc:  "Chain agents in sequence. Output of agent A flows automatically into agent B.",
-    badge: "Advanced",
-    color: "bg-amber-50 text-amber-700 border-amber-100",
+    title: "Supervisor Pattern",
+    desc:  "One orchestrator agent delegates work to nested sub-pipelines and combines their results. Best for complex, multi-stage workflows.",
+    badge: "Visual canvas",
+    color: "bg-violet-50 text-violet-700 border-violet-100",
   },
 ]
+
+// Parallel/Supervisor are pipeline patterns, not marketplace agents — they
+// skip the name/description/pricing wizard entirely (a pipeline only needs
+// a name per POST /api/pipelines) and go straight into the visual canvas
+// builder, which is where these patterns are actually configured.
+const PIPELINE_PATTERNS = new Set<AgentType>(["parallel", "supervisor"])
 
 const schema = z.object({
   name:          z.string().min(3, "Name must be at least 3 characters").max(60),
@@ -110,6 +124,7 @@ function BuilderInner() {
   const { profile }  = useUser()
   const userPlan     = profile?.subscription_plan ?? 'free'
   const [loading,   setLoading]   = useState(false)
+  const [creatingPipeline, setCreatingPipeline] = useState(false)
   const [step,      setStep]      = useState(0)
   const [agentType, setAgentType] = useState<AgentType>("single")
   // Track whether Select category has been programmatically set by template
@@ -225,6 +240,43 @@ function BuilderInner() {
     }
   }
 
+  // Parallel/Supervisor: create an empty-DAG pipeline (POST /api/pipelines
+  // explicitly supports dag: {nodes:[],edges:[]} — nodes get added in the
+  // canvas editor, since we don't have real agent_ids to pre-seed with here)
+  // and land directly in the canvas builder via ?view=canvas.
+  const createPatternPipeline = async (pattern: "parallel" | "supervisor") => {
+    setCreatingPipeline(true)
+    try {
+      const res = await fetch("/api/pipelines", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: pattern === "parallel" ? "New Parallel Pipeline" : "New Supervisor Pipeline",
+          description: pattern === "parallel"
+            ? "Multiple agents run concurrently on the same input; results combine."
+            : "A supervisor agent delegates to nested sub-pipelines and combines their results.",
+          dag: { nodes: [], edges: [] },
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        if (data.code === "PLAN_REQUIRED") {
+          toast.error("Pipelines require a Starter plan or above.")
+          router.push("/pricing")
+          return
+        }
+        toast.error(data.error || "Failed to create pipeline")
+        return
+      }
+      toast.success("Pipeline created — add agents on the canvas")
+      router.push(`/pipelines/${data.id}?view=canvas`)
+    } catch (err: any) {
+      toast.error(err.message || "Something went wrong")
+    } finally {
+      setCreatingPipeline(false)
+    }
+  }
+
   return (
     <div className="flex min-h-screen bg-white">
       <DashboardSidebar />
@@ -302,24 +354,28 @@ function BuilderInner() {
                 ))}
               </div>
 
-              {agentType === "pipeline" ? (
+              {PIPELINE_PATTERNS.has(agentType) ? (
                 <div className="space-y-3">
-                  <div className="bg-amber-50 border border-amber-100 rounded-2xl px-5 py-4">
-                    <p className="text-sm font-semibold text-amber-900 mb-1">Multi-Agent Pipelines live in Pipeline Studio</p>
-                    <p className="text-xs text-amber-700 leading-relaxed">
-                      Create individual agents first, then chain them in the Pipeline Studio.
+                  <div className="bg-blue-50 border border-blue-100 rounded-2xl px-5 py-4">
+                    <p className="text-sm font-semibold text-blue-900 mb-1">
+                      {agentType === "parallel" ? "Parallel Pattern" : "Supervisor Pattern"} opens straight into the visual canvas
+                    </p>
+                    <p className="text-xs text-blue-700 leading-relaxed">
+                      Drag agents onto the canvas, connect them, and watch live data flow and metrics while testing —
+                      no wizard steps needed for a pipeline pattern.
                     </p>
                   </div>
-                  <div className="flex gap-3">
-                    <Button type="button" variant="outline" onClick={() => setAgentType("single")}
-                      className="flex-1 rounded-xl h-11 font-semibold border-zinc-200">
-                      Back to Single Agent
-                    </Button>
-                    <Button type="button" onClick={() => router.push("/pipelines")}
-                      className="flex-1 rounded-xl h-11 bg-zinc-900 text-white hover:bg-zinc-700 font-semibold">
-                      Open Pipeline Studio <ArrowRight className="h-4 w-4 ml-1.5" />
-                    </Button>
-                  </div>
+                  <Button type="button" disabled={creatingPipeline}
+                    onClick={() => createPatternPipeline(agentType as "parallel" | "supervisor")}
+                    className="w-full rounded-xl h-11 bg-zinc-900 text-white hover:bg-zinc-700 font-semibold text-sm">
+                    {creatingPipeline
+                      ? <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Creating…</>
+                      : <>Create & Open Canvas <ArrowRight className="h-4 w-4 ml-2" /></>}
+                  </Button>
+                  <button type="button" onClick={() => router.push("/pipelines")}
+                    className="w-full text-center text-xs text-zinc-400 hover:text-zinc-700 transition-colors">
+                    Or browse your existing pipelines →
+                  </button>
                 </div>
               ) : (
                 <Button type="button" onClick={() => advance(1)}
