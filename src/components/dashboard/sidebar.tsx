@@ -37,7 +37,13 @@ const BUILD_NAV = [
   { href: "/compose",      icon: Sparkles, label: "AI Composer",  badge: "New"                  },
   { href: "/pipelines",    icon: Layers,   label: "Pipelines"                                    },
   { href: "/swarm",        icon: Network,  label: "Swarms",       badge: "Starter+", planGate: true },
-  { href: "/integrations", icon: Plug2,    label: "Integrations"                                 },
+  // NOT /integrations — that URL is the public marketing catalog
+  // (src/app/integrations/page.tsx). This dashboard-scoped connections
+  // manager lives at a different path specifically to avoid colliding
+  // with it; see (dashboard)/connections/page.tsx's header comment for
+  // the full history (it was previously dead code because of exactly
+  // this collision).
+  { href: "/connections",  icon: Plug2,    label: "Integrations"                                 },
   { href: "/api-keys",     icon: Key,      label: "API Keys",     badge: "Starter+", planGate: true },
 ]
 
